@@ -69,6 +69,7 @@ describe('run contract constants', () => {
       'RUN_INTERRUPTED_BY_DAEMON_RESTART',
       'CLAUDE_AUTH_FAILED',
       'CLAUDE_CLI_FAILED',
+      'INTERNAL_ERROR',
       'PATH_NOT_ALLOWED',
       'INVALID_PATH_SEGMENT',
     ]);

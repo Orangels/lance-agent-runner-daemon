@@ -53,6 +53,69 @@ describe('workspace repository', () => {
     expect(again.id).toBe(workspace.id);
     expect(again.workspaceKey).toBe('lqbot/user_1/project_123');
     expect(again.updatedAt).toBe(2000);
+    expect(again.metadata).toEqual({ label: 'Updated' });
+  });
+
+  it('does not let another client overwrite a workspace with the same public workspace key', () => {
+    const { db, workspace } = insertWorkspaceFixture();
+
+    const other = upsertWorkspace(db, {
+      id: 'ws_other',
+      clientId: 'other',
+      profileId: 'report-docx',
+      originId: 'lqbot',
+      userId: 'user_1',
+      projectId: 'project_123',
+      status: 'active',
+      metadata: { label: 'Other client' },
+      now: 2000,
+    });
+
+    expect(other.id).toBe('ws_other');
+    expect(other.workspaceKey).toBe(workspace.workspaceKey);
+    expect(getWorkspaceForClient(db, { workspaceId: workspace.id, clientId: 'lqbot' })?.metadata).toEqual({
+      label: 'Report',
+    });
+  });
+
+  it('does not let another profile overwrite a workspace with the same public workspace key', () => {
+    const { db, workspace } = insertWorkspaceFixture();
+
+    const other = upsertWorkspace(db, {
+      id: 'ws_other_profile',
+      clientId: 'lqbot',
+      profileId: 'other-profile',
+      originId: 'lqbot',
+      userId: 'user_1',
+      projectId: 'project_123',
+      status: 'active',
+      metadata: { label: 'Other profile' },
+      now: 2000,
+    });
+
+    expect(other.id).toBe('ws_other_profile');
+    expect(other.workspaceKey).toBe(workspace.workspaceKey);
+    expect(getWorkspaceForClient(db, { workspaceId: workspace.id, clientId: 'lqbot' })?.profileId).toBe(
+      'report-docx',
+    );
+  });
+
+  it('preserves existing metadata when create-or-get omits metadata', () => {
+    const { db, workspace } = insertWorkspaceFixture();
+
+    const again = upsertWorkspace(db, {
+      id: 'ws_2',
+      clientId: 'lqbot',
+      profileId: 'report-docx',
+      originId: 'lqbot',
+      userId: 'user_1',
+      projectId: 'project_123',
+      status: 'active',
+      now: 2000,
+    });
+
+    expect(again.id).toBe(workspace.id);
+    expect(again.metadata).toEqual({ label: 'Report' });
   });
 
   it('gets workspaces only for the owning client unless admin', () => {

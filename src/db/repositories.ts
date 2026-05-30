@@ -156,17 +156,19 @@ export function upsertWorkspace(
 ): WorkspaceRecord {
   const workspaceKey = makeWorkspaceKey(input.originId, input.userId, input.projectId);
   const existing = db
-    .prepare('SELECT * FROM workspaces WHERE workspace_key = ?')
-    .get(workspaceKey) as WorkspaceRow | undefined;
+    .prepare('SELECT * FROM workspaces WHERE client_id = ? AND profile_id = ? AND workspace_key = ?')
+    .get(input.clientId, input.profileId, workspaceKey) as WorkspaceRow | undefined;
 
   if (existing) {
+    const nextMetadataJson =
+      input.metadata === undefined ? existing.metadata_json : stringifyNullable(input.metadata);
     db.prepare(
       `
       UPDATE workspaces
       SET status = ?, metadata_json = ?, updated_at = ?
       WHERE id = ?
       `,
-    ).run(input.status ?? existing.status, stringifyNullable(input.metadata), input.now, existing.id);
+    ).run(input.status ?? existing.status, nextMetadataJson, input.now, existing.id);
     return getWorkspaceById(db, existing.id);
   }
 

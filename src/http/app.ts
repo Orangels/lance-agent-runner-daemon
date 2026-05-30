@@ -1,7 +1,7 @@
 import express, { type ErrorRequestHandler } from 'express';
 import { ZodError } from 'zod';
 import type { DaemonConfig } from '../config/profiles.js';
-import { DaemonError, toErrorResponse } from '../core/errors.js';
+import { DaemonError, internalError, toErrorResponse } from '../core/errors.js';
 import type { WorkspaceService } from '../core/workspace-service.js';
 import type { RunnerDatabase } from '../db/connection.js';
 import { zodErrorToDaemonError } from './validation.js';
@@ -40,7 +40,7 @@ const errorHandler: ErrorRequestHandler = (error, _request, response, _next) => 
       ? zodErrorToDaemonError(error)
       : error instanceof DaemonError
         ? error
-        : new DaemonError('BAD_REQUEST', error instanceof Error ? error.message : 'Unknown error', 400);
+        : internalError();
 
   response.status(daemonError.status).json(toErrorResponse(daemonError));
 };

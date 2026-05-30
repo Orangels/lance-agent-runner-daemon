@@ -236,4 +236,38 @@ describe('workspace routes', () => {
       });
     });
   });
+
+  it('does not leak absolute paths from unexpected filesystem errors', async () => {
+    await withApp(async (baseUrl, root) => {
+      const createResponse = await fetch(`${baseUrl}/api/workspaces`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer secret', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          profileId: 'report-docx',
+          workspace: { originId: 'lqbot', userId: 'user_1', projectId: 'project_123' },
+        }),
+      });
+      const workspace = (await createResponse.json()) as { workspaceId: string };
+      const missingSourcePath = path.join(root, 'uploads/missing.docx');
+
+      const prepareResponse = await fetch(
+        `${baseUrl}/api/workspaces/${workspace.workspaceId}/prepare`,
+        {
+          method: 'POST',
+          headers: { Authorization: 'Bearer secret', 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            files: [{ sourcePath: missingSourcePath, targetPath: 'input/source.docx' }],
+          }),
+        },
+      );
+
+      expect(prepareResponse.status).toBe(500);
+      const body = await prepareResponse.json();
+      expect(body).toEqual({
+        error: { code: 'INTERNAL_ERROR', message: 'Internal server error' },
+      });
+      expect(JSON.stringify(body)).not.toContain(root);
+      expect(JSON.stringify(body)).not.toContain('missing.docx');
+    });
+  });
 });

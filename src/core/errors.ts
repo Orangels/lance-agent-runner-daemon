@@ -30,6 +30,10 @@ export function notFound(message: string, details?: unknown): DaemonError {
   return new DaemonError('NOT_FOUND', message, 404, details);
 }
 
+export function internalError(message = 'Internal server error', details?: unknown): DaemonError {
+  return new DaemonError('INTERNAL_ERROR', message, 500, details);
+}
+
 export function daemonError(
   code: DaemonErrorCode,
   message: string,

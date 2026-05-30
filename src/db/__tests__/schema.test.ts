@@ -56,6 +56,7 @@ describe('sqlite schema', () => {
         'idx_run_messages_run',
         'idx_runs_status_created',
         'idx_runs_workspace_created',
+        'idx_workspaces_client_profile_key',
         'idx_workspaces_identity',
         'sqlite_autoindex_artifacts_1',
         'sqlite_autoindex_conversations_1',
@@ -64,7 +65,6 @@ describe('sqlite schema', () => {
         'sqlite_autoindex_run_messages_1',
         'sqlite_autoindex_runs_1',
         'sqlite_autoindex_workspaces_1',
-        'sqlite_autoindex_workspaces_2',
       ]),
     );
   });
