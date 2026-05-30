@@ -45,26 +45,28 @@ Local docs:
 - `/home/orangels/ls_dev/lance-agent-runner-daemon/docs/claude-code-runner-daemon-implementation-plan.md`
 - `/home/orangels/ls_dev/lance-agent-runner-daemon/docs/phase-0-foundation-plan.md`
 
-lanceDesign references, for behavior study only:
+lanceDesign migration sources:
+
+These files are not package dependencies. Do not import them from the new daemon. They are the source implementation for the Claude Code CLI runner pipeline; port the directly reusable pieces into this repository's own `src/` tree and preserve behavior unless a product-boundary change is explicitly listed here.
 
 - `/home/orangels/ls_dev/lanceDesign/apps/daemon/src/runs.ts`
-  - Reference: in-memory run lifecycle, event buffer, `Last-Event-ID` / `after` replay, cancel, terminal cleanup.
+  - Directly reusable/lightly reusable: port the in-memory run lifecycle mechanics, event buffer, monotonically increasing event ids, `Last-Event-ID` / `after` replay, subscriber set, terminal close, TTL cleanup with `unref`, cancel, and `isTerminal` semantics.
 - `/home/orangels/ls_dev/lanceDesign/apps/daemon/src/chat-routes.ts`
-  - Reference: `POST /api/runs -> 202 { runId }`, `GET /api/runs/:id/events`, `POST /api/runs/:id/cancel`.
+  - Reusable route pattern: `POST /api/runs -> 202 { runId }`, `GET /api/runs/:id/events`, `POST /api/runs/:id/cancel`; rewrite request/response bodies for the generic daemon contract.
 - `/home/orangels/ls_dev/lanceDesign/apps/daemon/src/claude-stream.ts`
-  - Reference: Claude Code `stream-json` JSONL parser and translated event shapes.
+  - Directly reusable: port the Claude Code `stream-json` JSONL parser near-verbatim, preserving streaming/fallback behavior and duplicate suppression.
 - `/home/orangels/ls_dev/lanceDesign/apps/daemon/src/runtimes/defs/claude.ts`
-  - Reference: `claude -p --output-format stream-json --verbose`, prompt via stdin, `--include-partial-messages`, `--add-dir`, `--model`, `--permission-mode`.
+  - Lightly reusable: port Claude argv construction, prompt-via-stdin, capability probing, `--include-partial-messages`, `--add-dir`, `--model`, and `--permission-mode`; adapt profile-controlled model and permission settings.
 - `/home/orangels/ls_dev/lanceDesign/apps/daemon/src/server.ts`
-  - Reference: study only `startChatRun` around spawn/stdin/stdout/stderr/watchdog/close/cancel, plus `createSseResponse`.
+  - Narrowed subset: extract only `startChatRun`'s generic spawn/stdin/stdout/stderr/watchdog/close/cancel chain and `createSseResponse`; do not copy product logic.
 - `/home/orangels/ls_dev/lanceDesign/apps/daemon/src/claude-diagnostics.ts`
-  - Reference: classify auth/model/config failures; rewrite all product wording.
+  - Narrowed subset: reuse auth/model/config failure classification ideas; rewrite all product wording, path handling, and machine-readable error mapping.
 - `/home/orangels/ls_dev/lanceDesign/apps/web/src/providers/daemon.ts`
 - `/home/orangels/ls_dev/lanceDesign/apps/web/src/components/ProjectView.tsx`
 - `/home/orangels/ls_dev/lanceDesign/apps/web/src/state/projects.ts`
-  - Reference: frontend message accumulation semantics that Phase 1 moves daemon-side.
+  - Semantic reference only: frontend message accumulation semantics that Phase 1 moves daemon-side.
 
-Do not import from `/home/orangels/ls_dev/lanceDesign`. Copying product logic wholesale is out of scope.
+Do not import from `/home/orangels/ls_dev/lanceDesign`. Copying lanceDesign product logic wholesale is out of scope. Porting product-clean Claude Code runner logic into this repository is required where the design marks it directly reusable.
 
 ## Phase 1 Scope Decisions
 
@@ -89,6 +91,7 @@ Phase 1 must implement:
 - Daemon-side `run_messages` accumulator and durable flush.
 - `profile_snapshots` insert paired with run create.
 - Minimal per-workspace active-run guard so two Claude processes do not write the same workspace at once.
+- Minimal inactivity watchdog based on lanceDesign's proven child-output activity guard, so a stuck Claude process cannot occupy a workspace forever.
 
 Phase 1 must not implement:
 
@@ -104,7 +107,7 @@ Phase 1 must not implement:
 - S3/object storage pull.
 - Browser-facing CORS or temporary signed download URLs.
 - Full global/profile queue scheduler.
-- Full timeout scheduler or timeout hardening.
+- Full timeout scheduler or timeout hardening beyond the minimal Phase 1 inactivity watchdog.
 - Metrics endpoint.
 - Logs route behavior.
 - Claude Code native session resume/fork.
@@ -124,6 +127,7 @@ The first runnable Phase 1 target is:
 7. `run_messages.content` and `run_messages.events_json` are persisted even if nobody subscribes to SSE.
 8. `GET /api/runs/:runId` returns durable run detail after terminal completion.
 9. `POST /api/runs/:runId/cancel` can cancel a running process with SIGTERM then SIGKILL after `profile.cancelGraceMs`.
+10. A stuck child that emits no stdout/stderr/parser activity is failed by the minimal inactivity watchdog instead of running forever.
 
 Unit and route tests must use fake spawn seams. Manual smoke can use a real configured Claude Code profile after automated tests pass.
 
@@ -219,6 +223,10 @@ Those are Phase 2/3 files.
 Phase 1 must introduce a single repository/service operation that creates a run atomically:
 
 ```text
+begin better-sqlite3 synchronous transaction
+select active queued/running run for workspace
+fail with WORKSPACE_RUN_ACTIVE if one exists
+get or create default conversation
 insert runs queued row
 insert user run_message
 insert assistant draft run_message
@@ -228,6 +236,8 @@ only then schedule process start
 ```
 
 The transaction must be the only path used by `POST /api/runs`.
+
+The active-run check and queued insert must happen in the same synchronous `better-sqlite3` transaction, with no `await` or asynchronous boundary between them. SQLite is the serial truth source; any in-memory active-run set is only a fast path and must not be the only protection against concurrent same-workspace runs.
 
 The route must never accept inline `originId`, `userId`, or `projectId`; it only receives `workspaceId`.
 
@@ -244,7 +254,11 @@ Use numeric in-memory event ids internally and stringify them in SSE:
 
 `Last-Event-ID` header and `?after=` query both mean "replay events with id greater than this value".
 
+Replay comparisons must parse ids numerically, never lexicographically, so `"10"` is greater than `"9"`.
+
 SQLite does not get a `run_events` table. Long-term view is `run_messages.events_json`.
+
+When a terminal run's in-memory event buffer has expired, or after daemon restart, `GET /api/runs/:runId/events` returns `404 NOT_FOUND` for the event stream even if `GET /api/runs/:runId` can still return durable run detail. This preserves the Phase 1 contract that `/events` is live/short-reconnect only.
 
 ### Internal Agent Events
 
@@ -264,7 +278,7 @@ raw
 end
 ```
 
-`stderr` and `raw` are debug-only, capped, and not persisted in `events_json` by default. Store stderr tails in memory for diagnostics in Phase 1; full log persistence and `GET /api/runs/:runId/logs` are out of scope.
+`stderr` and `raw` are debug-only, capped to 2,000 characters per stored tail, and not persisted in `events_json` by default. Store stderr/stdout tails in memory for diagnostics in Phase 1; full log persistence and `GET /api/runs/:runId/logs` are out of scope.
 
 ### Message Persistence
 
@@ -311,6 +325,7 @@ Do not expose sandbox absolute paths in any visibility mode.
 - Keep `POST /api/runs` contract as `workspaceId`-only.
 - Add length limits that Phase 0a recorded as follow-up.
 - Add typed run event contracts.
+- Add a dedicated `WORKSPACE_RUN_ACTIVE` structured error code for Phase 1 same-workspace conflicts.
 - Keep query schemas strict unless a test proves Express query behavior requires a narrower compromise.
 
 **Concrete Limits:**
@@ -330,6 +345,7 @@ Do not expose sandbox absolute paths in any visibility mode.
 - [ ] Add a failing test that oversized `skillId`, `model`, and `artifactRuleIds` are rejected.
 - [ ] Add a passing test that `kind=revise` accepts `profileId`, `workspaceId`, `kind`, `prompt`, optional `model`, optional `eventVisibility`, and optional `metadata`.
 - [ ] Add a passing test that `kind=generate` remains schema-valid only when `skillId` is present, even though the Phase 1 service rejects it before execution.
+- [ ] Add a failing test that `daemonErrorCodes` includes `WORKSPACE_RUN_ACTIVE`.
 - [ ] Add run event type tests for terminal status detection and event id string conversion helpers.
 - [ ] Implement the smallest schema/type changes to pass.
 - [ ] Run `pnpm test src/http/__tests__/validation.test.ts src/core/__tests__/run-types.test.ts`.
@@ -353,6 +369,7 @@ Do not expose sandbox absolute paths in any visibility mode.
 **Responsibilities:**
 
 - Create a transaction helper for Phase 1 run creation.
+- Resolve or create the default conversation inside the same transaction.
 - Insert sanitized profile snapshots in the same transaction as queued run creation.
 - Add run lookup helpers needed by run service.
 - Fix repository update semantics where `undefined` means preserve and `null` means write null.
@@ -372,16 +389,19 @@ Do not expose sandbox absolute paths in any visibility mode.
 
 `createRunQueuedWithMessagesAndSnapshot` must internally call or replace:
 
+- `getOrCreateDefaultConversation`
 - `insertRunQueued`
 - `insertRunMessagesForRunCreate`
 - `insertProfileSnapshot`
 
 Do not leave route/service code manually composing three independent writes.
 
+Use `better-sqlite3`'s synchronous `db.transaction()` wrapper. A thrown error from conversation, run, message, or snapshot insert must roll back the full transaction.
+
 **Profile Snapshot Rules:**
 
 - Store profile id, `permissionMode`, `defaultModel`, `allowedModels`, `eventVisibility`, timeout values, selected model, selected artifact rule ids, and env key names.
-- Store secret env values as `[redacted]`.
+- Store profile env keys only; do not store env values. This avoids ambiguity around `ANTHROPIC_API_KEY`, private `ANTHROPIC_BASE_URL` endpoints, bearer-like values, cookies, and future token-shaped keys.
 - Do not read files from `claudeConfigDir`.
 - Do not store `ANTHROPIC_API_KEY`, API keys, token-like values, cookies, OAuth bearer values, or Claude login state.
 - Do not expose profile snapshots in public HTTP responses in Phase 1.
@@ -389,8 +409,9 @@ Do not leave route/service code manually composing three independent writes.
 **TDD Steps:**
 
 - [ ] Add a failing repository test that `createRunQueuedWithMessagesAndSnapshot` inserts a `queued` run, two run messages, and one profile snapshot in one transaction.
+- [ ] Add a failing repository test that the same transaction gets or creates the default conversation before inserting messages.
 - [ ] Add a failing test that a forced snapshot insert failure rolls back the run and messages.
-- [ ] Add a failing test that the stored snapshot redacts `ANTHROPIC_API_KEY`, `token`, `cookie`, and `authorization`-like env keys.
+- [ ] Add a failing test that the stored snapshot contains env key names only and does not contain `ANTHROPIC_API_KEY` values, token values, cookie values, authorization values, `claudeConfigDir` contents, or any profile secret values.
 - [ ] Add a failing test that `getActiveRunForWorkspace` returns a `queued` or `running` run and ignores terminal runs.
 - [ ] Add a failing test that `updateRunTerminal` can persist `exitCode = null` and `signal = 'SIGTERM'` for signal exits.
 - [ ] Add a failing test that `updateRunLastEventId` updates both `runs.last_run_event_id` and `updated_at`.
@@ -415,9 +436,10 @@ Do not leave route/service code manually composing three independent writes.
 
 **Responsibilities:**
 
-- Rewrite the lanceDesign Claude JSONL parser for this daemon.
+- Port the lanceDesign Claude JSONL parser near-verbatim into this daemon.
 - Translate Claude Code `--output-format stream-json --verbose` output into daemon internal events.
 - Support both modern `stream_event` deltas and older final `assistant` wrapper fallback.
+- Preserve `textStreamed` duplicate suppression, `streamedToolUseIds` duplicate suppression, per-content-block partial JSON assembly, line-buffered `feed`, and final `flush` behavior. Remove only UI/product-specific fields that are not part of the generic daemon event contract, and document any removal in tests.
 
 **Reference:**
 
@@ -435,6 +457,7 @@ Do not leave route/service code manually composing three independent writes.
 - [ ] Add a failing test that `user` tool result wrappers emit `tool_result`.
 - [ ] Add a failing test that `result` emits `usage` with cost/duration/stop reason.
 - [ ] Add a failing test that invalid JSONL emits capped `raw` rather than throwing.
+- [ ] Add a failing test that `flush()` drains a trailing JSON line that has no final newline.
 - [ ] Implement `createClaudeStreamHandler`.
 - [ ] Run `pnpm test src/core/__tests__/claude-stream.test.ts src/core/__tests__/run-events.test.ts`.
 - [ ] Commit: `feat: add claude stream parser`.
@@ -473,7 +496,7 @@ Do not leave route/service code manually composing three independent writes.
 --verbose
 --include-partial-messages   only when probe says supported
 --model <model>              model from request or profile.defaultModel
---add-dir <workspaceDir>     only when probe says supported
+--add-dir <workspaceDir>     when extra allowed dirs exist and capability is not explicitly false
 --permission-mode <profile.permissionMode>
 ```
 
@@ -491,7 +514,8 @@ Do not pass prompt as argv.
 
 - [ ] Add a failing test that args include `-p --output-format stream-json --verbose`.
 - [ ] Add a failing test that `--include-partial-messages` appears only when capability probe reports support.
-- [ ] Add a failing test that `--add-dir <workspaceCwd>` appears only when probe reports support.
+- [ ] Add a failing test that `--add-dir <workspaceCwd>` appears when extra dirs exist and capability is supported or unknown, matching lanceDesign's `caps.addDir !== false` behavior.
+- [ ] Add a failing test that `--add-dir` is omitted when capability probe explicitly reports unsupported.
 - [ ] Add a failing test that request `model` overrides `profile.defaultModel` only when allowed.
 - [ ] Add a failing test that disallowed model raises `MODEL_NOT_ALLOWED`.
 - [ ] Add a failing test that `--permission-mode` uses `profile.permissionMode`.
@@ -618,9 +642,10 @@ Do not pass prompt as argv.
 - Spawn Claude Code.
 - Write prompt to stdin.
 - Attach stream parser to stdout.
-- Keep capped stdout/stderr tails.
+- Keep capped stdout/stderr tails at 2,000 characters.
 - Convert spawn error, stream error, close code/signal, and cancel into runner results.
 - Diagnose Claude auth/model/config failures with generic daemon wording.
+- Enforce the minimal Phase 1 inactivity watchdog using child stdout/stderr/parser activity.
 
 **Reference:**
 
@@ -629,7 +654,16 @@ Do not pass prompt as argv.
 
 **Phase 1 Timeout Boundary:**
 
-Do not implement full `runTimeoutMs` or `inactivityTimeoutMs` hardening in this task. Phase 1 may keep a small internal safety guard for tests only if needed, but production timeout enforcement is Phase 3. Cancel grace (`cancelGraceMs`) is Phase 1 because it belongs to the cancel endpoint.
+Do not implement the full Phase 3 timeout scheduler or queue-wide timeout hardening in this task. Phase 1 must still port lanceDesign's minimal inactivity watchdog: reset the watchdog on stdout bytes, stderr bytes, and parsed agent events; if no activity occurs for `profile.inactivityTimeoutMs`, emit a generic `RUN_INACTIVITY_TIMEOUT` error, fail the run, send SIGTERM, and then SIGKILL after `profile.cancelGraceMs` if needed. `runTimeoutMs` enforcement remains Phase 3 unless it can be added without a scheduler.
+
+**Diagnostics Redaction Requirements:**
+
+- Do not expose `CLAUDE_CONFIG_DIR`, `profile.claudeConfigDir`, sandbox roots, workspace cwd, or any other absolute path in SSE/API error details.
+- Do not expose raw stderr/stdout tails in API/SSE responses. Use tails only for internal classification.
+- Remove all LanceRouter, Open Settings, Settings dialog, `LANCE_DESIGN_LOCAL_CLIENT`, and `LANCE_DESIGN_*` wording/fields.
+- Map classified auth failures to `CLAUDE_AUTH_FAILED`.
+- Map model/config/spawn/non-zero failures to `CLAUDE_CLI_FAILED` unless a more specific existing code applies.
+- Return machine-readable safe details such as `{ "category": "auth" }`, `{ "category": "model" }`, or `{ "category": "config" }`, not raw provider output.
 
 **TDD Steps:**
 
@@ -640,8 +674,10 @@ Do not implement full `runTimeoutMs` or `inactivityTimeoutMs` hardening in this 
 - [ ] Add a failing test that spawn error emits `CLAUDE_CLI_FAILED`.
 - [ ] Add a failing test that close code `0` without cancel succeeds.
 - [ ] Add a failing test that close code non-zero without cancel fails and includes a generic diagnostic when auth/model text is detected.
+- [ ] Add a failing test that auth failure maps to `CLAUDE_AUTH_FAILED` with no `CLAUDE_CONFIG_DIR`, absolute path, raw stderr, LanceRouter, Open Settings, or `LANCE_DESIGN_*` text.
 - [ ] Add a failing test that cancel sends SIGTERM and then SIGKILL after `cancelGraceMs` if the fake process stays alive.
-- [ ] Add a failing test that stderr/raw tails are capped and never include uncapped huge chunks.
+- [ ] Add a failing test that stdout/stderr tails are capped at 2,000 characters and never include uncapped huge chunks.
+- [ ] Add a failing test that inactivity timeout fails the run with `RUN_INACTIVITY_TIMEOUT`, sends SIGTERM, and escalates to SIGKILL after `cancelGraceMs` if the child remains alive.
 - [ ] Implement fake child process interfaces and runner.
 - [ ] Run `pnpm test src/core/__tests__/claude-diagnostics.test.ts src/core/__tests__/cli-runner.test.ts`.
 - [ ] Commit: `feat: add cli runner`.
@@ -664,6 +700,7 @@ Do not implement full `runTimeoutMs` or `inactivityTimeoutMs` hardening in this 
 **Responsibilities:**
 
 - Own Phase 1 lifecycle and active in-memory run state.
+- Port lanceDesign `runs.ts` mechanics for event buffer, subscriber management, replay, terminal close, waiters, cleanup TTL, and cancel semantics as behavior-equivalent code.
 - Create durable run transaction.
 - Schedule immediate process start after transaction commit.
 - Maintain per-run event buffer for short SSE replay.
@@ -674,14 +711,30 @@ Do not implement full `runTimeoutMs` or `inactivityTimeoutMs` hardening in this 
 
 - `/home/orangels/ls_dev/lanceDesign/apps/daemon/src/runs.ts`
 
+**Ported From `runs.ts`:**
+
+- `events[]` buffer with a bounded max event count.
+- `nextEventId` starting at 1 and incrementing per emitted event.
+- Replay by numeric `record.id > lastEventId`.
+- `clients` subscriber set and close cleanup.
+- Terminal `finish` closes subscribers and schedules TTL cleanup with `unref`.
+- `isTerminal` status helper.
+- Cancel signal behavior as adapted by `cli-runner`.
+
+**New For This Daemon:**
+
+- SQLite run state transitions.
+- Daemon-side message accumulator hook.
+- Atomic run create transaction with default conversation and profile snapshot.
+- Per-workspace active-run conflict using SQLite as the source of truth.
+
 **Run Lifecycle:**
 
 ```text
 POST /api/runs
   -> validate auth/profile/workspace
   -> reject kind=generate in Phase 1
-  -> reject if workspace has active in-memory or DB queued/running run
-  -> transaction: run queued + messages + snapshot
+  -> transaction: reject if workspace has DB queued/running run, get/create default conversation, insert queued run + messages + snapshot
   -> emit queued event to buffer
   -> schedule start asynchronously
   -> response 202 { runId, status: "queued" }
@@ -704,23 +757,25 @@ Until Phase 3 implements a real queue, Phase 1 must reject a second active run f
 
 ```text
 HTTP 409
-code BAD_REQUEST
+code WORKSPACE_RUN_ACTIVE
 message "Workspace already has an active run"
 details.reason "WORKSPACE_RUN_ACTIVE"
 ```
 
-Do not use `RUN_QUEUE_FULL` here; Phase 3 reserves that code for real queue capacity.
+Do not use `RUN_QUEUE_FULL` here; Phase 3 reserves that code for real queue capacity. `getActiveRunForWorkspace` and queued insert must execute in the same synchronous SQLite transaction, with no `await` between the active check and insert. If an in-memory active map exists, treat it only as an optimization; DB state decides conflicts.
 
 **TDD Steps:**
 
 - [ ] Add a failing test that `createRun` rejects workspace/profile mismatch.
 - [ ] Add a failing test that `createRun` rejects unauthorized client/profile access.
 - [ ] Add a failing test that `createRun` rejects `kind=generate` with `BAD_REQUEST`.
-- [ ] Add a failing test that `createRun` writes queued run/messages/snapshot before starting fake runner.
-- [ ] Add a failing test that a second active run for the same workspace returns workspace-active conflict.
+- [ ] Add a failing test that `createRun` writes default conversation, queued run, messages, and snapshot before starting fake runner.
+- [ ] Add a failing test that a second active run for the same workspace returns `WORKSPACE_RUN_ACTIVE`.
+- [ ] Add a failing test that active-run check and queued insert are atomic by simulating two same-workspace create attempts and proving only one queued run is inserted.
 - [ ] Add a failing test that events get monotonically increasing ids and update `runs.last_run_event_id`.
 - [ ] Add a failing test that `replay(after)` returns only events with id greater than `after`.
 - [ ] Add a failing test that terminal status closes subscribers and keeps terminal events available until in-memory TTL cleanup.
+- [ ] Add a failing test that `/events` after in-memory TTL cleanup returns `404 NOT_FOUND` while `GET /api/runs/:runId` still returns durable detail.
 - [ ] Add a failing test that cancel before runner start marks run `canceled`.
 - [ ] Add a failing test that cancel while running calls runner cancel and terminal status is `canceled`.
 - [ ] Add a failing test that runner failure marks run `failed`, persists error fields, and flushes messages first.
@@ -864,6 +919,7 @@ Do not include sandbox absolute paths in list/detail responses.
 - [ ] Add a failing route test that `GET /api/runs/:runId` returns durable messages with visibility filtering.
 - [ ] Add a failing route test that `GET /api/runs/:runId/events` sends replayed SSE events after `?after=`.
 - [ ] Add a failing route test that `Last-Event-ID` takes the same replay path as `after`.
+- [ ] Add a failing route test that `/events` returns `404 NOT_FOUND` after the in-memory stream state is gone, while run detail remains readable from SQLite.
 - [ ] Add a failing route test that `POST /api/runs/:runId/cancel` returns `{ "ok": true }` for active runs.
 - [ ] Add a failing route test that cancel on terminal run returns `RUN_NOT_CANCELABLE`.
 - [ ] Implement routes and app wiring.
@@ -1034,9 +1090,10 @@ After implementation and automated verification, ask CC to review the range from
 Required review focus:
 
 - No lanceDesign private imports.
+- Directly reusable lanceDesign runner pieces are ported behavior-equivalently into this repo, especially `claude-stream.ts`, `runs.ts` mechanics, Claude argv/capability behavior, and SSE helper behavior.
 - `kind=generate` is not silently executed without Phase 2 skill staging.
 - `POST /api/runs` only references `workspaceId`.
-- Run create transaction inserts queued run, user/assistant messages, and sanitized profile snapshot atomically.
+- Run create transaction checks active workspace state, gets/creates default conversation, and inserts queued run, user/assistant messages, and sanitized profile snapshot atomically.
 - Daemon-side message persistence works without SSE consumers.
 - SSE replay is memory-only and short-term.
 - No `run_events` table.
@@ -1045,7 +1102,9 @@ Required review focus:
 - No full queue/timeout/metrics.
 - No OS-level sandbox claims.
 - No API response leaks sandbox absolute paths, `claudeConfigDir`, API keys, or profile secrets.
+- Claude diagnostics do not expose raw stderr/stdout tails or lanceDesign product wording.
 - Cancel uses SIGTERM and SIGKILL after `cancelGraceMs`.
+- Minimal inactivity watchdog is implemented and tested; full timeout/queue hardening remains Phase 3.
 - Tests use fake spawn and do not require Claude Code.
 
 ## Final Phase 1 Acceptance Criteria
@@ -1059,9 +1118,11 @@ Required review focus:
 - Same-workspace concurrent execution is prevented.
 - Claude CLI invocation uses stdin prompt, stream-json output, profile permission mode, profile `CLAUDE_CONFIG_DIR`, allowlisted env, and allowed model.
 - SSE events are visible live and replayable from memory for short reconnects.
+- `/events` returns a clear `404 NOT_FOUND` after in-memory stream state expires; durable history remains available through `GET /api/runs/:runId`.
 - `GET /api/runs/:runId` reads durable SQLite state and `run_messages.events_json`.
 - Assistant message persistence is driven by daemon accumulator, not frontend consumption.
 - Cancel transitions active runs to `canceled`.
+- Stuck children fail through the minimal inactivity watchdog instead of occupying a workspace indefinitely.
 - Failed CLI runs transition to `failed` with generic structured diagnostics.
 - No Phase 2/3 scope is implemented.
 
@@ -1072,7 +1133,7 @@ Carry these forward intentionally:
 - Phase 2: skill registry, skill staging, skill body prompt preamble, artifact rules, artifact scan, artifact list/download.
 - Phase 2: required artifact missing maps to `ARTIFACT_REQUIRED_MISSING`.
 - Phase 3: real queue, `globalConcurrency`, `profileConcurrency`, `maxQueueSize`, deterministic queued run promotion.
-- Phase 3: full `runTimeoutMs` and `inactivityTimeoutMs` enforcement.
+- Phase 3: full `runTimeoutMs` enforcement and richer timeout hardening beyond Phase 1's minimal inactivity watchdog.
 - Phase 3: log files, `GET /api/runs/:runId/logs`, retention cleanup.
 - Phase 3: timing-safe API key comparison.
 - Phase 3: symlink-aware path containment if stronger directory isolation is approved.
