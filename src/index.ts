@@ -2,6 +2,7 @@ import type { Server } from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { getConfigPathFromArgs, loadDaemonConfig } from './config/config.js';
 import type { DaemonConfig } from './config/profiles.js';
+import { createRunService, type RunService } from './core/run-service.js';
 import { createWorkspaceService, type WorkspaceService } from './core/workspace-service.js';
 import { openRunnerDatabase, type RunnerDatabase } from './db/connection.js';
 import { markInterruptedRunsOnStartup } from './db/repositories.js';
@@ -12,6 +13,7 @@ export interface ServerContext {
   config: DaemonConfig;
   db: RunnerDatabase;
   workspaceService: WorkspaceService;
+  runService: RunService;
   app: ReturnType<typeof createApp>;
   interruptedRuns: number;
 }
@@ -28,12 +30,14 @@ export function createServerContext(
   applySchema(db);
   const interruptedRuns = markInterruptedRunsOnStartup(db, (options.clock ?? Date.now)());
   const workspaceService = createWorkspaceService({ db });
-  const app = createApp({ config, db, workspaceService });
+  const runService = createRunService({ config, db, clock: options.clock });
+  const app = createApp({ config, db, workspaceService, runService });
 
   return {
     config,
     db,
     workspaceService,
+    runService,
     app,
     interruptedRuns,
   };
