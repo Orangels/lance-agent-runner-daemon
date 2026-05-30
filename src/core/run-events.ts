@@ -1,3 +1,5 @@
+import type { RunStatus } from './run-types.js';
+
 export const rawEventLineMaxLength = 2_000;
 
 export type RunEvent =
@@ -54,6 +56,7 @@ export type RunEvent =
     }
   | {
       type: 'end';
+      status?: RunStatus;
     };
 
 export type RunEventSink = (event: RunEvent) => void;

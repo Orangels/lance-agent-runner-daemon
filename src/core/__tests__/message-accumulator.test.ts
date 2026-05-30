@@ -98,7 +98,10 @@ describe('message accumulator', () => {
     expect(updateRunMessage).toHaveBeenCalledWith(db, {
       messageId: 'assistant-1',
       content: 'hello world',
-      events: [],
+      events: [
+        { type: 'text_delta', delta: 'hello ' },
+        { type: 'text_delta', delta: 'world' },
+      ],
       lastRunEventId: '2',
       now: runtime.clock.now(),
     });
@@ -186,7 +189,7 @@ describe('message accumulator', () => {
     expect(updateRunMessage).toHaveBeenCalledWith(db, {
       messageId: 'assistant-1',
       content: 'done',
-      events: [],
+      events: [{ type: 'text_delta', delta: 'done' }],
       lastRunEventId: '9',
       now: runtime.clock.now(),
     });
@@ -213,7 +216,7 @@ describe('message accumulator', () => {
     expect(updateRunMessage).toHaveBeenCalledWith(first.db, {
       messageId: 'assistant-1',
       content: 'first',
-      events: [],
+      events: [{ type: 'text_delta', delta: 'first' }],
       lastRunEventId: '1',
       now: first.runtime.clock.now(),
     });

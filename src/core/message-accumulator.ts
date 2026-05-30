@@ -87,6 +87,7 @@ class MessageAccumulator {
 
     if (event.type === 'text_delta') {
       this.content += event.delta;
+      this.events.push(event);
       this.markDirty();
       return;
     }

@@ -10,6 +10,8 @@ export interface SanitizedArtifactRuleSnapshot {
 export interface SanitizedProfileSnapshot {
   version: 1;
   profileId: string;
+  selectedModel?: string;
+  selectedArtifactRuleIds?: string[];
   allowedSkillIds: string[];
   artifactRules: SanitizedArtifactRuleSnapshot[];
   defaultArtifactRuleIds: string[];
@@ -28,10 +30,20 @@ export interface SanitizedProfileSnapshot {
   };
 }
 
-export function createSanitizedProfileSnapshot(profile: ProfileConfig): SanitizedProfileSnapshot {
+export interface CreateSanitizedProfileSnapshotOptions {
+  selectedModel?: string;
+  selectedArtifactRuleIds?: string[];
+}
+
+export function createSanitizedProfileSnapshot(
+  profile: ProfileConfig,
+  options: CreateSanitizedProfileSnapshotOptions = {},
+): SanitizedProfileSnapshot {
   return {
     version: 1,
     profileId: profile.id,
+    selectedModel: options.selectedModel,
+    selectedArtifactRuleIds: options.selectedArtifactRuleIds,
     allowedSkillIds: [...profile.allowedSkillIds],
     artifactRules: profile.artifactRules.map(sanitizeArtifactRule),
     defaultArtifactRuleIds: [...profile.defaultArtifactRuleIds],
