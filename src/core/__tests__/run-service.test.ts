@@ -7,7 +7,11 @@ import { openInMemoryDatabase } from '../../db/connection.js';
 import { getProfileSnapshotForRun, getRunDetail, upsertWorkspace } from '../../db/repositories.js';
 import { applySchema } from '../../db/schema.js';
 import { DaemonError } from '../errors.js';
-import { createRunService, type RunServiceRunnerFactory } from '../run-service.js';
+import {
+  buildClaudeRunInvocation,
+  createRunService,
+  type RunServiceRunnerFactory,
+} from '../run-service.js';
 import type { ClaudeCliRunResult } from '../cli-runner.js';
 
 function makeConfig(root: string): DaemonConfig {
@@ -93,7 +97,7 @@ function createDeferred<T>() {
   return { promise, resolve };
 }
 
-function setup() {
+function setup(options: { capabilities?: Parameters<RunServiceRunnerFactory>[0]['capabilities'] } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'runner-service-test-'));
   const config = makeConfig(root);
   const db = openInMemoryDatabase();
@@ -123,6 +127,7 @@ function setup() {
     config,
     db,
     runnerFactory,
+    capabilityProbe: async () => options.capabilities ?? {},
     timer: timerHarness.timer,
     clock: () => 5000,
     eventBufferTtlMs: 1000,
@@ -137,8 +142,13 @@ function setup() {
   return { root, config, db, workspace, service, runners, ...timerHarness };
 }
 
+async function runScheduledStart(runNextTimer: () => unknown): Promise<void> {
+  runNextTimer();
+  await Promise.resolve();
+}
+
 describe('run service', () => {
-  it('creates durable queued run data before starting the fake runner', () => {
+  it('creates durable queued run data before starting the fake runner', async () => {
     const { config, db, workspace, service, runners, runNextTimer } = setup();
 
     const result = service.createRun({
@@ -164,8 +174,26 @@ describe('run service', () => {
       envKeys: ['ANTHROPIC_API_KEY'],
     });
 
-    runNextTimer();
+    await runScheduledStart(runNextTimer);
     expect(runners).toHaveLength(1);
+  });
+
+  it('does not grant allowed input roots to Claude --add-dir in Phase 1', () => {
+    const { config, workspace, root } = setup();
+
+    const invocation = buildClaudeRunInvocation({
+      profile: config.profiles[0]!,
+      workspace,
+      workspaceCwd: path.join(root, 'sandboxes/lqbot/user_1/project_123'),
+      run: {} as Parameters<RunServiceRunnerFactory>[0]['run'],
+      prompt: 'Run.',
+      capabilities: { addDir: true, partialMessages: true },
+      onEvent: () => {},
+    });
+
+    expect(invocation.args).not.toContain('--add-dir');
+    expect(invocation.args.join('\0')).not.toContain(path.join(root, 'uploads'));
+    expect(invocation.args).toContain('--include-partial-messages');
   });
 
   it('rejects kind=generate during Phase 1', () => {
@@ -200,20 +228,23 @@ describe('run service', () => {
     ).toThrow(expect.objectContaining({ code: 'WORKSPACE_RUN_ACTIVE', status: 409 }));
   });
 
-  it('assigns numeric event ids, persists last id, and replays only newer events', () => {
-    const { config, db, workspace, service, runners, runNextTimer } = setup();
+  it('passes probed capabilities to the runner and replays numeric event ids', async () => {
+    const { config, db, workspace, service, runners, runNextTimer } = setup({
+      capabilities: { partialMessages: true },
+    });
     service.createRun({
       client: config.clients[0]!,
       request: { profileId: 'report-docx', workspaceId: workspace.id, kind: 'revise', prompt: 'Run.' },
     });
-    runNextTimer();
+    await runScheduledStart(runNextTimer);
 
+    expect(runners[0]!.input.capabilities).toEqual({ partialMessages: true });
     runners[0]!.input.onEvent({ type: 'text_delta', delta: 'hello' });
 
     expect(service.replayRunEvents({ client: config.clients[0]!, runId: 'run_1', after: '2' })).toEqual([
       { id: '3', event: { type: 'text_delta', delta: 'hello' } },
     ]);
-    expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.run.lastRunEventId).toBe('3');
+    expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.run.lastRunEventId).toBeNull();
   });
 
   it('flushes messages and marks run terminal when the runner completes', async () => {
@@ -222,7 +253,7 @@ describe('run service', () => {
       client: config.clients[0]!,
       request: { profileId: 'report-docx', workspaceId: workspace.id, kind: 'revise', prompt: 'Run.' },
     });
-    runNextTimer();
+    await runScheduledStart(runNextTimer);
     runners[0]!.input.onEvent({ type: 'text_delta', delta: 'Done.' });
     runners[0]!.complete({
       status: 'succeeded',
@@ -234,7 +265,12 @@ describe('run service', () => {
     await Promise.resolve();
 
     const detail = getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' });
-    expect(detail?.run).toMatchObject({ status: 'succeeded', exitCode: 0, finishedAt: 5000 });
+    expect(detail?.run).toMatchObject({
+      status: 'succeeded',
+      exitCode: 0,
+      finishedAt: 5000,
+      lastRunEventId: '4',
+    });
     expect(detail?.messages[1]).toMatchObject({
       content: 'Done.',
       runStatus: 'succeeded',
@@ -252,7 +288,7 @@ describe('run service', () => {
       client: config.clients[0]!,
       request: { profileId: 'report-docx', workspaceId: workspace.id, kind: 'revise', prompt: 'Run.' },
     });
-    runNextTimer();
+    await runScheduledStart(runNextTimer);
     runners[0]!.complete({ status: 'succeeded', exitCode: 0, signal: null, stdoutTail: '', stderrTail: '' });
     await Promise.resolve();
 
@@ -270,7 +306,7 @@ describe('run service', () => {
       client: config.clients[0]!,
       request: { profileId: 'report-docx', workspaceId: workspace.id, kind: 'revise', prompt: 'Run.' },
     });
-    runNextTimer();
+    await runScheduledStart(runNextTimer);
 
     expect(service.cancelRun({ client: config.clients[0]!, runId: 'run_1' })).toEqual({ ok: true });
     expect(runners[0]!.cancel).toHaveBeenCalledTimes(1);

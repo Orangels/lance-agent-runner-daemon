@@ -112,6 +112,7 @@ async function withApp(
       complete: (result: ClaudeCliRunResult) => void;
     }>;
     runNextTimer: () => { delayMs: number };
+    startNextRun: () => Promise<void>;
     runAllTimers: () => void;
     workspaceId: string;
   }) => Promise<void>,
@@ -145,6 +146,7 @@ async function withApp(
     config,
     db,
     runnerFactory,
+    capabilityProbe: async () => ({}),
     timer: timerHarness.timer,
     clock: () => 5000,
     eventBufferTtlMs: 1000,
@@ -170,6 +172,10 @@ async function withApp(
     db,
     runners,
     runNextTimer: timerHarness.runNextTimer,
+    startNextRun: async () => {
+      timerHarness.runNextTimer();
+      await Promise.resolve();
+    },
     runAllTimers: () => {
       while (true) {
         try {
@@ -281,13 +287,13 @@ describe('runs routes', () => {
   });
 
   it('returns durable run detail with filtered messages', async () => {
-    await withApp(async ({ baseUrl, workspaceId, runners, runNextTimer }) => {
+    await withApp(async ({ baseUrl, workspaceId, runners, startNextRun }) => {
       await fetch(`${baseUrl}/api/runs`, {
         method: 'POST',
         headers: { Authorization: 'Bearer secret', 'Content-Type': 'application/json' },
         body: JSON.stringify({ profileId: 'report-docx', workspaceId, kind: 'revise', prompt: 'Run.' }),
       });
-      runNextTimer();
+      await startNextRun();
       runners[0]!.input.onEvent({ type: 'text_delta', delta: 'Done.' });
       runners[0]!.complete({ status: 'succeeded', exitCode: 0, signal: null, stdoutTail: '', stderrTail: '' });
       await Promise.resolve();
@@ -311,13 +317,13 @@ describe('runs routes', () => {
   });
 
   it('replays terminal SSE events until in-memory cleanup expires', async () => {
-    await withApp(async ({ baseUrl, workspaceId, runners, runNextTimer, runAllTimers, db }) => {
+    await withApp(async ({ baseUrl, workspaceId, runners, startNextRun, runAllTimers, db }) => {
       await fetch(`${baseUrl}/api/runs`, {
         method: 'POST',
         headers: { Authorization: 'Bearer secret', 'Content-Type': 'application/json' },
         body: JSON.stringify({ profileId: 'report-docx', workspaceId, kind: 'revise', prompt: 'Run.' }),
       });
-      runNextTimer();
+      await startNextRun();
       runners[0]!.input.onEvent({ type: 'text_delta', delta: 'Done.' });
       runners[0]!.complete({ status: 'succeeded', exitCode: 0, signal: null, stdoutTail: '', stderrTail: '' });
       await Promise.resolve();
@@ -341,13 +347,13 @@ describe('runs routes', () => {
   });
 
   it('cancels active runs', async () => {
-    await withApp(async ({ baseUrl, workspaceId, runners, runNextTimer }) => {
+    await withApp(async ({ baseUrl, workspaceId, runners, startNextRun }) => {
       await fetch(`${baseUrl}/api/runs`, {
         method: 'POST',
         headers: { Authorization: 'Bearer secret', 'Content-Type': 'application/json' },
         body: JSON.stringify({ profileId: 'report-docx', workspaceId, kind: 'revise', prompt: 'Run.' }),
       });
-      runNextTimer();
+      await startNextRun();
 
       const response = await fetch(`${baseUrl}/api/runs/run_1/cancel`, {
         method: 'POST',

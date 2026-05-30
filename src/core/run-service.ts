@@ -14,7 +14,6 @@ import {
   getRunForClient,
   getWorkspaceForClient,
   listRunsForClient,
-  updateRunLastEventId,
   updateRunStarted,
   updateRunTerminal,
   type RunDetailRecord,
@@ -22,7 +21,11 @@ import {
   type RunMessageRecord,
   type WorkspaceRecord,
 } from '../db/repositories.js';
-import { buildClaudeInvocation } from './claude-adapter.js';
+import { buildClaudeInvocation, type ClaudeInvocation } from './claude-adapter.js';
+import {
+  probeClaudeCapabilities,
+  type ClaudeCapabilities,
+} from './claude-capabilities.js';
 import { startClaudeCliRun, type ClaudeCliRunHandle, type ClaudeCliRunResult } from './cli-runner.js';
 import { badRequest, daemonError, notFound } from './errors.js';
 import { createId } from './ids.js';
@@ -47,6 +50,7 @@ export interface CreateRunServiceInput {
   config: DaemonConfig;
   db: RunnerDatabase;
   runnerFactory?: RunServiceRunnerFactory;
+  capabilityProbe?: (profile: ProfileConfig) => Promise<ClaudeCapabilities>;
   clock?: () => number;
   timer?: RunServiceTimer;
   eventBufferTtlMs?: number;
@@ -79,6 +83,7 @@ export interface RunServiceRunnerInput {
   run: RunRecord;
   prompt: string;
   model?: string;
+  capabilities?: ClaudeCapabilities;
   onEvent: (event: RunEvent) => void;
 }
 
@@ -117,11 +122,26 @@ export function createRunService(input: CreateRunServiceInput): RunService {
   const eventBufferTtlMs = input.eventBufferTtlMs ?? 5 * 60_000;
   const maxBufferedEvents = input.maxBufferedEvents ?? 1_000;
   const states = new Map<string, RunState>();
+  const capabilitiesByBin = new Map<string, Promise<ClaudeCapabilities>>();
   const nextRunId = input.ids?.runId ?? (() => createId('run'));
   const nextConversationId = input.ids?.conversationId ?? (() => createId('conv'));
   const nextUserMessageId = input.ids?.userMessageId ?? (() => createId('msg'));
   const nextAssistantMessageId = input.ids?.assistantMessageId ?? (() => createId('msg'));
   const runnerFactory = input.runnerFactory ?? defaultRunnerFactory;
+  const capabilityProbe =
+    input.capabilityProbe ??
+    ((profile: ProfileConfig) => probeClaudeCapabilities({ claudeBin: profile.claudeBin }));
+
+  function getCapabilities(profile: ProfileConfig): Promise<ClaudeCapabilities> {
+    const cached = capabilitiesByBin.get(profile.claudeBin);
+    if (cached) {
+      return cached;
+    }
+
+    const loaded = capabilityProbe(profile).catch(() => ({}));
+    capabilitiesByBin.set(profile.claudeBin, loaded);
+    return loaded;
+  }
 
   function emitRunEvent(state: RunState, event: RunEvent): BufferedRunEvent {
     const record = { id: formatRunEventId(state.nextEventId++), event };
@@ -130,7 +150,6 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       state.events.splice(0, state.events.length - maxBufferedEvents);
     }
 
-    updateRunLastEventId(input.db, { runId: state.runId, lastRunEventId: record.id, now: now() });
     state.accumulator?.consume(event, record.id);
 
     for (const subscriber of Array.from(state.subscribers)) {
@@ -144,7 +163,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     timer.setTimeout(() => startRun(state), 0);
   }
 
-  function startRun(state: RunState): void {
+  async function startRun(state: RunState): Promise<void> {
     if (state.terminal) {
       return;
     }
@@ -159,6 +178,10 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     });
     state.accumulator.startRun({ startedAt });
     emitRunEvent(state, { type: 'status', label: 'running' });
+    const capabilities = await getCapabilities(state.profile);
+    if (state.terminal) {
+      return;
+    }
 
     state.runner = runnerFactory({
       profile: state.profile,
@@ -167,6 +190,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       run,
       prompt: state.prompt,
       model: state.model,
+      capabilities,
       onEvent: (event) => emitRunEvent(state, event),
     });
 
@@ -398,18 +422,22 @@ export function createRunService(input: CreateRunServiceInput): RunService {
 }
 
 function defaultRunnerFactory(input: RunServiceRunnerInput): ClaudeCliRunHandle {
-  const invocation = buildClaudeInvocation({
-    profile: input.profile,
-    prompt: input.prompt,
-    workspaceCwd: input.workspaceCwd,
-    requestModel: input.model,
-    extraAllowedDirs: input.profile.allowedInputRoots,
-  });
+  const invocation = buildClaudeRunInvocation(input);
 
   return startClaudeCliRun({
     invocation,
     inactivityTimeoutMs: input.profile.inactivityTimeoutMs,
     cancelGraceMs: input.profile.cancelGraceMs,
     onEvent: input.onEvent,
+  });
+}
+
+export function buildClaudeRunInvocation(input: RunServiceRunnerInput): ClaudeInvocation {
+  return buildClaudeInvocation({
+    profile: input.profile,
+    prompt: input.prompt,
+    workspaceCwd: input.workspaceCwd,
+    requestModel: input.model,
+    capabilities: input.capabilities,
   });
 }
