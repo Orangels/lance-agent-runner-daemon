@@ -3,16 +3,19 @@ import { ZodError } from 'zod';
 import type { DaemonConfig } from '../config/profiles.js';
 import { DaemonError, badRequest, internalError, toErrorResponse } from '../core/errors.js';
 import type { WorkspaceService } from '../core/workspace-service.js';
+import type { RunService } from '../core/run-service.js';
 import type { RunnerDatabase } from '../db/connection.js';
 import { zodErrorToDaemonError } from './validation.js';
 import { createHealthRouter } from './health-routes.js';
 import { createProfilesRouter } from './profiles-routes.js';
+import { createRunsRouter } from './runs-routes.js';
 import { createWorkspacesRouter } from './workspaces-routes.js';
 
 interface CreateAppDependencies {
   config: DaemonConfig;
   db: RunnerDatabase;
   workspaceService: WorkspaceService;
+  runService?: RunService;
 }
 
 export function createApp(dependencies: CreateAppDependencies): express.Express {
@@ -21,6 +24,9 @@ export function createApp(dependencies: CreateAppDependencies): express.Express 
   app.use(express.json({ limit: '1mb' }));
   app.use('/api/health', createHealthRouter());
   app.use('/api/profiles', createProfilesRouter(dependencies.config));
+  if (dependencies.runService) {
+    app.use('/api/runs', createRunsRouter({ config: dependencies.config, runService: dependencies.runService }));
+  }
   app.use(
     '/api/workspaces',
     createWorkspacesRouter({
