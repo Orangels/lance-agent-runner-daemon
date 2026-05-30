@@ -4,7 +4,7 @@
 
 **Goal:** Implement the smallest useful Claude Code run lifecycle: create a durable run, spawn Claude Code for prompt-only `revise` runs, stream translated events over SSE, support cancel, and persist daemon-side `run_messages` without relying on an SSE consumer.
 
-**Architecture:** Phase 1 adds runner behavior on top of the Phase 0 foundation without adding Phase 2 skill/artifact behavior or Phase 3 queue hardening. `src/http/*` remains Express-only, `src/core/*` owns process/runtime/domain logic, `src/db/*` owns SQLite writes, and `src/config/*` owns profiles/auth. lanceDesign is a behavior reference only; do not import its private source.
+**Architecture:** Phase 1 adds runner behavior on top of the Phase 0 foundation without adding Phase 2 skill/artifact behavior or Phase 3 queue hardening. `src/http/*` remains Express-only, `src/core/*` owns process/runtime/domain logic, `src/db/*` owns SQLite writes, and `src/config/*` owns profiles/auth. Product-clean lanceDesign runner pieces must be ported behavior-equivalently into this repo; do not import lanceDesign private source.
 
 **Tech Stack:** TypeScript ESM, Express 5, zod, better-sqlite3, Node `child_process.spawn`, Node streams, SSE, Vitest with fake spawn seams.
 
@@ -144,6 +144,7 @@ src/http/*
 
 src/core/run-service.ts
   -> db repositories, core/message-accumulator, core/cli-runner, core/event-visibility, core/ids, core/errors
+  -> injects profile inactivityTimeoutMs and cancelGraceMs into cli-runner
 
 src/core/cli-runner.ts
   -> core/claude-adapter, core/claude-stream, core/claude-diagnostics
@@ -654,7 +655,9 @@ Do not pass prompt as argv.
 
 **Phase 1 Timeout Boundary:**
 
-Do not implement the full Phase 3 timeout scheduler or queue-wide timeout hardening in this task. Phase 1 must still port lanceDesign's minimal inactivity watchdog: reset the watchdog on stdout bytes, stderr bytes, and parsed agent events; if no activity occurs for `profile.inactivityTimeoutMs`, emit a generic `RUN_INACTIVITY_TIMEOUT` error, fail the run, send SIGTERM, and then SIGKILL after `profile.cancelGraceMs` if needed. `runTimeoutMs` enforcement remains Phase 3 unless it can be added without a scheduler.
+Do not implement the full Phase 3 timeout scheduler or queue-wide timeout hardening in this task. Phase 1 must still port lanceDesign's minimal inactivity watchdog: reset the watchdog on stdout bytes, stderr bytes, and parsed agent events; if no activity occurs for `profile.inactivityTimeoutMs`, emit a generic `RUN_INACTIVITY_TIMEOUT` error, fail the run, send SIGTERM, and then SIGKILL after `profile.cancelGraceMs` if needed. `runTimeoutMs` enforcement remains Phase 3 unless it can be added without a scheduler. Phase 1 intentionally uses profile `cancelGraceMs` for inactivity SIGTERM-to-SIGKILL escalation instead of lanceDesign's hard-coded 3s/6s inactivity grace so profiles own process shutdown timing.
+
+Before the watchdog emits an error or finishes a run, it must guard against `cancelRequested` and terminal status. This prevents a race where user cancel and inactivity timeout both try to finish the same run and overwrite terminal status.
 
 **Diagnostics Redaction Requirements:**
 
@@ -678,6 +681,7 @@ Do not implement the full Phase 3 timeout scheduler or queue-wide timeout harden
 - [ ] Add a failing test that cancel sends SIGTERM and then SIGKILL after `cancelGraceMs` if the fake process stays alive.
 - [ ] Add a failing test that stdout/stderr tails are capped at 2,000 characters and never include uncapped huge chunks.
 - [ ] Add a failing test that inactivity timeout fails the run with `RUN_INACTIVITY_TIMEOUT`, sends SIGTERM, and escalates to SIGKILL after `cancelGraceMs` if the child remains alive.
+- [ ] Add a failing test that inactivity timeout does nothing when the run is already terminal or cancel has already been requested.
 - [ ] Implement fake child process interfaces and runner.
 - [ ] Run `pnpm test src/core/__tests__/claude-diagnostics.test.ts src/core/__tests__/cli-runner.test.ts`.
 - [ ] Commit: `feat: add cli runner`.
