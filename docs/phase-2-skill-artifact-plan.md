@@ -152,7 +152,7 @@ Modify these existing modules:
   - Treat `artifact_finalized` as `quiet`.
 - `src/core/run-types.ts`
   - Add public artifact DTO types if useful.
-  - Add `SKILL_UNAVAILABLE` and `SKILL_STAGING_FAILED` error codes.
+  - Add `SKILL_UNAVAILABLE`, `SKILL_STAGING_FAILED`, and `ARTIFACT_SCAN_FAILED` error codes.
   - Do not add a `run_events` table or event-persistence DTO.
 - `src/core/claude-adapter.ts`
   - Treat `extraAllowedDirs` as the complete extra allowlist.
@@ -460,6 +460,7 @@ Expected: repository tests pass.
   - return found artifact records plus missing required rule ids;
   - if a required rule is missing after a successful Claude result, caller can fail the run with `ARTIFACT_REQUIRED_MISSING`;
   - if Claude already failed, persist any found artifacts but do not replace the original CLI failure code.
+  - if glob/stat/hash work throws during artifact finalization, return a structured scanner failure to the caller instead of leaving the run non-terminal.
 - [ ] Implement read helpers:
   - `listRunArtifacts({ client, runId })`;
   - `getRunArtifactDownload({ client, runId, artifactId })`;
@@ -467,6 +468,7 @@ Expected: repository tests pass.
 - [ ] Write tests that:
   - required missing is reported;
   - non-required missing is not fatal;
+  - scanner/hash exceptions are surfaced so run-service can fail terminally instead of hanging;
   - found artifacts are persisted;
   - download helper never exposes absolute paths in returned public metadata;
   - deleted-on-disk artifact returns `NOT_FOUND`;
@@ -517,6 +519,7 @@ Expected: artifact service tests pass.
 - [ ] Add these error codes to `daemonErrorCodes`:
   - `SKILL_UNAVAILABLE`: an allowlisted skill could not be found/read from configured `profile.skillRoots` after queued run creation.
   - `SKILL_STAGING_FAILED`: the daemon resolved the skill but could not stage its side files into the workspace.
+  - `ARTIFACT_SCAN_FAILED`: artifact glob/stat/hash/persist failed after the Claude process completed; the run must still reach terminal failed state.
 - [ ] Replace Phase 1 generate rejection with:
   - `kind=generate` performs synchronous `skillId` membership validation against `profile.allowedSkillIds` before queued insert;
   - disallowed `skillId` throws `SKILL_NOT_ALLOWED` 400 and does not create a run row;
@@ -543,7 +546,9 @@ Expected: artifact service tests pass.
   - on CLI completion and when not canceled, scan artifacts before emitting `end`;
   - persist artifacts with `replaceArtifactsForRun`;
   - emit `artifact_finalized` events for found artifacts;
+  - `artifact_finalized` events are consumed by the message accumulator and persisted in assistant `events_json`;
   - if CLI status is `succeeded` and required artifacts are missing, emit an `error` event with code `ARTIFACT_REQUIRED_MISSING` and rewrite final status to `failed`;
+  - if artifact scan/persist/hash throws, emit an `error` event with code `ARTIFACT_SCAN_FAILED`, rewrite final status to `failed`, and still reach terminal;
   - call `accumulator.flushTerminal({ runStatus: finalStatus })` with the rewritten final status, not the raw CLI status;
   - emit `end` only after artifact and error events have been emitted and consumed by the accumulator;
   - then call `updateRunTerminal` with the same final status;
@@ -560,7 +565,9 @@ Expected: artifact service tests pass.
   - fake runner input extra dirs do not contain `allowedInputRoots` or full `skillRoots`;
   - successful generate with required output writes artifacts and succeeds;
   - successful generate missing required output fails with `ARTIFACT_REQUIRED_MISSING`;
+  - artifact scan/hash exception fails the run terminally and does not leave it `running`;
   - missing required artifact still leaves assistant `content/events_json` flushed for run detail;
+  - `artifact_finalized` appears in durable assistant `events_json`;
   - `artifact_finalized` and `ARTIFACT_REQUIRED_MISSING` error events appear before the terminal `end` event;
   - revise runs still do not stage or inject skill body.
 - [ ] Run:
@@ -663,7 +670,7 @@ Expected: HTTP artifact route tests pass.
   - `defaultArtifactRuleIds` must exist in `artifactRules`;
   - `allowedSkillIds` can be empty for revise-only profiles;
   - `skillRoots` are config-only and absent from public profile responses.
-- [ ] Add contract tests that `SKILL_UNAVAILABLE` and `SKILL_STAGING_FAILED` are accepted daemon error codes.
+- [ ] Add contract tests that `SKILL_UNAVAILABLE`, `SKILL_STAGING_FAILED`, and `ARTIFACT_SCAN_FAILED` are accepted daemon error codes.
 - [ ] Do not change existing Phase 1 visibility behavior except adding `artifact_finalized = quiet`. Phase 1 intentionally exposes `tool_result` at `normal` visibility even though an older design paragraph said otherwise; keep that compatibility unless a separate review decides to change the event contract.
 - [ ] Run:
 
@@ -766,6 +773,7 @@ Do not implement these in Phase 2:
 - Found artifacts are stored in SQLite with relative paths only.
 - Required missing artifacts fail successful Claude runs with `ARTIFACT_REQUIRED_MISSING`.
 - Non-required missing artifacts do not fail the run.
+- Artifact scan/stat/hash/persist exceptions fail terminally with `ARTIFACT_SCAN_FAILED`.
 - `artifact_finalized` and required-missing `error` events are emitted before terminal `end`.
 - `run_messages.run_status` and `runs.status` use the same final status after required-missing rewrites.
 
