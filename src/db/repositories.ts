@@ -71,6 +71,31 @@ export interface RunDetailRecord {
   messages: RunMessageRecord[];
 }
 
+export interface ProfileSnapshotRecord {
+  runId: string;
+  profile: unknown;
+  createdAt: number;
+}
+
+export interface CreateRunQueuedWithMessagesAndSnapshotResult {
+  run: RunRecord;
+  conversation: ConversationRecord;
+  messages: RunMessageRecord[];
+  profileSnapshot: ProfileSnapshotRecord;
+}
+
+export class WorkspaceRunActiveRepositoryError extends Error {
+  readonly code = 'WORKSPACE_RUN_ACTIVE';
+
+  constructor(
+    readonly workspaceId: string,
+    readonly activeRunId: string,
+  ) {
+    super(`Workspace already has an active run: ${workspaceId}`);
+    this.name = 'WorkspaceRunActiveRepositoryError';
+  }
+}
+
 interface WorkspaceRow {
   id: string;
   profile_id: string;
@@ -134,6 +159,12 @@ interface RunMessageRow {
   position: number;
   created_at: number;
   updated_at: number;
+}
+
+interface ProfileSnapshotRow {
+  run_id: string;
+  profile_json: string;
+  created_at: number;
 }
 
 export function makeWorkspaceKey(originId: string, userId: string, projectId: string): string {
@@ -275,6 +306,79 @@ export function insertRunQueued(
   );
 
   return getRunById(db, input.id);
+}
+
+export function createRunQueuedWithMessagesAndSnapshot(
+  db: RunnerDatabase,
+  input: {
+    runId: string;
+    conversationId: string;
+    userMessageId: string;
+    assistantMessageId: string;
+    workspaceId: string;
+    profileId: string;
+    clientId: string;
+    kind: RunKind;
+    skillId?: string;
+    prompt: string;
+    artifactRuleIds?: string[];
+    metadata?: unknown;
+    profileSnapshot: unknown;
+    now: number;
+  },
+): CreateRunQueuedWithMessagesAndSnapshotResult {
+  const create = db.transaction((): CreateRunQueuedWithMessagesAndSnapshotResult => {
+    const activeRun = getActiveRunForWorkspace(db, input.workspaceId);
+    if (activeRun) {
+      throw new WorkspaceRunActiveRepositoryError(input.workspaceId, activeRun.id);
+    }
+
+    const conversation = getOrCreateDefaultConversation(db, {
+      id: input.conversationId,
+      workspaceId: input.workspaceId,
+      now: input.now,
+    });
+    const run = insertRunQueued(db, {
+      id: input.runId,
+      workspaceId: input.workspaceId,
+      profileId: input.profileId,
+      clientId: input.clientId,
+      kind: input.kind,
+      skillId: input.skillId,
+      prompt: input.prompt,
+      artifactRuleIds: input.artifactRuleIds,
+      metadata: input.metadata,
+      now: input.now,
+    });
+    const messages = insertRunMessagesForRunCreate(db, {
+      userMessageId: input.userMessageId,
+      assistantMessageId: input.assistantMessageId,
+      workspaceId: input.workspaceId,
+      conversationId: conversation.id,
+      runId: input.runId,
+      prompt: input.prompt,
+      now: input.now,
+    });
+    const profileSnapshot = insertProfileSnapshot(db, {
+      runId: input.runId,
+      profile: input.profileSnapshot,
+      now: input.now,
+    });
+
+    return { run, conversation, messages, profileSnapshot };
+  });
+
+  return create();
+}
+
+export function getProfileSnapshotForRun(
+  db: RunnerDatabase,
+  runId: string,
+): ProfileSnapshotRecord | null {
+  const row = db.prepare('SELECT * FROM profile_snapshots WHERE run_id = ?').get(runId) as
+    | ProfileSnapshotRow
+    | undefined;
+  return row ? mapProfileSnapshot(row) : null;
 }
 
 export function markInterruptedRunsOnStartup(db: RunnerDatabase, now: number): number {
@@ -558,6 +662,41 @@ function getRunMessages(db: RunnerDatabase, runId: string): RunMessageRecord[] {
   ).map(mapRunMessage);
 }
 
+function getActiveRunForWorkspace(db: RunnerDatabase, workspaceId: string): RunRecord | null {
+  const row = db
+    .prepare(
+      `
+      SELECT *
+      FROM runs
+      WHERE workspace_id = ?
+        AND status IN ('queued', 'running')
+      ORDER BY created_at ASC
+      LIMIT 1
+      `,
+    )
+    .get(workspaceId) as RunRow | undefined;
+
+  return row ? mapRun(row) : null;
+}
+
+function insertProfileSnapshot(
+  db: RunnerDatabase,
+  input: { runId: string; profile: unknown; now: number },
+): ProfileSnapshotRecord {
+  db.prepare(
+    `
+    INSERT INTO profile_snapshots (run_id, profile_json, created_at)
+    VALUES (?, ?, ?)
+    `,
+  ).run(input.runId, JSON.stringify(input.profile), input.now);
+
+  const snapshot = getProfileSnapshotForRun(db, input.runId);
+  if (!snapshot) {
+    throw new Error(`Profile snapshot not found after write: ${input.runId}`);
+  }
+  return snapshot;
+}
+
 function mapWorkspace(row: WorkspaceRow): WorkspaceRecord {
   return {
     id: row.id,
@@ -628,6 +767,14 @@ function mapRunMessage(row: RunMessageRow): RunMessageRecord {
     position: row.position,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function mapProfileSnapshot(row: ProfileSnapshotRow): ProfileSnapshotRecord {
+  return {
+    runId: row.run_id,
+    profile: JSON.parse(row.profile_json) as unknown,
+    createdAt: row.created_at,
   };
 }
 

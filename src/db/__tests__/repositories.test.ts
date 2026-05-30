@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { openInMemoryDatabase } from '../connection.js';
 import {
+  createRunQueuedWithMessagesAndSnapshot,
   getOrCreateDefaultConversation,
+  getProfileSnapshotForRun,
   getRunDetail,
   getWorkspaceForClient,
   insertRunMessagesForRunCreate,
@@ -11,6 +13,7 @@ import {
   updateRunMessage,
   updateRunStatus,
   upsertWorkspace,
+  WorkspaceRunActiveRepositoryError,
 } from '../repositories.js';
 import { applySchema } from '../schema.js';
 
@@ -153,6 +156,130 @@ describe('conversation repository', () => {
 });
 
 describe('run repository', () => {
+  it('creates queued run, default conversation, messages, and profile snapshot in one transaction', () => {
+    const { db, workspace } = insertWorkspaceFixture();
+
+    const created = createRunQueuedWithMessagesAndSnapshot(db, {
+      runId: 'run_1',
+      conversationId: 'conv_1',
+      userMessageId: 'msg_user',
+      assistantMessageId: 'msg_assistant',
+      workspaceId: workspace.id,
+      profileId: workspace.profileId,
+      clientId: workspace.clientId,
+      kind: 'revise',
+      prompt: 'Revise the report.',
+      profileSnapshot: { version: 1, profileId: workspace.profileId, envKeys: ['ANTHROPIC_API_KEY'] },
+      now: 5000,
+    });
+
+    expect(created.run).toMatchObject({
+      id: 'run_1',
+      status: 'queued',
+      queuedAt: 5000,
+      workspaceId: workspace.id,
+    });
+    expect(created.conversation).toMatchObject({ id: 'conv_1', workspaceId: workspace.id });
+    expect(created.messages).toEqual([
+      expect.objectContaining({ id: 'msg_user', role: 'user', content: 'Revise the report.', position: 0 }),
+      expect.objectContaining({ id: 'msg_assistant', role: 'assistant', content: '', runStatus: 'queued', position: 1 }),
+    ]);
+    expect(created.profileSnapshot).toMatchObject({
+      runId: 'run_1',
+      profile: { version: 1, profileId: workspace.profileId, envKeys: ['ANTHROPIC_API_KEY'] },
+      createdAt: 5000,
+    });
+    expect(getProfileSnapshotForRun(db, 'run_1')?.profile).toEqual(created.profileSnapshot.profile);
+  });
+
+  it('reuses the default conversation inside the create transaction', () => {
+    const { db, workspace } = insertWorkspaceFixture();
+    const existing = getOrCreateDefaultConversation(db, {
+      id: 'conv_existing',
+      workspaceId: workspace.id,
+      now: 3000,
+    });
+
+    const created = createRunQueuedWithMessagesAndSnapshot(db, {
+      runId: 'run_1',
+      conversationId: 'conv_new',
+      userMessageId: 'msg_user',
+      assistantMessageId: 'msg_assistant',
+      workspaceId: workspace.id,
+      profileId: workspace.profileId,
+      clientId: workspace.clientId,
+      kind: 'revise',
+      prompt: 'Revise the report.',
+      profileSnapshot: { version: 1, profileId: workspace.profileId },
+      now: 5000,
+    });
+
+    expect(created.conversation.id).toBe(existing.id);
+    expect(created.messages.map((message) => message.conversationId)).toEqual([existing.id, existing.id]);
+  });
+
+  it('rolls back run, messages, conversation, and snapshot when snapshot insert fails', () => {
+    const { db, workspace } = insertWorkspaceFixture();
+    const circular: Record<string, unknown> = { profileId: workspace.profileId };
+    circular.self = circular;
+
+    expect(() =>
+      createRunQueuedWithMessagesAndSnapshot(db, {
+        runId: 'run_1',
+        conversationId: 'conv_1',
+        userMessageId: 'msg_user',
+        assistantMessageId: 'msg_assistant',
+        workspaceId: workspace.id,
+        profileId: workspace.profileId,
+        clientId: workspace.clientId,
+        kind: 'revise',
+        prompt: 'Revise the report.',
+        profileSnapshot: circular,
+        now: 5000,
+      }),
+    ).toThrow();
+
+    expect(getRunDetail(db, { runId: 'run_1', clientId: workspace.clientId })).toBeNull();
+    expect(getProfileSnapshotForRun(db, 'run_1')).toBeNull();
+    expect(db.prepare('SELECT COUNT(*) AS count FROM run_messages').get()).toEqual({ count: 0 });
+    expect(db.prepare('SELECT COUNT(*) AS count FROM conversations').get()).toEqual({ count: 0 });
+  });
+
+  it('rejects a second active run for the same workspace in the create transaction', () => {
+    const { db, workspace } = insertWorkspaceFixture();
+    createRunQueuedWithMessagesAndSnapshot(db, {
+      runId: 'run_1',
+      conversationId: 'conv_1',
+      userMessageId: 'msg_user_1',
+      assistantMessageId: 'msg_assistant_1',
+      workspaceId: workspace.id,
+      profileId: workspace.profileId,
+      clientId: workspace.clientId,
+      kind: 'revise',
+      prompt: 'First run.',
+      profileSnapshot: { version: 1, profileId: workspace.profileId },
+      now: 5000,
+    });
+
+    expect(() =>
+      createRunQueuedWithMessagesAndSnapshot(db, {
+        runId: 'run_2',
+        conversationId: 'conv_2',
+        userMessageId: 'msg_user_2',
+        assistantMessageId: 'msg_assistant_2',
+        workspaceId: workspace.id,
+        profileId: workspace.profileId,
+        clientId: workspace.clientId,
+        kind: 'revise',
+        prompt: 'Second run.',
+        profileSnapshot: { version: 1, profileId: workspace.profileId },
+        now: 6000,
+      }),
+    ).toThrow(WorkspaceRunActiveRepositoryError);
+
+    expect(listRunsForClient(db, { clientId: workspace.clientId }).map((run) => run.id)).toEqual(['run_1']);
+  });
+
   it('inserts runs as queued immediately', () => {
     const { db, workspace } = insertWorkspaceFixture();
 
