@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { openInMemoryDatabase } from '../connection.js';
 import {
   createRunQueuedWithMessagesAndSnapshot,
+  getActiveRunForWorkspace,
   getOrCreateDefaultConversation,
   getProfileSnapshotForRun,
   getRunDetail,
@@ -10,8 +11,10 @@ import {
   insertRunQueued,
   listRunsForClient,
   markInterruptedRunsOnStartup,
+  updateRunLastEventId,
   updateRunMessage,
   updateRunStatus,
+  updateRunTerminal,
   upsertWorkspace,
   WorkspaceRunActiveRepositoryError,
 } from '../repositories.js';
@@ -278,6 +281,91 @@ describe('run repository', () => {
     ).toThrow(WorkspaceRunActiveRepositoryError);
 
     expect(listRunsForClient(db, { clientId: workspace.clientId }).map((run) => run.id)).toEqual(['run_1']);
+  });
+
+  it('finds active runs for a workspace and ignores terminal runs', () => {
+    const { db, workspace } = insertWorkspaceFixture();
+    insertRunQueued(db, {
+      id: 'run_done',
+      workspaceId: workspace.id,
+      profileId: workspace.profileId,
+      clientId: workspace.clientId,
+      kind: 'revise',
+      prompt: 'Done.',
+      now: 5000,
+    });
+    updateRunTerminal(db, {
+      runId: 'run_done',
+      status: 'succeeded',
+      finishedAt: 6000,
+      exitCode: 0,
+      signal: null,
+      now: 6000,
+    });
+
+    expect(getActiveRunForWorkspace(db, workspace.id)).toBeNull();
+
+    insertRunQueued(db, {
+      id: 'run_active',
+      workspaceId: workspace.id,
+      profileId: workspace.profileId,
+      clientId: workspace.clientId,
+      kind: 'revise',
+      prompt: 'Active.',
+      now: 7000,
+    });
+
+    expect(getActiveRunForWorkspace(db, workspace.id)?.id).toBe('run_active');
+  });
+
+  it('persists terminal signal exits with a null exit code', () => {
+    const { db, workspace } = insertWorkspaceFixture();
+    insertRunQueued(db, {
+      id: 'run_1',
+      workspaceId: workspace.id,
+      profileId: workspace.profileId,
+      clientId: workspace.clientId,
+      kind: 'revise',
+      prompt: 'Run.',
+      now: 5000,
+    });
+
+    const run = updateRunTerminal(db, {
+      runId: 'run_1',
+      status: 'canceled',
+      finishedAt: 7000,
+      exitCode: null,
+      signal: 'SIGTERM',
+      errorCode: null,
+      errorMessage: null,
+      now: 7000,
+    });
+
+    expect(run).toMatchObject({
+      status: 'canceled',
+      finishedAt: 7000,
+      exitCode: null,
+      signal: 'SIGTERM',
+      errorCode: null,
+      errorMessage: null,
+    });
+  });
+
+  it('updates a run last event id and timestamp without changing status', () => {
+    const { db, workspace } = insertWorkspaceFixture();
+    insertRunQueued(db, {
+      id: 'run_1',
+      workspaceId: workspace.id,
+      profileId: workspace.profileId,
+      clientId: workspace.clientId,
+      kind: 'revise',
+      prompt: 'Run.',
+      now: 5000,
+    });
+
+    const run = updateRunLastEventId(db, { runId: 'run_1', lastRunEventId: '12', now: 8000 });
+
+    expect(run).toMatchObject({ status: 'queued', lastRunEventId: '12', updatedAt: 8000 });
   });
 
   it('inserts runs as queued immediately', () => {

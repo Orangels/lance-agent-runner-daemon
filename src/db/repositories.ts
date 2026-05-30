@@ -71,6 +71,11 @@ export interface RunDetailRecord {
   messages: RunMessageRecord[];
 }
 
+export interface RunWithWorkspaceRecord {
+  run: RunRecord;
+  workspace: WorkspaceRecord;
+}
+
 export interface ProfileSnapshotRecord {
   runId: string;
   profile: unknown;
@@ -496,6 +501,116 @@ export function updateRunStatus(
   return getRunById(db, input.runId);
 }
 
+export function updateRunStarted(
+  db: RunnerDatabase,
+  input: { runId: string; startedAt: number; now: number },
+): RunRecord {
+  db.prepare(
+    `
+    UPDATE runs
+    SET status = 'running',
+        started_at = ?,
+        updated_at = ?
+    WHERE id = ?
+    `,
+  ).run(input.startedAt, input.now, input.runId);
+
+  return getRunById(db, input.runId);
+}
+
+export function updateRunTerminal(
+  db: RunnerDatabase,
+  input: {
+    runId: string;
+    status: RunStatus;
+    finishedAt: number;
+    exitCode?: number | null;
+    signal?: string | null;
+    errorCode?: string | null;
+    errorMessage?: string | null;
+    usage?: unknown;
+    lastRunEventId?: string | null;
+    now: number;
+  },
+): RunRecord {
+  const existing = getRunById(db, input.runId);
+  db.prepare(
+    `
+    UPDATE runs
+    SET status = ?,
+        finished_at = ?,
+        exit_code = ?,
+        signal = ?,
+        error_code = ?,
+        error_message = ?,
+        usage_json = ?,
+        last_run_event_id = ?,
+        updated_at = ?
+    WHERE id = ?
+    `,
+  ).run(
+    input.status,
+    input.finishedAt,
+    input.exitCode === undefined ? existing.exitCode : input.exitCode,
+    input.signal === undefined ? existing.signal : input.signal,
+    input.errorCode === undefined ? existing.errorCode : input.errorCode,
+    input.errorMessage === undefined ? existing.errorMessage : input.errorMessage,
+    input.usage === undefined ? stringifyNullable(existing.usage) : stringifyNullable(input.usage),
+    input.lastRunEventId === undefined ? existing.lastRunEventId : input.lastRunEventId,
+    input.now,
+    input.runId,
+  );
+
+  return getRunById(db, input.runId);
+}
+
+export function updateRunLastEventId(
+  db: RunnerDatabase,
+  input: { runId: string; lastRunEventId: string; now: number },
+): RunRecord {
+  db.prepare(
+    `
+    UPDATE runs
+    SET last_run_event_id = ?,
+        updated_at = ?
+    WHERE id = ?
+    `,
+  ).run(input.lastRunEventId, input.now, input.runId);
+
+  return getRunById(db, input.runId);
+}
+
+export function updateAssistantMessageStarted(
+  db: RunnerDatabase,
+  input: { messageId: string; startedAt: number; now: number },
+): RunMessageRecord {
+  return updateRunMessage(db, {
+    messageId: input.messageId,
+    runStatus: 'running',
+    startedAt: input.startedAt,
+    now: input.now,
+  });
+}
+
+export function updateAssistantMessageTerminal(
+  db: RunnerDatabase,
+  input: {
+    messageId: string;
+    runStatus: RunStatus;
+    lastRunEventId?: string | null;
+    endedAt: number;
+    now: number;
+  },
+): RunMessageRecord {
+  return updateRunMessage(db, {
+    messageId: input.messageId,
+    runStatus: input.runStatus,
+    lastRunEventId: input.lastRunEventId,
+    endedAt: input.endedAt,
+    now: input.now,
+  });
+}
+
 export function updateRunMessage(
   db: RunnerDatabase,
   input: {
@@ -563,6 +678,29 @@ export function getRunDetail(
     run: mapRun(row),
     messages: getRunMessages(db, input.runId),
   };
+}
+
+export function getRunForClient(
+  db: RunnerDatabase,
+  input: { runId: string; clientId: string; isAdmin?: boolean },
+): RunRecord | null {
+  const row = input.isAdmin
+    ? (db.prepare('SELECT * FROM runs WHERE id = ?').get(input.runId) as RunRow | undefined)
+    : (db.prepare('SELECT * FROM runs WHERE id = ? AND client_id = ?').get(input.runId, input.clientId) as
+        | RunRow
+        | undefined);
+  return row ? mapRun(row) : null;
+}
+
+export function getRunWithWorkspaceForClient(
+  db: RunnerDatabase,
+  input: { runId: string; clientId: string; isAdmin?: boolean },
+): RunWithWorkspaceRecord | null {
+  const run = getRunForClient(db, input);
+  if (!run) {
+    return null;
+  }
+  return { run, workspace: getWorkspaceById(db, run.workspaceId) };
 }
 
 export function listRunsForClient(
@@ -662,7 +800,7 @@ function getRunMessages(db: RunnerDatabase, runId: string): RunMessageRecord[] {
   ).map(mapRunMessage);
 }
 
-function getActiveRunForWorkspace(db: RunnerDatabase, workspaceId: string): RunRecord | null {
+export function getActiveRunForWorkspace(db: RunnerDatabase, workspaceId: string): RunRecord | null {
   const row = db
     .prepare(
       `
