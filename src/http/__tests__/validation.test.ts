@@ -87,6 +87,9 @@ describe('workspace prepare request validation', () => {
 });
 
 describe('run create request validation', () => {
+  const long128 = 'x'.repeat(128);
+  const long129 = 'x'.repeat(129);
+
   it('accepts a generate run that references workspaceId and skillId', () => {
     const parsed = createRunRequestSchema.parse({
       profileId: 'report-docx',
@@ -104,6 +107,32 @@ describe('run create request validation', () => {
 
     expect(parsed.workspaceId).toBe('ws_123');
     expect(parsed.kind).toBe('generate');
+  });
+
+  it('accepts a revise run with only workspaceId and prompt fields', () => {
+    const parsed = createRunRequestSchema.parse({
+      profileId: 'report-docx',
+      workspaceId: 'ws_123',
+      kind: 'revise',
+      prompt: 'Revise the report.',
+      model: 'sonnet',
+      eventVisibility: 'normal',
+      metadata: {
+        businessMessageId: 'msg_001',
+      },
+    });
+
+    expect(parsed).toEqual({
+      profileId: 'report-docx',
+      workspaceId: 'ws_123',
+      kind: 'revise',
+      prompt: 'Revise the report.',
+      model: 'sonnet',
+      eventVisibility: 'normal',
+      metadata: {
+        businessMessageId: 'msg_001',
+      },
+    });
   });
 
   it('rejects run create bodies that inline workspace identity', () => {
@@ -136,6 +165,103 @@ describe('run create request validation', () => {
         prompt: 'Generate the report.',
       }),
     ).toThrow();
+  });
+
+  it('rejects run create fields that exceed length limits', () => {
+    expect(() =>
+      createRunRequestSchema.parse({
+        profileId: long129,
+        workspaceId: 'ws_123',
+        kind: 'revise',
+        prompt: 'Revise the report.',
+      }),
+    ).toThrow();
+
+    expect(() =>
+      createRunRequestSchema.parse({
+        profileId: 'report-docx',
+        workspaceId: long129,
+        kind: 'revise',
+        prompt: 'Revise the report.',
+      }),
+    ).toThrow();
+
+    expect(() =>
+      createRunRequestSchema.parse({
+        profileId: 'report-docx',
+        workspaceId: 'ws_123',
+        kind: 'generate',
+        skillId: long129,
+        prompt: 'Generate the report.',
+      }),
+    ).toThrow();
+
+    expect(() =>
+      createRunRequestSchema.parse({
+        profileId: 'report-docx',
+        workspaceId: 'ws_123',
+        kind: 'revise',
+        prompt: 'Revise the report.',
+        model: long129,
+      }),
+    ).toThrow();
+
+    expect(
+      createRunRequestSchema.parse({
+        profileId: long128,
+        workspaceId: long128,
+        kind: 'revise',
+        prompt: 'Revise the report.',
+        model: long128,
+      }),
+    ).toMatchObject({
+      profileId: long128,
+      workspaceId: long128,
+      model: long128,
+    });
+  });
+
+  it('rejects prompts and artifact rule lists beyond Phase 1 limits', () => {
+    expect(() =>
+      createRunRequestSchema.parse({
+        profileId: 'report-docx',
+        workspaceId: 'ws_123',
+        kind: 'revise',
+        prompt: 'x'.repeat(200_001),
+      }),
+    ).toThrow();
+
+    expect(() =>
+      createRunRequestSchema.parse({
+        profileId: 'report-docx',
+        workspaceId: 'ws_123',
+        kind: 'revise',
+        prompt: 'Revise the report.',
+        artifactRuleIds: Array.from({ length: 33 }, (_, index) => `rule-${index}`),
+      }),
+    ).toThrow();
+
+    expect(() =>
+      createRunRequestSchema.parse({
+        profileId: 'report-docx',
+        workspaceId: 'ws_123',
+        kind: 'revise',
+        prompt: 'Revise the report.',
+        artifactRuleIds: [long129],
+      }),
+    ).toThrow();
+
+    expect(
+      createRunRequestSchema.parse({
+        profileId: 'report-docx',
+        workspaceId: 'ws_123',
+        kind: 'revise',
+        prompt: 'x'.repeat(200_000),
+        artifactRuleIds: Array.from({ length: 32 }, (_, index) => `rule-${index}`),
+      }),
+    ).toMatchObject({
+      artifactRuleIds: Array.from({ length: 32 }, (_, index) => `rule-${index}`),
+    });
   });
 
   it('rejects generate runs without skillId', () => {

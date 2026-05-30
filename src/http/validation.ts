@@ -13,6 +13,9 @@ import {
 
 const metadataSchema = z.record(z.string(), z.unknown());
 
+const runShortStringSchema = z.string().min(1).max(128);
+const runPromptSchema = z.string().min(1).max(200_000);
+
 const safePathSegmentSchema = z
   .string()
   .min(1)
@@ -68,13 +71,13 @@ export const prepareWorkspaceRequestSchema: z.ZodType<PrepareWorkspaceRequest> =
 
 export const createRunRequestSchema: z.ZodType<CreateRunRequest> = z
   .object({
-    profileId: z.string().min(1),
-    workspaceId: z.string().min(1),
+    profileId: runShortStringSchema,
+    workspaceId: runShortStringSchema,
     kind: z.enum(runKinds),
-    prompt: z.string().min(1),
-    skillId: z.string().min(1).optional(),
-    model: z.string().min(1).optional(),
-    artifactRuleIds: z.array(z.string().min(1)).optional(),
+    prompt: runPromptSchema,
+    skillId: runShortStringSchema.optional(),
+    model: runShortStringSchema.optional(),
+    artifactRuleIds: z.array(runShortStringSchema).max(32).optional(),
     eventVisibility: z.enum(eventVisibilityLevels).optional(),
     metadata: metadataSchema.optional(),
   })

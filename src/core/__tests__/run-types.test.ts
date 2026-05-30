@@ -62,6 +62,7 @@ describe('run contract constants', () => {
       'PROFILE_NOT_ALLOWED',
       'SKILL_NOT_ALLOWED',
       'RUN_QUEUE_FULL',
+      'WORKSPACE_RUN_ACTIVE',
       'RUN_NOT_CANCELABLE',
       'RUN_TIMEOUT',
       'RUN_INACTIVITY_TIMEOUT',
