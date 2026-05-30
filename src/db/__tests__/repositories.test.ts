@@ -9,8 +9,11 @@ import {
   getWorkspaceForClient,
   insertRunMessagesForRunCreate,
   insertRunQueued,
+  getArtifactForRunForClient,
   listRunsForClient,
+  listArtifactsForRun,
   markInterruptedRunsOnStartup,
+  replaceArtifactsForRun,
   updateRunMessage,
   updateRunStatus,
   updateRunTerminal,
@@ -528,5 +531,207 @@ describe('run message repository', () => {
       lastRunEventId: 'evt_1',
       endedAt: 7000,
     });
+  });
+});
+
+describe('artifact repository', () => {
+  it('replaces artifacts for one run and maps metadata', () => {
+    const { db, workspace } = insertWorkspaceFixture();
+    insertRunQueued(db, {
+      id: 'run_1',
+      workspaceId: workspace.id,
+      profileId: workspace.profileId,
+      clientId: workspace.clientId,
+      kind: 'generate',
+      skillId: 'report-writer',
+      prompt: 'Generate.',
+      now: 5000,
+    });
+
+    const inserted = replaceArtifactsForRun(db, {
+      runId: 'run_1',
+      workspaceId: workspace.id,
+      artifacts: [
+        {
+          id: 'artifact_1',
+          ruleId: 'report-docx',
+          role: 'primary',
+          relativePath: 'output/report.docx',
+          fileName: 'report.docx',
+          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          size: 123,
+          mtime: 7000,
+          sha256: 'abc123',
+          metadata: { pageCount: 2 },
+        },
+      ],
+      now: 8000,
+    });
+
+    expect(inserted).toEqual([
+      expect.objectContaining({
+        id: 'artifact_1',
+        runId: 'run_1',
+        workspaceId: workspace.id,
+        ruleId: 'report-docx',
+        role: 'primary',
+        relativePath: 'output/report.docx',
+        fileName: 'report.docx',
+        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        size: 123,
+        mtime: 7000,
+        sha256: 'abc123',
+        metadata: { pageCount: 2 },
+        createdAt: 8000,
+      }),
+    ]);
+  });
+
+  it('deletes stale artifacts for the run being replaced only', () => {
+    const { db, workspace } = insertWorkspaceFixture();
+    insertRunQueued(db, {
+      id: 'run_1',
+      workspaceId: workspace.id,
+      profileId: workspace.profileId,
+      clientId: workspace.clientId,
+      kind: 'generate',
+      prompt: 'Generate 1.',
+      now: 5000,
+    });
+    updateRunTerminal(db, {
+      runId: 'run_1',
+      status: 'succeeded',
+      finishedAt: 6000,
+      now: 6000,
+    });
+    insertRunQueued(db, {
+      id: 'run_2',
+      workspaceId: workspace.id,
+      profileId: workspace.profileId,
+      clientId: workspace.clientId,
+      kind: 'generate',
+      prompt: 'Generate 2.',
+      now: 7000,
+    });
+
+    replaceArtifactsForRun(db, {
+      runId: 'run_1',
+      workspaceId: workspace.id,
+      artifacts: [
+        {
+          id: 'stale',
+          ruleId: 'report-docx',
+          role: 'primary',
+          relativePath: 'output/stale.docx',
+          fileName: 'stale.docx',
+        },
+      ],
+      now: 8000,
+    });
+    replaceArtifactsForRun(db, {
+      runId: 'run_2',
+      workspaceId: workspace.id,
+      artifacts: [
+        {
+          id: 'other',
+          ruleId: 'report-docx',
+          role: 'primary',
+          relativePath: 'output/other.docx',
+          fileName: 'other.docx',
+        },
+      ],
+      now: 8100,
+    });
+
+    replaceArtifactsForRun(db, {
+      runId: 'run_1',
+      workspaceId: workspace.id,
+      artifacts: [
+        {
+          id: 'fresh',
+          ruleId: 'report-docx',
+          role: 'primary',
+          relativePath: 'output/fresh.docx',
+          fileName: 'fresh.docx',
+        },
+      ],
+      now: 8200,
+    });
+
+    expect(listArtifactsForRun(db, { runId: 'run_1', clientId: workspace.clientId }).map((artifact) => artifact.id)).toEqual([
+      'fresh',
+    ]);
+    expect(listArtifactsForRun(db, { runId: 'run_2', clientId: workspace.clientId }).map((artifact) => artifact.id)).toEqual([
+      'other',
+    ]);
+  });
+
+  it('lists and gets artifacts scoped by client unless admin', () => {
+    const { db, workspace } = insertWorkspaceFixture();
+    const otherWorkspace = upsertWorkspace(db, {
+      id: 'ws_other',
+      clientId: 'other',
+      profileId: 'report-docx',
+      originId: 'other',
+      userId: 'user_2',
+      projectId: 'project_456',
+      status: 'active',
+      now: 1000,
+    });
+    insertRunQueued(db, {
+      id: 'run_1',
+      workspaceId: workspace.id,
+      profileId: workspace.profileId,
+      clientId: workspace.clientId,
+      kind: 'generate',
+      prompt: 'Generate 1.',
+      now: 5000,
+    });
+    insertRunQueued(db, {
+      id: 'run_2',
+      workspaceId: otherWorkspace.id,
+      profileId: otherWorkspace.profileId,
+      clientId: otherWorkspace.clientId,
+      kind: 'generate',
+      prompt: 'Generate 2.',
+      now: 6000,
+    });
+    replaceArtifactsForRun(db, {
+      runId: 'run_1',
+      workspaceId: workspace.id,
+      artifacts: [
+        {
+          id: 'artifact_1',
+          ruleId: 'report-docx',
+          role: 'primary',
+          relativePath: 'output/report.docx',
+          fileName: 'report.docx',
+        },
+      ],
+      now: 7000,
+    });
+    replaceArtifactsForRun(db, {
+      runId: 'run_2',
+      workspaceId: otherWorkspace.id,
+      artifacts: [
+        {
+          id: 'artifact_2',
+          ruleId: 'report-docx',
+          role: 'primary',
+          relativePath: 'output/other.docx',
+          fileName: 'other.docx',
+        },
+      ],
+      now: 7100,
+    });
+
+    expect(listArtifactsForRun(db, { runId: 'run_1', clientId: 'other' })).toEqual([]);
+    expect(getArtifactForRunForClient(db, { runId: 'run_1', artifactId: 'artifact_1', clientId: 'other' })).toBeNull();
+    expect(listArtifactsForRun(db, { runId: 'run_1', clientId: 'admin', isAdmin: true }).map((artifact) => artifact.id)).toEqual([
+      'artifact_1',
+    ]);
+    expect(getArtifactForRunForClient(db, { runId: 'run_2', artifactId: 'artifact_2', clientId: 'admin', isAdmin: true })?.relativePath).toBe(
+      'output/other.docx',
+    );
   });
 });

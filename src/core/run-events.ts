@@ -1,4 +1,5 @@
 import type { RunStatus } from './run-types.js';
+import type { PublicArtifact } from './run-types.js';
 
 export const rawEventLineMaxLength = 2_000;
 
@@ -45,6 +46,10 @@ export type RunEvent =
       message: string;
       code?: string;
       details?: unknown;
+    }
+  | {
+      type: 'artifact_finalized';
+      artifact: Omit<PublicArtifact, 'workspaceId'>;
     }
   | {
       type: 'stderr';

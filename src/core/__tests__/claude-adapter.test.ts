@@ -72,19 +72,26 @@ describe('buildClaudeInvocation', () => {
     ).not.toContain('--include-partial-messages');
   });
 
-  it('adds the workspace cwd for extra dirs when add-dir support is true or unknown', () => {
+  it('adds only explicit extra dirs when add-dir support is true or unknown', () => {
     const workspaceCwd = path.join('/tmp', 'runner', 'workspace', 'work');
+    const stagedSkillDir = path.join(workspaceCwd, '.claude-runner-skills', 'report-writer');
 
     for (const capabilities of [{ addDir: true }, undefined]) {
       const invocation = buildClaudeInvocation({
         profile: makeProfile(),
         prompt: 'hello',
         workspaceCwd,
-        extraAllowedDirs: ['/tmp/uploads'],
+        extraAllowedDirs: [stagedSkillDir],
         capabilities,
       });
 
-      expect(invocation.args).toEqual(expect.arrayContaining(['--add-dir', workspaceCwd]));
+      const addDirIndex = invocation.args.indexOf('--add-dir');
+      expect(addDirIndex).toBeGreaterThan(-1);
+      expect(invocation.args.slice(addDirIndex, addDirIndex + 2)).toEqual([
+        '--add-dir',
+        stagedSkillDir,
+      ]);
+      expect(invocation.args).not.toContain(workspaceCwd);
     }
   });
 

@@ -234,7 +234,7 @@ describe('runs routes', () => {
     });
   });
 
-  it('rejects Phase 1 generate runs before execution', async () => {
+  it('queues Phase 2 generate runs before execution', async () => {
     await withApp(async ({ baseUrl, workspaceId, runners }) => {
       const response = await fetch(`${baseUrl}/api/runs`, {
         method: 'POST',
@@ -248,8 +248,8 @@ describe('runs routes', () => {
         }),
       });
 
-      expect(response.status).toBe(400);
-      expect(await response.json()).toEqual({ error: expect.objectContaining({ code: 'BAD_REQUEST' }) });
+      expect(response.status).toBe(202);
+      expect(await response.json()).toEqual({ runId: 'run_1', status: 'queued' });
       expect(runners).toHaveLength(0);
     });
   });
@@ -272,7 +272,13 @@ describe('runs routes', () => {
       await fetch(`${baseUrl}/api/runs`, {
         method: 'POST',
         headers: { Authorization: 'Bearer secret', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profileId: 'report-docx', workspaceId, kind: 'revise', prompt: 'Run.' }),
+        body: JSON.stringify({
+          profileId: 'report-docx',
+          workspaceId,
+          kind: 'revise',
+          prompt: 'Run.',
+          artifactRuleIds: [],
+        }),
       });
 
       const response = await fetch(`${baseUrl}/api/runs?status=queued&originId=lqbot`, {
@@ -291,7 +297,13 @@ describe('runs routes', () => {
       await fetch(`${baseUrl}/api/runs`, {
         method: 'POST',
         headers: { Authorization: 'Bearer secret', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profileId: 'report-docx', workspaceId, kind: 'revise', prompt: 'Run.' }),
+        body: JSON.stringify({
+          profileId: 'report-docx',
+          workspaceId,
+          kind: 'revise',
+          prompt: 'Run.',
+          artifactRuleIds: [],
+        }),
       });
       await startNextRun();
       runners[0]!.input.onEvent({ type: 'text_delta', delta: 'Done.' });
@@ -321,7 +333,13 @@ describe('runs routes', () => {
       await fetch(`${baseUrl}/api/runs`, {
         method: 'POST',
         headers: { Authorization: 'Bearer secret', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profileId: 'report-docx', workspaceId, kind: 'revise', prompt: 'Run.' }),
+        body: JSON.stringify({
+          profileId: 'report-docx',
+          workspaceId,
+          kind: 'revise',
+          prompt: 'Run.',
+          artifactRuleIds: [],
+        }),
       });
       await startNextRun();
       runners[0]!.input.onEvent({ type: 'text_delta', delta: 'Done.' });

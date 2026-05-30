@@ -11,6 +11,21 @@ const allEvents: RunEvent[] = [
   { type: 'text_delta', delta: 'hello' },
   { type: 'usage', usage: { input_tokens: 1 }, costUsd: null, durationMs: 10, stopReason: null },
   { type: 'error', message: 'failed', code: 'CLAUDE_CLI_FAILED' },
+  {
+    type: 'artifact_finalized',
+    artifact: {
+      id: 'artifact_1',
+      runId: 'run_1',
+      ruleId: 'report-docx',
+      role: 'primary',
+      relativePath: 'output/report.docx',
+      fileName: 'report.docx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      size: 123,
+      mtime: 1770000000000,
+      sha256: 'abc123',
+    },
+  },
   { type: 'end' },
   { type: 'thinking_start' },
   { type: 'thinking_delta', delta: 'thinking' },
@@ -21,12 +36,13 @@ const allEvents: RunEvent[] = [
 ];
 
 describe('event visibility filtering', () => {
-  it('quiet includes only status, text_delta, usage, error, and end', () => {
+  it('quiet includes status, text_delta, usage, error, artifact_finalized, and end', () => {
     expect(filterRunEvents(allEvents, 'quiet').map((event) => event.type)).toEqual([
       'status',
       'text_delta',
       'usage',
       'error',
+      'artifact_finalized',
       'end',
     ]);
   });
@@ -37,6 +53,7 @@ describe('event visibility filtering', () => {
       'text_delta',
       'usage',
       'error',
+      'artifact_finalized',
       'end',
       'thinking_start',
       'thinking_delta',

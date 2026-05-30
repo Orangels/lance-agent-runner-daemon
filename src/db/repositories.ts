@@ -66,6 +66,22 @@ export interface RunMessageRecord {
   updatedAt: number;
 }
 
+export interface ArtifactRecord {
+  id: string;
+  runId: string;
+  workspaceId: string;
+  ruleId: string;
+  role: string;
+  relativePath: string;
+  fileName: string;
+  mimeType: string | null;
+  size: number | null;
+  mtime: number | null;
+  sha256: string | null;
+  metadata: unknown;
+  createdAt: number;
+}
+
 export interface RunDetailRecord {
   run: RunRecord;
   messages: RunMessageRecord[];
@@ -169,6 +185,22 @@ interface RunMessageRow {
 interface ProfileSnapshotRow {
   run_id: string;
   profile_json: string;
+  created_at: number;
+}
+
+interface ArtifactRow {
+  id: string;
+  run_id: string;
+  workspace_id: string;
+  rule_id: string;
+  role: string;
+  relative_path: string;
+  file_name: string;
+  mime_type: string | null;
+  size: number | null;
+  mtime: number | null;
+  sha256: string | null;
+  metadata_json: string | null;
   created_at: number;
 }
 
@@ -645,6 +677,122 @@ export function updateRunMessage(
   return getRunMessageById(db, input.messageId);
 }
 
+export function replaceArtifactsForRun(
+  db: RunnerDatabase,
+  input: {
+    runId: string;
+    workspaceId: string;
+    artifacts: Array<{
+      id: string;
+      ruleId: string;
+      role: string;
+      relativePath: string;
+      fileName: string;
+      mimeType?: string | null;
+      size?: number | null;
+      mtime?: number | null;
+      sha256?: string | null;
+      metadata?: unknown;
+    }>;
+    now: number;
+  },
+): ArtifactRecord[] {
+  const replace = db.transaction(() => {
+    db.prepare('DELETE FROM artifacts WHERE run_id = ?').run(input.runId);
+
+    const insert = db.prepare(
+      `
+      INSERT INTO artifacts (
+        id, run_id, workspace_id, rule_id, role, relative_path, file_name,
+        mime_type, size, mtime, sha256, metadata_json, created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+    );
+
+    for (const artifact of input.artifacts) {
+      insert.run(
+        artifact.id,
+        input.runId,
+        input.workspaceId,
+        artifact.ruleId,
+        artifact.role,
+        artifact.relativePath,
+        artifact.fileName,
+        artifact.mimeType ?? null,
+        artifact.size ?? null,
+        artifact.mtime ?? null,
+        artifact.sha256 ?? null,
+        stringifyNullable(artifact.metadata),
+        input.now,
+      );
+    }
+  });
+
+  replace();
+  return listArtifactsForRun(db, { runId: input.runId, clientId: '', isAdmin: true });
+}
+
+export function listArtifactsForRun(
+  db: RunnerDatabase,
+  input: { runId: string; clientId: string; isAdmin?: boolean },
+): ArtifactRecord[] {
+  const rowQuery = input.isAdmin
+    ? db
+        .prepare(
+          `
+          SELECT artifacts.*
+          FROM artifacts
+          JOIN runs ON runs.id = artifacts.run_id
+          WHERE artifacts.run_id = ?
+          ORDER BY artifacts.role ASC, artifacts.relative_path ASC
+          `,
+        )
+        .all(input.runId)
+    : db
+        .prepare(
+          `
+          SELECT artifacts.*
+          FROM artifacts
+          JOIN runs ON runs.id = artifacts.run_id
+          WHERE artifacts.run_id = ? AND runs.client_id = ?
+          ORDER BY artifacts.role ASC, artifacts.relative_path ASC
+          `,
+        )
+        .all(input.runId, input.clientId);
+
+  return (rowQuery as ArtifactRow[]).map(mapArtifact);
+}
+
+export function getArtifactForRunForClient(
+  db: RunnerDatabase,
+  input: { runId: string; artifactId: string; clientId: string; isAdmin?: boolean },
+): ArtifactRecord | null {
+  const row = input.isAdmin
+    ? (db
+        .prepare(
+          `
+          SELECT artifacts.*
+          FROM artifacts
+          JOIN runs ON runs.id = artifacts.run_id
+          WHERE artifacts.run_id = ? AND artifacts.id = ?
+          `,
+        )
+        .get(input.runId, input.artifactId) as ArtifactRow | undefined)
+    : (db
+        .prepare(
+          `
+          SELECT artifacts.*
+          FROM artifacts
+          JOIN runs ON runs.id = artifacts.run_id
+          WHERE artifacts.run_id = ? AND artifacts.id = ? AND runs.client_id = ?
+          `,
+        )
+        .get(input.runId, input.artifactId, input.clientId) as ArtifactRow | undefined);
+
+  return row ? mapArtifact(row) : null;
+}
+
 export function getRunDetail(
   db: RunnerDatabase,
   input: { runId: string; clientId: string; isAdmin?: boolean },
@@ -896,6 +1044,24 @@ function mapProfileSnapshot(row: ProfileSnapshotRow): ProfileSnapshotRecord {
   return {
     runId: row.run_id,
     profile: JSON.parse(row.profile_json) as unknown,
+    createdAt: row.created_at,
+  };
+}
+
+function mapArtifact(row: ArtifactRow): ArtifactRecord {
+  return {
+    id: row.id,
+    runId: row.run_id,
+    workspaceId: row.workspace_id,
+    ruleId: row.rule_id,
+    role: row.role,
+    relativePath: row.relative_path,
+    fileName: row.file_name,
+    mimeType: row.mime_type,
+    size: row.size,
+    mtime: row.mtime,
+    sha256: row.sha256,
+    metadata: parseNullable(row.metadata_json),
     createdAt: row.created_at,
   };
 }

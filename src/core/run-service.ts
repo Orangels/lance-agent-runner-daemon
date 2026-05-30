@@ -21,6 +21,7 @@ import {
   type RunMessageRecord,
   type WorkspaceRecord,
 } from '../db/repositories.js';
+import { createArtifactService, type ArtifactService } from './artifact-service.js';
 import { buildClaudeInvocation, type ClaudeInvocation } from './claude-adapter.js';
 import {
   probeClaudeCapabilities,
@@ -30,6 +31,7 @@ import { startClaudeCliRun, type ClaudeCliRunHandle, type ClaudeCliRunResult } f
 import { badRequest, daemonError, notFound } from './errors.js';
 import { createId } from './ids.js';
 import { createMessageAccumulator } from './message-accumulator.js';
+import { composeRunPrompt } from './prompt-composer.js';
 import { createSanitizedProfileSnapshot } from './profile-snapshot.js';
 import { formatRunEventId, shouldReplayEventAfter, type RunEvent } from './run-events.js';
 import {
@@ -37,8 +39,14 @@ import {
   type CreateRunRequest,
   type EventVisibility,
   type ListRunsQuery,
+  type RunKind,
   type RunStatus,
 } from './run-types.js';
+import {
+  assertSkillAllowedForProfile,
+  resolveSkillForProfile,
+} from './skill-registry.js';
+import { stageSkillIntoWorkspace } from './skill-staging.js';
 import { getWorkspaceCwd } from './workspace-service.js';
 
 export interface BufferedRunEvent {
@@ -50,6 +58,7 @@ export interface CreateRunServiceInput {
   config: DaemonConfig;
   db: RunnerDatabase;
   runnerFactory?: RunServiceRunnerFactory;
+  artifactService?: ArtifactService;
   capabilityProbe?: (profile: ProfileConfig) => Promise<ClaudeCapabilities>;
   clock?: () => number;
   timer?: RunServiceTimer;
@@ -84,6 +93,7 @@ export interface RunServiceRunnerInput {
   prompt: string;
   model?: string;
   capabilities?: ClaudeCapabilities;
+  extraAllowedDirs?: string[];
   onEvent: (event: RunEvent) => void;
 }
 
@@ -98,6 +108,9 @@ interface RunState {
   runId: string;
   profile: ProfileConfig;
   workspace: WorkspaceRecord;
+  kind: RunKind;
+  skillId: string | null;
+  artifactRuleIds: string[];
   prompt: string;
   model?: string;
   requestEventVisibility?: EventVisibility;
@@ -107,6 +120,7 @@ interface RunState {
   runner: ClaudeCliRunHandle | null;
   accumulator: ReturnType<typeof createMessageAccumulator> | null;
   assistantMessageId: string;
+  finishing: boolean;
   terminal: boolean;
   cleanupTimer: unknown;
 }
@@ -128,6 +142,8 @@ export function createRunService(input: CreateRunServiceInput): RunService {
   const nextUserMessageId = input.ids?.userMessageId ?? (() => createId('msg'));
   const nextAssistantMessageId = input.ids?.assistantMessageId ?? (() => createId('msg'));
   const runnerFactory = input.runnerFactory ?? defaultRunnerFactory;
+  const artifactService =
+    input.artifactService ?? createArtifactService({ config: input.config, db: input.db, clock: now });
   const capabilityProbe =
     input.capabilityProbe ??
     ((profile: ProfileConfig) => probeClaudeCapabilities({ claudeBin: profile.claudeBin }));
@@ -178,6 +194,55 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     });
     state.accumulator.startRun({ startedAt });
     emitRunEvent(state, { type: 'status', label: 'running' });
+    let prompt = state.prompt;
+    let extraAllowedDirs: string[] = [];
+
+    if (state.kind === 'generate') {
+      const skill = await resolveGenerateSkill(state);
+      if (state.terminal) {
+        return;
+      }
+      if (!skill) {
+        return;
+      }
+
+      let stagedSkill;
+      if (skill.hasSideFiles) {
+        try {
+          stagedSkill = await stageSkillIntoWorkspace({
+            workspaceCwd: getWorkspaceCwd(state.profile, state.workspace),
+            skill,
+          });
+        } catch {
+          await finishRun(
+            state,
+            {
+              status: 'failed',
+              exitCode: null,
+              signal: null,
+              errorCode: 'SKILL_STAGING_FAILED',
+              errorMessage: 'Skill staging failed.',
+              stdoutTail: '',
+              stderrTail: '',
+            },
+            { finalizeArtifacts: false },
+          );
+          return;
+        }
+      }
+      if (state.terminal) {
+        return;
+      }
+
+      prompt = composeRunPrompt({
+        kind: state.kind,
+        userPrompt: state.prompt,
+        skill,
+        stagedSkill,
+      });
+      extraAllowedDirs = stagedSkill ? [stagedSkill.absoluteRoot] : [];
+    }
+
     const capabilities = await getCapabilities(state.profile);
     if (state.terminal) {
       return;
@@ -188,52 +253,158 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       workspace: state.workspace,
       workspaceCwd: getWorkspaceCwd(state.profile, state.workspace),
       run,
-      prompt: state.prompt,
+      prompt,
       model: state.model,
       capabilities,
+      extraAllowedDirs,
       onEvent: (event) => emitRunEvent(state, event),
     });
 
     state.runner.completed.then(
-      (result) => finishRun(state, result),
+      (result) => {
+        void finishRun(state, result, { finalizeArtifacts: result.status !== 'canceled' });
+      },
       () =>
-        finishRun(state, {
-          status: 'failed',
-          exitCode: 1,
-          signal: null,
-          errorCode: 'CLAUDE_CLI_FAILED',
-          errorMessage: 'Claude CLI failed.',
-          stdoutTail: '',
-          stderrTail: '',
-        }),
+        void finishRun(
+          state,
+          {
+            status: 'failed',
+            exitCode: 1,
+            signal: null,
+            errorCode: 'CLAUDE_CLI_FAILED',
+            errorMessage: 'Claude CLI failed.',
+            stdoutTail: '',
+            stderrTail: '',
+          },
+          { finalizeArtifacts: false },
+        ),
     );
   }
 
-  function finishRun(state: RunState, result: ClaudeCliRunResult): void {
-    if (state.terminal) {
+  async function resolveGenerateSkill(state: RunState) {
+    if (!state.skillId) {
+      await finishRun(
+        state,
+        {
+          status: 'failed',
+          exitCode: null,
+          signal: null,
+          errorCode: 'SKILL_UNAVAILABLE',
+          errorMessage: 'Skill is unavailable.',
+          stdoutTail: '',
+          stderrTail: '',
+        },
+        { finalizeArtifacts: false },
+      );
+      return null;
+    }
+
+    try {
+      return await resolveSkillForProfile(state.profile, state.skillId);
+    } catch {
+      await finishRun(
+        state,
+        {
+          status: 'failed',
+          exitCode: null,
+          signal: null,
+          errorCode: 'SKILL_UNAVAILABLE',
+          errorMessage: 'Skill is unavailable.',
+          stdoutTail: '',
+          stderrTail: '',
+        },
+        { finalizeArtifacts: false },
+      );
+      return null;
+    }
+  }
+
+  async function finishRun(
+    state: RunState,
+    result: ClaudeCliRunResult,
+    options: { finalizeArtifacts?: boolean } = {},
+  ): Promise<void> {
+    if (state.terminal || state.finishing) {
       return;
     }
-    state.terminal = true;
+    state.finishing = true;
 
-    emitRunEvent(state, { type: 'end', status: result.status });
+    let finalStatus = result.status;
+    let finalErrorCode = result.errorCode ?? null;
+    let finalErrorMessage = result.errorMessage ?? null;
+
+    if (options.finalizeArtifacts !== false) {
+      try {
+        const finalized = await artifactService.finalizeRunArtifacts({
+          profile: state.profile,
+          workspace: state.workspace,
+          runId: state.runId,
+          artifactRuleIds: state.artifactRuleIds,
+        });
+
+        for (const artifact of finalized.artifacts) {
+          emitRunEvent(state, {
+            type: 'artifact_finalized',
+            artifact: {
+              id: artifact.id,
+              runId: artifact.runId,
+              ruleId: artifact.ruleId,
+              role: artifact.role,
+              relativePath: artifact.relativePath,
+              fileName: artifact.fileName,
+              mimeType: artifact.mimeType,
+              size: artifact.size,
+              mtime: artifact.mtime,
+              sha256: artifact.sha256,
+            },
+          });
+        }
+
+        if (result.status === 'succeeded' && finalized.missingRequiredRuleIds.length > 0) {
+          finalStatus = 'failed';
+          finalErrorCode = 'ARTIFACT_REQUIRED_MISSING';
+          finalErrorMessage = 'Required artifact was not produced.';
+          emitRunEvent(state, {
+            type: 'error',
+            code: finalErrorCode,
+            message: finalErrorMessage,
+            details: { missingRuleIds: finalized.missingRequiredRuleIds },
+          });
+        }
+      } catch {
+        finalStatus = 'failed';
+        finalErrorCode = 'ARTIFACT_SCAN_FAILED';
+        finalErrorMessage = 'Artifact scan failed.';
+        emitRunEvent(state, {
+          type: 'error',
+          code: finalErrorCode,
+          message: finalErrorMessage,
+        });
+      }
+    }
+
+    emitRunEvent(state, { type: 'end', status: finalStatus });
     const finishedAt = now();
     state.accumulator?.flushTerminal({
-      runStatus: result.status,
+      runStatus: finalStatus,
       endedAt: finishedAt,
     });
 
     updateRunTerminal(input.db, {
       runId: state.runId,
-      status: result.status,
+      status: finalStatus,
       finishedAt,
       exitCode: result.exitCode,
       signal: result.signal,
-      errorCode: result.errorCode ?? null,
-      errorMessage: result.errorMessage ?? null,
+      errorCode: finalErrorCode,
+      errorMessage: finalErrorMessage,
       usage: state.accumulator?.getUsage() ?? null,
       lastRunEventId: state.events.at(-1)?.id ?? null,
       now: finishedAt,
     });
+
+    state.terminal = true;
+    state.finishing = false;
 
     if (eventBufferTtlMs >= 0) {
       state.cleanupTimer = timer.setTimeout(() => {
@@ -257,7 +428,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       requireProfileAccess(client, request.profileId);
       const profile = getProfile(input.config, request.profileId);
       if (request.kind === 'generate') {
-        throw badRequest('kind=generate requires Phase 2 skill support');
+        assertSkillAllowedForProfile(profile, request.skillId ?? '');
       }
 
       const selectedModel = request.model ?? profile.defaultModel;
@@ -282,7 +453,11 @@ export function createRunService(input: CreateRunServiceInput): RunService {
 
       const runId = nextRunId();
       const assistantMessageId = nextAssistantMessageId();
-      const selectedArtifactRuleIds = request.artifactRuleIds ?? profile.defaultArtifactRuleIds;
+      const selectedArtifactRules = artifactService.resolveSelectedArtifactRules({
+        profile,
+        artifactRuleIds: request.artifactRuleIds,
+      });
+      const selectedArtifactRuleIds = selectedArtifactRules.map((rule) => rule.id);
 
       let created: {
         run: RunRecord;
@@ -321,6 +496,9 @@ export function createRunService(input: CreateRunServiceInput): RunService {
         runId,
         profile,
         workspace,
+        kind: request.kind,
+        skillId: request.skillId ?? null,
+        artifactRuleIds: selectedArtifactRuleIds,
         prompt: request.prompt,
         model: request.model,
         requestEventVisibility: request.eventVisibility,
@@ -330,6 +508,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
         runner: null,
         accumulator: null,
         assistantMessageId,
+        finishing: false,
         terminal: false,
         cleanupTimer: null,
       };
@@ -403,15 +582,22 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       if (!state) {
         throw daemonError('RUN_NOT_CANCELABLE', 'Run is not cancelable', 409);
       }
+      if (state.finishing) {
+        throw daemonError('RUN_NOT_CANCELABLE', 'Run is not cancelable', 409);
+      }
 
       if (!state.runner) {
-        finishRun(state, {
-          status: 'canceled',
-          exitCode: null,
-          signal: null,
-          stdoutTail: '',
-          stderrTail: '',
-        });
+        void finishRun(
+          state,
+          {
+            status: 'canceled',
+            exitCode: null,
+            signal: null,
+            stdoutTail: '',
+            stderrTail: '',
+          },
+          { finalizeArtifacts: false },
+        );
         return { ok: true };
       }
 
@@ -439,5 +625,6 @@ export function buildClaudeRunInvocation(input: RunServiceRunnerInput): ClaudeIn
     workspaceCwd: input.workspaceCwd,
     requestModel: input.model,
     capabilities: input.capabilities,
+    extraAllowedDirs: input.extraAllowedDirs,
   });
 }
