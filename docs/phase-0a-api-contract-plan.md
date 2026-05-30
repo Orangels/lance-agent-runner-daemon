@@ -82,6 +82,12 @@ Modify:
 - No queue/concurrency scheduler.
 - No upload API, remote URL pull, metrics endpoint, browser auth, OS-level isolation, permission hooks, or lanceDesign product logic.
 
+## Follow-Up Notes For Later Phases
+
+- Phase 0 route/middleware work must map zod validation failures into structured daemon errors, including `INVALID_PATH_SEGMENT` and `PATH_NOT_ALLOWED` where appropriate.
+- Phase 0/1 should decide whether HTTP query schemas stay strict or strip unknown query parameters before routes are finalized.
+- Phase 0/1 should add request size and field length limits for large fields such as `prompt`, `skillId`, `model`, and metadata.
+
 ## Acceptance Criteria
 
 - Contract tests pass.
