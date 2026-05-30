@@ -564,22 +564,6 @@ export function updateRunTerminal(
   return getRunById(db, input.runId);
 }
 
-export function updateRunLastEventId(
-  db: RunnerDatabase,
-  input: { runId: string; lastRunEventId: string; now: number },
-): RunRecord {
-  db.prepare(
-    `
-    UPDATE runs
-    SET last_run_event_id = ?,
-        updated_at = ?
-    WHERE id = ?
-    `,
-  ).run(input.lastRunEventId, input.now, input.runId);
-
-  return getRunById(db, input.runId);
-}
-
 export function updateAssistantMessageStarted(
   db: RunnerDatabase,
   input: { messageId: string; startedAt: number; now: number },

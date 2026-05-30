@@ -11,7 +11,6 @@ import {
   insertRunQueued,
   listRunsForClient,
   markInterruptedRunsOnStartup,
-  updateRunLastEventId,
   updateRunMessage,
   updateRunStatus,
   updateRunTerminal,
@@ -349,23 +348,6 @@ describe('run repository', () => {
       errorCode: null,
       errorMessage: null,
     });
-  });
-
-  it('updates a run last event id and timestamp without changing status', () => {
-    const { db, workspace } = insertWorkspaceFixture();
-    insertRunQueued(db, {
-      id: 'run_1',
-      workspaceId: workspace.id,
-      profileId: workspace.profileId,
-      clientId: workspace.clientId,
-      kind: 'revise',
-      prompt: 'Run.',
-      now: 5000,
-    });
-
-    const run = updateRunLastEventId(db, { runId: 'run_1', lastRunEventId: '12', now: 8000 });
-
-    expect(run).toMatchObject({ status: 'queued', lastRunEventId: '12', updatedAt: 8000 });
   });
 
   it('inserts runs as queued immediately', () => {
