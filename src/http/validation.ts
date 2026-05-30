@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { badRequest, daemonError, type DaemonError } from '../core/errors.js';
 import {
   eventVisibilityLevels,
   runKinds,
@@ -112,3 +113,27 @@ export const eventReplayQuerySchema: z.ZodType<EventReplayQuery> = z
     after: z.string().min(1).optional(),
   })
   .strict();
+
+export function zodErrorToDaemonError(error: z.ZodError): DaemonError {
+  if (
+    error.issues.some((issue) =>
+      issue.path.some((segment) =>
+        ['originId', 'userId', 'projectId'].includes(String(segment)),
+      ),
+    )
+  ) {
+    return daemonError('INVALID_PATH_SEGMENT', 'Invalid workspace identity path segment', 400, {
+      issues: error.issues,
+    });
+  }
+
+  if (
+    error.issues.some((issue) =>
+      issue.path.some((segment) => ['targetPath', 'sourcePath'].includes(String(segment))),
+    )
+  ) {
+    return daemonError('PATH_NOT_ALLOWED', 'Path is not allowed', 400, { issues: error.issues });
+  }
+
+  return badRequest('Invalid request', { issues: error.issues });
+}
