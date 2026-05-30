@@ -1,0 +1,638 @@
+import type { RunKind, RunStatus } from '../core/run-types.js';
+import type { RunnerDatabase } from './connection.js';
+
+export interface WorkspaceRecord {
+  id: string;
+  profileId: string;
+  clientId: string;
+  originId: string;
+  userId: string;
+  projectId: string;
+  workspaceKey: string;
+  status: string;
+  metadata: unknown;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ConversationRecord {
+  id: string;
+  workspaceId: string;
+  title: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface RunRecord {
+  id: string;
+  workspaceId: string;
+  profileId: string;
+  clientId: string;
+  kind: RunKind;
+  skillId: string | null;
+  status: RunStatus;
+  prompt: string;
+  artifactRuleIds: string[] | null;
+  lastRunEventId: string | null;
+  queuedAt: number | null;
+  startedAt: number | null;
+  finishedAt: number | null;
+  exitCode: number | null;
+  signal: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  usage: unknown;
+  metadata: unknown;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface RunMessageRecord {
+  id: string;
+  workspaceId: string;
+  conversationId: string | null;
+  runId: string;
+  role: string;
+  content: string;
+  events: unknown;
+  attachments: unknown;
+  producedFiles: unknown;
+  runStatus: string | null;
+  lastRunEventId: string | null;
+  startedAt: number | null;
+  endedAt: number | null;
+  position: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface RunDetailRecord {
+  run: RunRecord;
+  messages: RunMessageRecord[];
+}
+
+interface WorkspaceRow {
+  id: string;
+  profile_id: string;
+  client_id: string;
+  origin_id: string;
+  user_id: string;
+  project_id: string;
+  workspace_key: string;
+  status: string;
+  metadata_json: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+interface ConversationRow {
+  id: string;
+  workspace_id: string;
+  title: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+interface RunRow {
+  id: string;
+  workspace_id: string;
+  profile_id: string;
+  client_id: string;
+  kind: RunKind;
+  skill_id: string | null;
+  status: RunStatus;
+  prompt: string;
+  artifact_rule_ids_json: string | null;
+  last_run_event_id: string | null;
+  queued_at: number | null;
+  started_at: number | null;
+  finished_at: number | null;
+  exit_code: number | null;
+  signal: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  usage_json: string | null;
+  metadata_json: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+interface RunMessageRow {
+  id: string;
+  workspace_id: string;
+  conversation_id: string | null;
+  run_id: string;
+  role: string;
+  content: string;
+  events_json: string | null;
+  attachments_json: string | null;
+  produced_files_json: string | null;
+  run_status: string | null;
+  last_run_event_id: string | null;
+  started_at: number | null;
+  ended_at: number | null;
+  position: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export function makeWorkspaceKey(originId: string, userId: string, projectId: string): string {
+  return `${originId}/${userId}/${projectId}`;
+}
+
+export function upsertWorkspace(
+  db: RunnerDatabase,
+  input: {
+    id: string;
+    profileId: string;
+    clientId: string;
+    originId: string;
+    userId: string;
+    projectId: string;
+    status?: string;
+    metadata?: unknown;
+    now: number;
+  },
+): WorkspaceRecord {
+  const workspaceKey = makeWorkspaceKey(input.originId, input.userId, input.projectId);
+  const existing = db
+    .prepare('SELECT * FROM workspaces WHERE workspace_key = ?')
+    .get(workspaceKey) as WorkspaceRow | undefined;
+
+  if (existing) {
+    db.prepare(
+      `
+      UPDATE workspaces
+      SET status = ?, metadata_json = ?, updated_at = ?
+      WHERE id = ?
+      `,
+    ).run(input.status ?? existing.status, stringifyNullable(input.metadata), input.now, existing.id);
+    return getWorkspaceById(db, existing.id);
+  }
+
+  db.prepare(
+    `
+    INSERT INTO workspaces (
+      id, profile_id, client_id, origin_id, user_id, project_id, workspace_key,
+      status, metadata_json, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    input.id,
+    input.profileId,
+    input.clientId,
+    input.originId,
+    input.userId,
+    input.projectId,
+    workspaceKey,
+    input.status ?? 'active',
+    stringifyNullable(input.metadata),
+    input.now,
+    input.now,
+  );
+
+  return getWorkspaceById(db, input.id);
+}
+
+export function getWorkspaceForClient(
+  db: RunnerDatabase,
+  input: { workspaceId: string; clientId: string; isAdmin?: boolean },
+): WorkspaceRecord | null {
+  const row = input.isAdmin
+    ? (db.prepare('SELECT * FROM workspaces WHERE id = ?').get(input.workspaceId) as
+        | WorkspaceRow
+        | undefined)
+    : (db
+        .prepare('SELECT * FROM workspaces WHERE id = ? AND client_id = ?')
+        .get(input.workspaceId, input.clientId) as WorkspaceRow | undefined);
+  return row ? mapWorkspace(row) : null;
+}
+
+export function getOrCreateDefaultConversation(
+  db: RunnerDatabase,
+  input: { id: string; workspaceId: string; now: number },
+): ConversationRecord {
+  const existing = db
+    .prepare('SELECT * FROM conversations WHERE workspace_id = ? AND title = ? ORDER BY created_at LIMIT 1')
+    .get(input.workspaceId, 'Default') as ConversationRow | undefined;
+
+  if (existing) {
+    return mapConversation(existing);
+  }
+
+  db.prepare(
+    `
+    INSERT INTO conversations (id, workspace_id, title, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    `,
+  ).run(input.id, input.workspaceId, 'Default', input.now, input.now);
+
+  return mapConversation(
+    db.prepare('SELECT * FROM conversations WHERE id = ?').get(input.id) as ConversationRow,
+  );
+}
+
+export function insertRunQueued(
+  db: RunnerDatabase,
+  input: {
+    id: string;
+    workspaceId: string;
+    profileId: string;
+    clientId: string;
+    kind: RunKind;
+    skillId?: string;
+    prompt: string;
+    artifactRuleIds?: string[];
+    metadata?: unknown;
+    now: number;
+  },
+): RunRecord {
+  db.prepare(
+    `
+    INSERT INTO runs (
+      id, workspace_id, profile_id, client_id, kind, skill_id, status, prompt,
+      artifact_rule_ids_json, queued_at, metadata_json, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    input.id,
+    input.workspaceId,
+    input.profileId,
+    input.clientId,
+    input.kind,
+    input.skillId ?? null,
+    'queued',
+    input.prompt,
+    stringifyNullable(input.artifactRuleIds),
+    input.now,
+    stringifyNullable(input.metadata),
+    input.now,
+    input.now,
+  );
+
+  return getRunById(db, input.id);
+}
+
+export function markInterruptedRunsOnStartup(db: RunnerDatabase, now: number): number {
+  const result = db
+    .prepare(
+      `
+      UPDATE runs
+      SET status = 'interrupted',
+          finished_at = ?,
+          error_code = 'RUN_INTERRUPTED_BY_DAEMON_RESTART',
+          error_message = 'Run interrupted by daemon restart',
+          updated_at = ?
+      WHERE status IN ('queued', 'running')
+      `,
+    )
+    .run(now, now);
+  return result.changes;
+}
+
+export function insertRunMessagesForRunCreate(
+  db: RunnerDatabase,
+  input: {
+    userMessageId: string;
+    assistantMessageId: string;
+    workspaceId: string;
+    conversationId: string;
+    runId: string;
+    prompt: string;
+    now: number;
+  },
+): RunMessageRecord[] {
+  const insert = db.prepare(
+    `
+    INSERT INTO run_messages (
+      id, workspace_id, conversation_id, run_id, role, content, run_status,
+      position, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+  );
+
+  insert.run(
+    input.userMessageId,
+    input.workspaceId,
+    input.conversationId,
+    input.runId,
+    'user',
+    input.prompt,
+    null,
+    0,
+    input.now,
+    input.now,
+  );
+  insert.run(
+    input.assistantMessageId,
+    input.workspaceId,
+    input.conversationId,
+    input.runId,
+    'assistant',
+    '',
+    'queued',
+    1,
+    input.now,
+    input.now,
+  );
+
+  return getRunMessages(db, input.runId);
+}
+
+export function updateRunStatus(
+  db: RunnerDatabase,
+  input: {
+    runId: string;
+    status: RunStatus;
+    startedAt?: number;
+    finishedAt?: number;
+    exitCode?: number | null;
+    signal?: string | null;
+    errorCode?: string | null;
+    errorMessage?: string | null;
+    usage?: unknown;
+    lastRunEventId?: string | null;
+    now: number;
+  },
+): RunRecord {
+  db.prepare(
+    `
+    UPDATE runs
+    SET status = ?,
+        started_at = COALESCE(?, started_at),
+        finished_at = COALESCE(?, finished_at),
+        exit_code = COALESCE(?, exit_code),
+        signal = COALESCE(?, signal),
+        error_code = COALESCE(?, error_code),
+        error_message = COALESCE(?, error_message),
+        usage_json = COALESCE(?, usage_json),
+        last_run_event_id = COALESCE(?, last_run_event_id),
+        updated_at = ?
+    WHERE id = ?
+    `,
+  ).run(
+    input.status,
+    input.startedAt ?? null,
+    input.finishedAt ?? null,
+    input.exitCode ?? null,
+    input.signal ?? null,
+    input.errorCode ?? null,
+    input.errorMessage ?? null,
+    stringifyNullable(input.usage),
+    input.lastRunEventId ?? null,
+    input.now,
+    input.runId,
+  );
+
+  return getRunById(db, input.runId);
+}
+
+export function updateRunMessage(
+  db: RunnerDatabase,
+  input: {
+    messageId: string;
+    content?: string;
+    events?: unknown;
+    attachments?: unknown;
+    producedFiles?: unknown;
+    runStatus?: string;
+    lastRunEventId?: string | null;
+    startedAt?: number;
+    endedAt?: number;
+    now: number;
+  },
+): RunMessageRecord {
+  const existing = getRunMessageById(db, input.messageId);
+  db.prepare(
+    `
+    UPDATE run_messages
+    SET content = ?,
+        events_json = ?,
+        attachments_json = ?,
+        produced_files_json = ?,
+        run_status = ?,
+        last_run_event_id = ?,
+        started_at = ?,
+        ended_at = ?,
+        updated_at = ?
+    WHERE id = ?
+    `,
+  ).run(
+    input.content ?? existing.content,
+    input.events === undefined ? stringifyNullable(existing.events) : stringifyNullable(input.events),
+    input.attachments === undefined
+      ? stringifyNullable(existing.attachments)
+      : stringifyNullable(input.attachments),
+    input.producedFiles === undefined
+      ? stringifyNullable(existing.producedFiles)
+      : stringifyNullable(input.producedFiles),
+    input.runStatus ?? existing.runStatus,
+    input.lastRunEventId === undefined ? existing.lastRunEventId : input.lastRunEventId,
+    input.startedAt ?? existing.startedAt,
+    input.endedAt ?? existing.endedAt,
+    input.now,
+    input.messageId,
+  );
+
+  return getRunMessageById(db, input.messageId);
+}
+
+export function getRunDetail(
+  db: RunnerDatabase,
+  input: { runId: string; clientId: string; isAdmin?: boolean },
+): RunDetailRecord | null {
+  const row = input.isAdmin
+    ? (db.prepare('SELECT * FROM runs WHERE id = ?').get(input.runId) as RunRow | undefined)
+    : (db.prepare('SELECT * FROM runs WHERE id = ? AND client_id = ?').get(input.runId, input.clientId) as
+        | RunRow
+        | undefined);
+  if (!row) {
+    return null;
+  }
+
+  return {
+    run: mapRun(row),
+    messages: getRunMessages(db, input.runId),
+  };
+}
+
+export function listRunsForClient(
+  db: RunnerDatabase,
+  input: {
+    clientId: string;
+    isAdmin?: boolean;
+    status?: RunStatus;
+    originId?: string;
+    userId?: string;
+    projectId?: string;
+    workspaceKey?: string;
+    workspacePrefix?: string;
+  },
+): RunRecord[] {
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+
+  if (!input.isAdmin) {
+    clauses.push('runs.client_id = ?');
+    params.push(input.clientId);
+  }
+  if (input.status) {
+    clauses.push('runs.status = ?');
+    params.push(input.status);
+  }
+  if (input.originId) {
+    clauses.push('workspaces.origin_id = ?');
+    params.push(input.originId);
+  }
+  if (input.userId) {
+    clauses.push('workspaces.user_id = ?');
+    params.push(input.userId);
+  }
+  if (input.projectId) {
+    clauses.push('workspaces.project_id = ?');
+    params.push(input.projectId);
+  }
+  if (input.workspaceKey) {
+    clauses.push('workspaces.workspace_key = ?');
+    params.push(input.workspaceKey);
+  }
+  if (input.workspacePrefix) {
+    clauses.push('workspaces.workspace_key LIKE ?');
+    params.push(`${input.workspacePrefix}%`);
+  }
+
+  const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+  const rows = db
+    .prepare(
+      `
+      SELECT runs.*
+      FROM runs
+      JOIN workspaces ON workspaces.id = runs.workspace_id
+      ${where}
+      ORDER BY runs.created_at DESC
+      `,
+    )
+    .all(...params) as RunRow[];
+
+  return rows.map(mapRun);
+}
+
+function getWorkspaceById(db: RunnerDatabase, workspaceId: string): WorkspaceRecord {
+  const row = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId) as
+    | WorkspaceRow
+    | undefined;
+  if (!row) {
+    throw new Error(`Workspace not found after write: ${workspaceId}`);
+  }
+  return mapWorkspace(row);
+}
+
+function getRunById(db: RunnerDatabase, runId: string): RunRecord {
+  const row = db.prepare('SELECT * FROM runs WHERE id = ?').get(runId) as RunRow | undefined;
+  if (!row) {
+    throw new Error(`Run not found after write: ${runId}`);
+  }
+  return mapRun(row);
+}
+
+function getRunMessageById(db: RunnerDatabase, messageId: string): RunMessageRecord {
+  const row = db.prepare('SELECT * FROM run_messages WHERE id = ?').get(messageId) as
+    | RunMessageRow
+    | undefined;
+  if (!row) {
+    throw new Error(`Run message not found after write: ${messageId}`);
+  }
+  return mapRunMessage(row);
+}
+
+function getRunMessages(db: RunnerDatabase, runId: string): RunMessageRecord[] {
+  return (
+    db
+      .prepare('SELECT * FROM run_messages WHERE run_id = ? ORDER BY position ASC')
+      .all(runId) as RunMessageRow[]
+  ).map(mapRunMessage);
+}
+
+function mapWorkspace(row: WorkspaceRow): WorkspaceRecord {
+  return {
+    id: row.id,
+    profileId: row.profile_id,
+    clientId: row.client_id,
+    originId: row.origin_id,
+    userId: row.user_id,
+    projectId: row.project_id,
+    workspaceKey: row.workspace_key,
+    status: row.status,
+    metadata: parseNullable(row.metadata_json),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapConversation(row: ConversationRow): ConversationRecord {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    title: row.title,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapRun(row: RunRow): RunRecord {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    profileId: row.profile_id,
+    clientId: row.client_id,
+    kind: row.kind,
+    skillId: row.skill_id,
+    status: row.status,
+    prompt: row.prompt,
+    artifactRuleIds: parseNullable(row.artifact_rule_ids_json) as string[] | null,
+    lastRunEventId: row.last_run_event_id,
+    queuedAt: row.queued_at,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    exitCode: row.exit_code,
+    signal: row.signal,
+    errorCode: row.error_code,
+    errorMessage: row.error_message,
+    usage: parseNullable(row.usage_json),
+    metadata: parseNullable(row.metadata_json),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapRunMessage(row: RunMessageRow): RunMessageRecord {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    conversationId: row.conversation_id,
+    runId: row.run_id,
+    role: row.role,
+    content: row.content,
+    events: parseNullable(row.events_json),
+    attachments: parseNullable(row.attachments_json),
+    producedFiles: parseNullable(row.produced_files_json),
+    runStatus: row.run_status,
+    lastRunEventId: row.last_run_event_id,
+    startedAt: row.started_at,
+    endedAt: row.ended_at,
+    position: row.position,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function stringifyNullable(value: unknown): string | null {
+  return value === undefined || value === null ? null : JSON.stringify(value);
+}
+
+function parseNullable(value: string | null): unknown {
+  return value === null ? null : JSON.parse(value);
+}
