@@ -128,15 +128,19 @@ profile_snapshots
 Full repository behavior is required for:
 
 - `workspaces`
-- `conversations`
 - `runs`
 - `run_messages`
 
 Schema-only or minimal helpers are acceptable for:
 
+- `conversations`
 - `artifacts`
 - `run_logs`
 - `profile_snapshots`
+
+Phase 0 only requires one conversation helper: `getOrCreateDefaultConversation`. Broader conversation listing, renaming, deletion, and thread-management APIs are out of Phase 0 scope.
+
+Phase 0 creates the `profile_snapshots` table but does not need to insert snapshot rows. If implementation adds any `insertProfileSnapshot` helper in Phase 0, it must first add tests proving the stored JSON excludes `ANTHROPIC_API_KEY`, API keys, token-like values, cookies, OAuth bearer values, Claude login state, and any credential material from `claudeConfigDir`.
 
 Do not create `run_events`.
 
@@ -399,6 +403,7 @@ work/
 
 - Build an Express app with JSON body parsing.
 - Add structured error handling for zod and `DaemonError`.
+- Keep `GET /api/health` public without auth; require auth for `GET /api/profiles` and workspace routes.
 - Implement:
   - `GET /api/health`
   - `GET /api/profiles`
@@ -466,6 +471,8 @@ pnpm build
 Manual smoke after implementation:
 
 ```bash
+# Prepare /tmp/claude-runner-test/config.json with a real test API key, profile,
+# sandboxRoot, dataDir, and allowedInputRoots before running these commands.
 pnpm dev -- --config /tmp/claude-runner-test/config.json
 curl -s http://127.0.0.1:17890/api/health
 curl -s -H 'Authorization: Bearer <api-key>' http://127.0.0.1:17890/api/profiles
