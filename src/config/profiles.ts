@@ -1,0 +1,228 @@
+import { z } from 'zod';
+import { eventVisibilityLevels, type EventVisibility } from '../core/run-types.js';
+import { findDisallowedProfileEnvKeys } from './env.js';
+
+export const permissionModes = ['default', 'acceptEdits', 'bypassPermissions'] as const;
+export type PermissionMode = (typeof permissionModes)[number];
+
+export interface ServerConfig {
+  host: string;
+  port: number;
+  dataDir: string;
+  globalConcurrency: number;
+  maxQueueSize: number;
+}
+
+export interface ClientConfig {
+  id: string;
+  apiKey: string;
+  allowedProfileIds: string[];
+  canReadDebugEvents: boolean;
+  canReadLogs: boolean;
+  isAdmin: boolean;
+}
+
+export interface ArtifactRuleConfig {
+  id: string;
+  pattern: string;
+  role: string;
+  required: boolean;
+}
+
+export interface ProfileConfig {
+  id: string;
+  sandboxRoot: string;
+  claudeConfigDir: string;
+  claudeBin: string;
+  skillRoots: string[];
+  allowedInputRoots: string[];
+  allowedSkillIds: string[];
+  artifactRules: ArtifactRuleConfig[];
+  defaultArtifactRuleIds: string[];
+  permissionMode: PermissionMode;
+  defaultModel: string;
+  allowedModels: string[];
+  eventVisibility: EventVisibility;
+  profileConcurrency: number;
+  runTimeoutMs: number;
+  inactivityTimeoutMs: number;
+  cancelGraceMs: number;
+  env: Record<string, string>;
+}
+
+export interface DaemonConfig {
+  server: ServerConfig;
+  clients: ClientConfig[];
+  profiles: ProfileConfig[];
+}
+
+interface ParseDaemonConfigOptions {
+  env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
+}
+
+const nonEmptyString = z.string().min(1);
+
+const serverSchema = z
+  .object({
+    host: nonEmptyString,
+    port: z.number().int().min(1).max(65_535),
+    dataDir: nonEmptyString,
+    globalConcurrency: z.number().int().min(1),
+    maxQueueSize: z.number().int().min(0),
+  })
+  .strict();
+
+const clientSchema = z
+  .object({
+    id: nonEmptyString,
+    apiKey: nonEmptyString,
+    allowedProfileIds: z.array(nonEmptyString),
+    canReadDebugEvents: z.boolean().default(false),
+    canReadLogs: z.boolean().default(false),
+    isAdmin: z.boolean().default(false),
+  })
+  .strict();
+
+const artifactRuleSchema = z
+  .object({
+    id: nonEmptyString,
+    pattern: nonEmptyString,
+    role: nonEmptyString,
+    required: z.boolean().default(false),
+  })
+  .strict();
+
+const profileEnvSchema = z
+  .record(z.string(), z.string())
+  .default({})
+  .superRefine((value, context) => {
+    for (const key of findDisallowedProfileEnvKeys(value)) {
+      context.addIssue({
+        code: 'custom',
+        message: `Profile env key is not allowed: ${key}`,
+        path: [key],
+      });
+    }
+  });
+
+const profileSchema = z
+  .object({
+    id: nonEmptyString,
+    sandboxRoot: nonEmptyString,
+    claudeConfigDir: nonEmptyString,
+    claudeBin: nonEmptyString.default('claude'),
+    skillRoots: z.array(nonEmptyString),
+    allowedInputRoots: z.array(nonEmptyString),
+    allowedSkillIds: z.array(nonEmptyString),
+    artifactRules: z.array(artifactRuleSchema),
+    defaultArtifactRuleIds: z.array(nonEmptyString),
+    permissionMode: z.enum(permissionModes),
+    defaultModel: nonEmptyString,
+    allowedModels: z.array(nonEmptyString).min(1),
+    eventVisibility: z.enum(eventVisibilityLevels),
+    profileConcurrency: z.number().int().min(1),
+    runTimeoutMs: z.number().int().min(1),
+    inactivityTimeoutMs: z.number().int().min(1),
+    cancelGraceMs: z.number().int().min(0),
+    env: profileEnvSchema,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (!value.allowedModels.includes(value.defaultModel)) {
+      context.addIssue({
+        code: 'custom',
+        message: `defaultModel must be included in allowedModels: ${value.defaultModel}`,
+        path: ['defaultModel'],
+      });
+    }
+
+    const artifactRuleIds = new Set(value.artifactRules.map((rule) => rule.id));
+    for (const ruleId of value.defaultArtifactRuleIds) {
+      if (!artifactRuleIds.has(ruleId)) {
+        context.addIssue({
+          code: 'custom',
+          message: `defaultArtifactRuleIds contains unknown rule: ${ruleId}`,
+          path: ['defaultArtifactRuleIds'],
+        });
+      }
+    }
+  });
+
+const rawDaemonConfigSchema = z
+  .object({
+    server: serverSchema,
+    clients: z.array(clientSchema).min(1),
+    profiles: z.array(profileSchema).min(1),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const profileIds = new Set(value.profiles.map((profile) => profile.id));
+    for (const client of value.clients) {
+      for (const profileId of client.allowedProfileIds) {
+        if (!profileIds.has(profileId)) {
+          context.addIssue({
+            code: 'custom',
+            message: `client ${client.id} references unknown profile: ${profileId}`,
+            path: ['clients'],
+          });
+        }
+      }
+    }
+  });
+
+export function parseDaemonConfig(
+  rawConfig: unknown,
+  options: ParseDaemonConfigOptions = {},
+): DaemonConfig {
+  const parsed = rawDaemonConfigSchema.parse(rawConfig);
+  const env = options.env ?? process.env;
+
+  return {
+    ...parsed,
+    clients: parsed.clients.map((client) => ({
+      ...client,
+      apiKey: resolveConfigSecret(client.apiKey, env),
+    })),
+  };
+}
+
+export function getProfile(config: DaemonConfig, profileId: string): ProfileConfig {
+  const profile = config.profiles.find((candidate) => candidate.id === profileId);
+  if (!profile) {
+    throw new Error(`Unknown profile: ${profileId}`);
+  }
+  return profile;
+}
+
+export function isModelAllowed(profile: ProfileConfig, model: string): boolean {
+  return profile.allowedModels.includes(model);
+}
+
+export function getArtifactRule(profile: ProfileConfig, ruleId: string): ArtifactRuleConfig {
+  const rule = profile.artifactRules.find((candidate) => candidate.id === ruleId);
+  if (!rule) {
+    throw new Error(`Unknown artifact rule for profile ${profile.id}: ${ruleId}`);
+  }
+  return rule;
+}
+
+function resolveConfigSecret(
+  value: string,
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+): string {
+  if (!value.startsWith('env:')) {
+    return value;
+  }
+
+  const key = value.slice('env:'.length);
+  if (!key) {
+    throw new Error('env: secret reference is missing a variable name');
+  }
+
+  const resolved = env[key];
+  if (!resolved) {
+    throw new Error(`Missing required environment variable for secret: ${key}`);
+  }
+
+  return resolved;
+}
