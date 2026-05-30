@@ -36,6 +36,7 @@ Phase 2 must remove the Phase 1 service-level rejection for `kind=generate`, but
 - Do not pass `profile.allowedInputRoots` to Claude Code `--add-dir`.
 - Do not pass whole `profile.skillRoots` to Claude Code `--add-dir`.
 - `--add-dir` may only include the staged active skill directory under the workspace, and only when capability probing does not report `addDir === false`.
+- Synchronous request validation must reject caller/config selection errors before a queued run row is inserted. Asynchronous filesystem/runtime failures after queued insert must become durable failed runs.
 
 ## Reference Map
 
@@ -87,17 +88,19 @@ The first Phase 2 implementation is complete when this flow works:
 3. `POST /api/workspaces/:workspaceId/prepare` copies input files into `input/`.
 4. `POST /api/runs` with `kind: "generate"` and `skillId`:
    - validates the skill id against `profile.allowedSkillIds`;
-   - resolves the skill from `profile.skillRoots`;
+   - inserts no run row if the skill id is not profile-allowed;
+   - later resolves the skill files from `profile.skillRoots` during async start;
    - inserts the queued run, messages, and profile snapshot before spawning;
-   - stages only the active skill into `<workspace>/.claude-runner-skills/<folder>/`;
+   - stages only the active skill with side files into `<workspace>/.claude-runner-skills/<folder>/`;
    - composes the prompt with the skill body and staged skill path guidance;
    - starts Claude Code in the workspace cwd.
 5. When the run reaches terminal:
-   - the daemon force-flushes `run_messages`;
    - scans selected artifact rules relative to the workspace root;
    - writes found artifacts to SQLite;
    - emits `artifact_finalized` events for found artifacts;
    - fails a previously successful run with `ARTIFACT_REQUIRED_MISSING` if any selected required rule has no matches.
+   - emits `end` only after artifact and error events;
+   - force-flushes `run_messages` with the final status before DB terminal update.
 6. `GET /api/runs/:runId/artifacts` returns public artifact metadata without sandbox absolute paths.
 7. `GET /api/runs/:runId/artifacts/:artifactId/download` streams the file if the current client can read the run.
 
@@ -113,7 +116,7 @@ Create these modules:
 - `src/core/skill-registry.ts`
   - Scans `profile.skillRoots`.
   - Resolves a profile-allowed skill by id.
-  - Produces generic skill records: `id`, `name`, `description`, `body`, `dir`, `folderName`, `source`, `metadata`.
+  - Produces generic skill records: `id`, `name`, `description`, `body`, `dir`, `folderName`, `source`, `metadata`, `hasSideFiles`.
   - Strips product-specific `lancedesign` metadata from public/generic metadata.
   - Depends on `src/config/profiles.ts` types and `frontmatter.ts`.
 - `src/core/skill-staging.ts`
@@ -124,7 +127,7 @@ Create these modules:
   - Depends on `path-safety.ts`, not Express.
 - `src/core/prompt-composer.ts`
   - Composes `generate` prompt from skill body plus user prompt.
-  - Adds staged skill root preamble using `.claude-runner-skills/<folder>/` and the staged absolute path under the workspace.
+  - Adds staged skill root preamble using `.claude-runner-skills/<folder>/` and the staged absolute path under the workspace only when side files were staged.
   - Returns original prompt for `revise`.
   - Does not include lanceDesign product instructions.
 - `src/core/artifact-scanner.ts`
@@ -149,6 +152,7 @@ Modify these existing modules:
   - Treat `artifact_finalized` as `quiet`.
 - `src/core/run-types.ts`
   - Add public artifact DTO types if useful.
+  - Add `SKILL_UNAVAILABLE` and `SKILL_STAGING_FAILED` error codes.
   - Do not add a `run_events` table or event-persistence DTO.
 - `src/core/claude-adapter.ts`
   - Treat `extraAllowedDirs` as the complete extra allowlist.
@@ -258,6 +262,10 @@ Expected: frontmatter tests pass.
   - fallback id uses frontmatter `name`, then folder name;
   - `name` and `description` are strings;
   - `metadata` excludes `lancedesign`, `craft`, `preview`, `design_system`, `critique`, and other product-only nested fields.
+- [ ] Document in the test name or assertion comment that frontmatter `id` is a new daemon extension. lanceDesign uses `name` or folder name only; this daemon may accept `id` to make generic skill packages less UI-name-coupled.
+- [ ] Write tests for side-file detection:
+  - a directory containing only `SKILL.md` has `hasSideFiles: false`;
+  - a directory containing `assets/`, `references/`, `scripts/`, or sibling text/code files has `hasSideFiles: true`.
 - [ ] Write tests for profile authorization:
   - `resolveSkillForProfile(profile, "report-writer")` succeeds only when the id is in `profile.allowedSkillIds`;
   - disallowed id throws `SKILL_NOT_ALLOWED`;
@@ -266,6 +274,7 @@ Expected: frontmatter tests pass.
   - `SkillRecord`;
   - `listProfileSkills(profile: ProfileConfig): Promise<SkillRecord[]>`;
   - `resolveSkillForProfile(profile: ProfileConfig, skillId: string): Promise<SkillRecord>`.
+- [ ] Keep `resolveSkillForProfile()` scoped to filesystem discovery only. `createRun()` should perform synchronous `allowedSkillIds` membership checks before queued insert; missing or unreadable skill files after a valid allowlist check are async runtime failures.
 - [ ] Run:
 
 ```bash
@@ -330,10 +339,12 @@ Expected: staging tests pass.
   - staged relative root `.claude-runner-skills/<folder>/`;
   - staged absolute root under the workspace;
   - user request under a separate “User request” section.
+- [ ] Write tests that `generate` prompt for a skill with no side files includes the skill body and user request, but omits staged path guidance.
 - [ ] Write tests that product words such as `lanceDesign`, `design system`, `critique`, and `craft` are not injected by the composer unless they are literally present in the skill body authored by the skill.
 - [ ] Implement:
   - `composeRunPrompt({ kind, userPrompt, skill?, stagedSkill? })`.
 - [ ] Use lanceDesign `withSkillRootPreamble()` as behavioral inspiration, but adapt the absolute fallback to the staged workspace path, not the original profile skill root.
+- [ ] Match lanceDesign's injection condition: add the preamble only when the skill has side files and staging produced a workspace copy.
 - [ ] Run:
 
 ```bash
@@ -476,6 +487,7 @@ Expected: artifact service tests pass.
 
 - Modify: `src/core/run-service.ts`
 - Modify: `src/core/run-events.ts`
+- Modify: `src/core/run-types.ts`
 - Modify: `src/core/event-visibility.ts`
 - Test: `src/core/__tests__/run-service.test.ts`
 - Test: `src/core/__tests__/run-events.test.ts`
@@ -502,8 +514,14 @@ Expected: artifact service tests pass.
 ```
 
 - [ ] Mark `artifact_finalized` as `quiet` in `event-visibility.ts`.
+- [ ] Add these error codes to `daemonErrorCodes`:
+  - `SKILL_UNAVAILABLE`: an allowlisted skill could not be found/read from configured `profile.skillRoots` after queued run creation.
+  - `SKILL_STAGING_FAILED`: the daemon resolved the skill but could not stage its side files into the workspace.
 - [ ] Replace Phase 1 generate rejection with:
-  - `kind=generate` requires skill resolution;
+  - `kind=generate` performs synchronous `skillId` membership validation against `profile.allowedSkillIds` before queued insert;
+  - disallowed `skillId` throws `SKILL_NOT_ALLOWED` 400 and does not create a run row;
+  - skill filesystem resolution happens in async `startRun` after queued insert;
+  - allowlisted but missing/unreadable skill files fail the durable run with `SKILL_UNAVAILABLE`;
   - `kind=revise` still has no skill behavior and cannot pass `skillId` due validation.
 - [ ] Validate selected artifact rules before queued insert so a bad request does not create a run row.
 - [ ] Keep queued insert atomic with messages and profile snapshot.
@@ -512,27 +530,38 @@ Expected: artifact service tests pass.
   - resolved skill for generate;
   - staged skill result once available.
 - [ ] In async start:
-  - stage generate skill before building invocation;
+  - resolve the generate skill from `profile.skillRoots`;
+  - if the resolved skill has side files, stage it before building invocation;
+  - if staging fails, finish the run as `failed` with `SKILL_STAGING_FAILED` and do not spawn Claude;
+  - after every awaited step before `runnerFactory()`, re-check `state.terminal` and return if a cancel already finished the run;
   - compose the final prompt;
-  - pass only `stagedSkill.absoluteRoot` as `extraAllowedDirs`;
+  - pass only `stagedSkill.absoluteRoot` as `extraAllowedDirs` when side files were staged;
+  - pass no `extraAllowedDirs` for skills without side files;
   - never pass `profile.allowedInputRoots`;
   - never pass full `profile.skillRoots`.
 - [ ] Update terminal flow:
-  - on CLI completion, scan/persist artifacts before emitting `end`;
+  - on CLI completion and when not canceled, scan artifacts before emitting `end`;
+  - persist artifacts with `replaceArtifactsForRun`;
   - emit `artifact_finalized` events for found artifacts;
-  - if CLI status is `succeeded` and required artifacts are missing, emit an `error` event with code `ARTIFACT_REQUIRED_MISSING` and terminal status `failed`;
-  - force-flush `run_messages` after artifact/error events and before DB terminal status update;
+  - if CLI status is `succeeded` and required artifacts are missing, emit an `error` event with code `ARTIFACT_REQUIRED_MISSING` and rewrite final status to `failed`;
+  - call `accumulator.flushTerminal({ runStatus: finalStatus })` with the rewritten final status, not the raw CLI status;
+  - emit `end` only after artifact and error events have been emitted and consumed by the accumulator;
+  - then call `updateRunTerminal` with the same final status;
   - canceled runs do not run artifact scan.
 - [ ] Add run-service tests:
   - generate no longer returns `kind=generate requires Phase 2 skill support`;
-  - unknown/disallowed skill returns `SKILL_NOT_ALLOWED`;
+  - disallowed skill returns synchronous `SKILL_NOT_ALLOWED` and inserts no run row;
+  - allowlisted but missing skill files create a queued run and then finish it as `failed` with `SKILL_UNAVAILABLE`;
+  - staging failure creates a queued run and then finishes it as `failed` with `SKILL_STAGING_FAILED`;
   - allowed generate stages skill and starts fake runner;
+  - generate skill with no side files does not stage and passes no `extraAllowedDirs`;
   - fake runner input prompt contains skill body and staged relative root;
   - fake runner input extra dirs contain staged skill dir only;
   - fake runner input extra dirs do not contain `allowedInputRoots` or full `skillRoots`;
   - successful generate with required output writes artifacts and succeeds;
   - successful generate missing required output fails with `ARTIFACT_REQUIRED_MISSING`;
   - missing required artifact still leaves assistant `content/events_json` flushed for run detail;
+  - `artifact_finalized` and `ARTIFACT_REQUIRED_MISSING` error events appear before the terminal `end` event;
   - revise runs still do not stage or inject skill body.
 - [ ] Run:
 
@@ -634,6 +663,8 @@ Expected: HTTP artifact route tests pass.
   - `defaultArtifactRuleIds` must exist in `artifactRules`;
   - `allowedSkillIds` can be empty for revise-only profiles;
   - `skillRoots` are config-only and absent from public profile responses.
+- [ ] Add contract tests that `SKILL_UNAVAILABLE` and `SKILL_STAGING_FAILED` are accepted daemon error codes.
+- [ ] Do not change existing Phase 1 visibility behavior except adding `artifact_finalized = quiet`. Phase 1 intentionally exposes `tool_result` at `normal` visibility even though an older design paragraph said otherwise; keep that compatibility unless a separate review decides to change the event contract.
 - [ ] Run:
 
 ```bash
@@ -717,8 +748,12 @@ Do not implement these in Phase 2:
 ### Skill Stage Acceptance
 
 - `kind=generate` resolves only `profile.allowedSkillIds`.
+- Disallowed skill ids fail synchronously with `SKILL_NOT_ALLOWED` and do not create run rows.
+- Allowlisted but unavailable skill files fail the durable run with `SKILL_UNAVAILABLE`.
 - Only profile-owned `skillRoots` are scanned.
 - Active skill side files are copied into `.claude-runner-skills/<folder>/`.
+- Skills without side files do not require staging or `--add-dir`.
+- Staging failure fails the durable run with `SKILL_STAGING_FAILED` before spawning Claude.
 - No symlink path can mutate the source skill directory.
 - Generate prompt includes skill body and staged skill guidance.
 - Revise prompt remains skill-free.
@@ -731,6 +766,8 @@ Do not implement these in Phase 2:
 - Found artifacts are stored in SQLite with relative paths only.
 - Required missing artifacts fail successful Claude runs with `ARTIFACT_REQUIRED_MISSING`.
 - Non-required missing artifacts do not fail the run.
+- `artifact_finalized` and required-missing `error` events are emitted before terminal `end`.
+- `run_messages.run_status` and `runs.status` use the same final status after required-missing rewrites.
 
 ### HTTP Stage Acceptance
 
