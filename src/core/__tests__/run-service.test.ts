@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -13,6 +13,7 @@ import {
   type RunServiceRunnerFactory,
 } from '../run-service.js';
 import type { ClaudeCliRunResult } from '../cli-runner.js';
+import { getWorkspaceCwd } from '../workspace-service.js';
 
 function makeConfig(root: string): DaemonConfig {
   return parseDaemonConfig(
@@ -111,6 +112,11 @@ function setup(options: { capabilities?: Parameters<RunServiceRunnerFactory>[0][
     projectId: 'project_123',
     now: 1000,
   });
+  const workspaceCwd = getWorkspaceCwd(config.profiles[0]!, workspace);
+  mkdirSync(path.join(workspaceCwd, 'input'), { recursive: true });
+  mkdirSync(path.join(workspaceCwd, 'output'), { recursive: true });
+  mkdirSync(path.join(workspaceCwd, 'work'), { recursive: true });
+  mkdirSync(path.join(workspaceCwd, '.claude-runner-skills'), { recursive: true });
   const timerHarness = createTimerHarness();
   const runners: Array<{
     input: Parameters<RunServiceRunnerFactory>[0];
@@ -139,12 +145,38 @@ function setup(options: { capabilities?: Parameters<RunServiceRunnerFactory>[0][
     },
   });
 
-  return { root, config, db, workspace, service, runners, ...timerHarness };
+  return { root, config, db, workspace, workspaceCwd, service, runners, ...timerHarness };
 }
 
 async function runScheduledStart(runNextTimer: () => unknown): Promise<void> {
   runNextTimer();
-  await Promise.resolve();
+  await flushAsync();
+}
+
+async function flushAsync(): Promise<void> {
+  for (let index = 0; index < 10; index += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
+function writeSkill(root: string, options: { sideFiles?: boolean } = {}): string {
+  const skillDir = path.join(root, 'skills', 'report-writer');
+  mkdirSync(skillDir, { recursive: true });
+  writeFileSync(
+    path.join(skillDir, 'SKILL.md'),
+    `---
+id: report-writer
+name: Report Writer
+description: Writes reports.
+---
+Use references/style.md to write the report.
+`,
+  );
+  if (options.sideFiles) {
+    mkdirSync(path.join(skillDir, 'references'), { recursive: true });
+    writeFileSync(path.join(skillDir, 'references', 'style.md'), 'Keep it concise.');
+  }
+  return skillDir;
 }
 
 describe('run service', () => {
@@ -196,10 +228,28 @@ describe('run service', () => {
     expect(invocation.args).toContain('--include-partial-messages');
   });
 
-  it('rejects kind=generate during Phase 1', () => {
-    const { config, workspace, service } = setup();
+  it('rejects disallowed generate skill ids synchronously without inserting a run', () => {
+    const { config, db, workspace, service } = setup();
 
     expect(() =>
+      service.createRun({
+        client: config.clients[0]!,
+        request: {
+          profileId: 'report-docx',
+          workspaceId: workspace.id,
+          kind: 'generate',
+          skillId: 'not-allowed',
+          prompt: 'Generate a report.',
+        },
+      }),
+    ).toThrow(expect.objectContaining({ code: 'SKILL_NOT_ALLOWED', status: 400 }));
+    expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })).toBeNull();
+  });
+
+  it('fails an allowlisted but unavailable generate skill as a durable run', async () => {
+    const { config, db, workspace, service, runners, runNextTimer } = setup();
+
+    expect(
       service.createRun({
         client: config.clients[0]!,
         request: {
@@ -210,7 +260,97 @@ describe('run service', () => {
           prompt: 'Generate a report.',
         },
       }),
-    ).toThrow(DaemonError);
+    ).toEqual({ runId: 'run_1', status: 'queued' });
+
+    await runScheduledStart(runNextTimer);
+
+    expect(runners).toHaveLength(0);
+    await vi.waitFor(() => {
+      expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.run).toMatchObject({
+        status: 'failed',
+        errorCode: 'SKILL_UNAVAILABLE',
+      });
+    });
+  });
+
+  it('stages side-file skills for generate and grants only the staged skill dir', async () => {
+    const { root, config, workspace, workspaceCwd, service, runners, runNextTimer } = setup();
+    writeSkill(root, { sideFiles: true });
+
+    service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'generate',
+        skillId: 'report-writer',
+        prompt: 'Generate the report.',
+        artifactRuleIds: [],
+      },
+    });
+
+    await runScheduledStart(runNextTimer);
+
+    const stagedDir = path.join(workspaceCwd, '.claude-runner-skills', 'report-writer');
+    await vi.waitFor(() => expect(runners).toHaveLength(1));
+    expect(runners[0]!.input.prompt).toContain('Use references/style.md to write the report.');
+    expect(runners[0]!.input.prompt).toContain('.claude-runner-skills/report-writer/');
+    expect(runners[0]!.input.extraAllowedDirs).toEqual([stagedDir]);
+    expect(runners[0]!.input.extraAllowedDirs?.join('\0')).not.toContain(path.join(root, 'uploads'));
+    expect(runners[0]!.input.extraAllowedDirs?.join('\0')).not.toContain(path.join(root, 'skills'));
+  });
+
+  it('does not stage generate skills that have no side files', async () => {
+    const { root, config, workspace, service, runners, runNextTimer } = setup();
+    writeSkill(root);
+
+    service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'generate',
+        skillId: 'report-writer',
+        prompt: 'Generate the report.',
+        artifactRuleIds: [],
+      },
+    });
+
+    await runScheduledStart(runNextTimer);
+
+    await vi.waitFor(() => expect(runners).toHaveLength(1));
+    expect(runners[0]!.input.prompt).toContain('Use references/style.md to write the report.');
+    expect(runners[0]!.input.prompt).not.toContain('Skill root');
+    expect(runners[0]!.input.extraAllowedDirs).toEqual([]);
+  });
+
+  it('fails generate runs durably when skill staging fails before spawn', async () => {
+    const { root, config, db, workspace, workspaceCwd, service, runners, runNextTimer } = setup();
+    writeSkill(root, { sideFiles: true });
+    rmSync(path.join(workspaceCwd, '.claude-runner-skills'), { recursive: true, force: true });
+    writeFileSync(path.join(workspaceCwd, '.claude-runner-skills'), 'not a directory');
+
+    service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'generate',
+        skillId: 'report-writer',
+        prompt: 'Generate the report.',
+        artifactRuleIds: [],
+      },
+    });
+
+    await runScheduledStart(runNextTimer);
+
+    expect(runners).toHaveLength(0);
+    await vi.waitFor(() => {
+      expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.run).toMatchObject({
+        status: 'failed',
+        errorCode: 'SKILL_STAGING_FAILED',
+      });
+    });
   });
 
   it('rejects a second active run for the same workspace', () => {
@@ -234,7 +374,13 @@ describe('run service', () => {
     });
     service.createRun({
       client: config.clients[0]!,
-      request: { profileId: 'report-docx', workspaceId: workspace.id, kind: 'revise', prompt: 'Run.' },
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'revise',
+        prompt: 'Run.',
+        artifactRuleIds: [],
+      },
     });
     await runScheduledStart(runNextTimer);
 
@@ -251,7 +397,13 @@ describe('run service', () => {
     const { config, db, workspace, service, runners, runNextTimer } = setup();
     service.createRun({
       client: config.clients[0]!,
-      request: { profileId: 'report-docx', workspaceId: workspace.id, kind: 'revise', prompt: 'Run.' },
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'revise',
+        prompt: 'Run.',
+        artifactRuleIds: [],
+      },
     });
     await runScheduledStart(runNextTimer);
     runners[0]!.input.onEvent({ type: 'text_delta', delta: 'Done.' });
@@ -262,15 +414,17 @@ describe('run service', () => {
       stdoutTail: '',
       stderrTail: '',
     });
-    await Promise.resolve();
+    await flushAsync();
 
-    const detail = getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' });
-    expect(detail?.run).toMatchObject({
-      status: 'succeeded',
-      exitCode: 0,
-      finishedAt: 5000,
-      lastRunEventId: '4',
+    await vi.waitFor(() => {
+      expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.run).toMatchObject({
+        status: 'succeeded',
+        exitCode: 0,
+        finishedAt: 5000,
+        lastRunEventId: '4',
+      });
     });
+    const detail = getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' });
     expect(detail?.messages[1]).toMatchObject({
       content: 'Done.',
       runStatus: 'succeeded',
@@ -282,15 +436,135 @@ describe('run service', () => {
     });
   });
 
+  it('persists artifact events before terminal end on successful generate', async () => {
+    const { root, config, db, workspace, workspaceCwd, service, runners, runNextTimer } = setup();
+    writeSkill(root);
+    service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'generate',
+        skillId: 'report-writer',
+        prompt: 'Generate.',
+        artifactRuleIds: ['report-docx'],
+      },
+    });
+    await runScheduledStart(runNextTimer);
+    await vi.waitFor(() => expect(runners).toHaveLength(1));
+    writeFileSync(path.join(workspaceCwd, 'output', 'report.docx'), 'docx');
+    runners[0]!.complete({
+      status: 'succeeded',
+      exitCode: 0,
+      signal: null,
+      stdoutTail: '',
+      stderrTail: '',
+    });
+    await flushAsync();
+
+    await vi.waitFor(() => {
+      expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.run.status).toBe('succeeded');
+    });
+    const detail = getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' });
+    expect(detail?.run.status).toBe('succeeded');
+    const eventTypes = (detail?.messages[1]?.events as Array<{ type: string }>).map((event) => event.type);
+    expect(eventTypes).toEqual(expect.arrayContaining(['artifact_finalized', 'end']));
+    expect(eventTypes.indexOf('artifact_finalized')).toBeLessThan(eventTypes.indexOf('end'));
+  });
+
+  it('rewrites successful runs to failed when required artifacts are missing', async () => {
+    const { root, config, db, workspace, service, runners, runNextTimer } = setup();
+    writeSkill(root);
+    service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'generate',
+        skillId: 'report-writer',
+        prompt: 'Generate.',
+        artifactRuleIds: ['report-docx'],
+      },
+    });
+    await runScheduledStart(runNextTimer);
+    await vi.waitFor(() => expect(runners).toHaveLength(1));
+    runners[0]!.input.onEvent({ type: 'text_delta', delta: 'Draft before artifact check.' });
+    runners[0]!.complete({
+      status: 'succeeded',
+      exitCode: 0,
+      signal: null,
+      stdoutTail: '',
+      stderrTail: '',
+    });
+    await flushAsync();
+
+    await vi.waitFor(() => {
+      expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.run).toMatchObject({
+        status: 'failed',
+        errorCode: 'ARTIFACT_REQUIRED_MISSING',
+      });
+    });
+    const detail = getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' });
+    expect(detail?.messages[1]).toMatchObject({
+      content: 'Draft before artifact check.',
+      runStatus: 'failed',
+    });
+    const eventTypes = (detail?.messages[1]?.events as Array<{ type: string }>).map((event) => event.type);
+    expect(eventTypes.slice(-2)).toEqual(['error', 'end']);
+  });
+
+  it('fails terminally with ARTIFACT_SCAN_FAILED when artifact finalization throws', async () => {
+    const { root, config, db, workspace, workspaceCwd, service, runners, runNextTimer } = setup();
+    writeSkill(root);
+    service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'generate',
+        skillId: 'report-writer',
+        prompt: 'Generate.',
+        artifactRuleIds: ['report-docx'],
+      },
+    });
+    await runScheduledStart(runNextTimer);
+    await vi.waitFor(() => expect(runners).toHaveLength(1));
+    rmSync(workspaceCwd, { recursive: true, force: true });
+    runners[0]!.complete({
+      status: 'succeeded',
+      exitCode: 0,
+      signal: null,
+      stdoutTail: '',
+      stderrTail: '',
+    });
+    await flushAsync();
+
+    await vi.waitFor(() => {
+      expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.run).toMatchObject({
+        status: 'failed',
+        errorCode: 'ARTIFACT_SCAN_FAILED',
+      });
+    });
+  });
+
   it('drops in-memory event streams after TTL while durable detail remains', async () => {
     const { config, db, workspace, service, runners, runNextTimer } = setup();
     service.createRun({
       client: config.clients[0]!,
-      request: { profileId: 'report-docx', workspaceId: workspace.id, kind: 'revise', prompt: 'Run.' },
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'revise',
+        prompt: 'Run.',
+        artifactRuleIds: [],
+      },
     });
     await runScheduledStart(runNextTimer);
     runners[0]!.complete({ status: 'succeeded', exitCode: 0, signal: null, stdoutTail: '', stderrTail: '' });
-    await Promise.resolve();
+    await flushAsync();
+    await vi.waitFor(() => {
+      expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.run.status).toBe('succeeded');
+    });
 
     runNextTimer();
 
@@ -304,7 +578,13 @@ describe('run service', () => {
     const { config, db, workspace, service, runners, runNextTimer } = setup();
     service.createRun({
       client: config.clients[0]!,
-      request: { profileId: 'report-docx', workspaceId: workspace.id, kind: 'revise', prompt: 'Run.' },
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'revise',
+        prompt: 'Run.',
+        artifactRuleIds: [],
+      },
     });
     await runScheduledStart(runNextTimer);
 

@@ -28,12 +28,15 @@ export const daemonErrorCodes = [
   'MODEL_NOT_ALLOWED',
   'PROFILE_NOT_ALLOWED',
   'SKILL_NOT_ALLOWED',
+  'SKILL_UNAVAILABLE',
+  'SKILL_STAGING_FAILED',
   'RUN_QUEUE_FULL',
   'WORKSPACE_RUN_ACTIVE',
   'RUN_NOT_CANCELABLE',
   'RUN_TIMEOUT',
   'RUN_INACTIVITY_TIMEOUT',
   'ARTIFACT_REQUIRED_MISSING',
+  'ARTIFACT_SCAN_FAILED',
   'RUN_INTERRUPTED_BY_DAEMON_RESTART',
   'CLAUDE_AUTH_FAILED',
   'CLAUDE_CLI_FAILED',
@@ -100,6 +103,20 @@ export interface ListRunsQuery {
   workspaceKey?: string;
   workspacePrefix?: string;
   status?: RunStatus;
+}
+
+export interface PublicArtifact {
+  id: string;
+  runId: string;
+  workspaceId: string;
+  ruleId: string;
+  role: string;
+  relativePath: string;
+  fileName: string;
+  mimeType: string | null;
+  size: number | null;
+  mtime: number | null;
+  sha256: string | null;
 }
 
 export interface EventReplayQuery {

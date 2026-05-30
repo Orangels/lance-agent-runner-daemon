@@ -77,6 +77,7 @@ describe('server startup context', () => {
     const context = createServerContext(config, { clock: () => 2000 });
 
     expect(context.runService).toBeDefined();
+    expect(context.artifactService).toBeDefined();
     expect(context.interruptedRuns).toBe(1);
     expect(getRunDetail(context.db, { runId: 'run_1', clientId: 'lqbot' })?.run).toMatchObject({
       status: 'interrupted',

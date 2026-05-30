@@ -32,7 +32,7 @@ export function buildClaudeInvocation(input: BuildClaudeInvocationInput): Claude
 
   const extraAllowedDirs = (input.extraAllowedDirs ?? []).filter((dir) => dir.length > 0);
   if (extraAllowedDirs.length > 0 && input.capabilities?.addDir !== false) {
-    args.push('--add-dir', input.workspaceCwd, ...extraAllowedDirs);
+    args.push('--add-dir', ...extraAllowedDirs);
   }
 
   args.push('--permission-mode', input.profile.permissionMode);
