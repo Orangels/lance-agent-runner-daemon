@@ -750,7 +750,7 @@ CREATE TABLE workspaces (
   origin_id TEXT NOT NULL,
   user_id TEXT NOT NULL,
   project_id TEXT NOT NULL,
-  workspace_key TEXT NOT NULL UNIQUE,
+  workspace_key TEXT NOT NULL,
   status TEXT NOT NULL,
   metadata_json TEXT,
   created_at INTEGER NOT NULL,
@@ -759,6 +759,9 @@ CREATE TABLE workspaces (
 
 CREATE INDEX idx_workspaces_identity
   ON workspaces(origin_id, user_id, project_id);
+
+CREATE UNIQUE INDEX idx_workspaces_client_profile_key
+  ON workspaces(client_id, profile_id, workspace_key);
 ```
 
 #### conversations

@@ -143,6 +143,38 @@ describe('profiles route', () => {
   });
 });
 
+describe('request body errors', () => {
+  it('maps malformed JSON bodies to a generic 400 without leaking parser details', async () => {
+    await withApp(async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/workspaces`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer secret', 'Content-Type': 'application/json' },
+        body: '{"profileId":',
+      });
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({
+        error: { code: 'BAD_REQUEST', message: 'Invalid request body' },
+      });
+    });
+  });
+
+  it('maps oversized JSON bodies to a generic 413 without leaking parser details', async () => {
+    await withApp(async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/workspaces`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer secret', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payload: 'x'.repeat(1_100_000) }),
+      });
+
+      expect(response.status).toBe(413);
+      expect(await response.json()).toEqual({
+        error: { code: 'BAD_REQUEST', message: 'Invalid request body' },
+      });
+    });
+  });
+});
+
 describe('workspace routes', () => {
   it('creates or gets a workspace', async () => {
     await withApp(async (baseUrl, root) => {

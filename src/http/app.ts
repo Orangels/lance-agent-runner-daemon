@@ -1,7 +1,7 @@
 import express, { type ErrorRequestHandler } from 'express';
 import { ZodError } from 'zod';
 import type { DaemonConfig } from '../config/profiles.js';
-import { DaemonError, internalError, toErrorResponse } from '../core/errors.js';
+import { DaemonError, badRequest, internalError, toErrorResponse } from '../core/errors.js';
 import type { WorkspaceService } from '../core/workspace-service.js';
 import type { RunnerDatabase } from '../db/connection.js';
 import { zodErrorToDaemonError } from './validation.js';
@@ -40,7 +40,19 @@ const errorHandler: ErrorRequestHandler = (error, _request, response, _next) => 
       ? zodErrorToDaemonError(error)
       : error instanceof DaemonError
         ? error
-        : internalError();
+        : isHttpClientError(error)
+          ? badRequest('Invalid request body')
+          : internalError();
 
-  response.status(daemonError.status).json(toErrorResponse(daemonError));
+  const status = isHttpClientError(error) ? error.status : daemonError.status;
+  response.status(status).json(toErrorResponse(daemonError));
 };
+
+function isHttpClientError(error: unknown): error is { status: number } {
+  if (!error || typeof error !== 'object' || !('status' in error)) {
+    return false;
+  }
+
+  const status = (error as { status?: unknown }).status;
+  return typeof status === 'number' && status >= 400 && status < 500;
+}
