@@ -51,6 +51,10 @@ function organizeAssistantEvents(events: DemoRunEvent[]): {
       continue;
     }
 
+    if (event.type === 'tool_use' && event.name === 'Agent') {
+      continue;
+    }
+
     visibleEvents.push(event);
   }
 

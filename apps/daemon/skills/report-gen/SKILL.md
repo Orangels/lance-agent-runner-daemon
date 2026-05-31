@@ -84,6 +84,7 @@ echo "SESSION_DIR=$SESSION_DIR"
 ```
 使用 Agent 工具：
   subagent_type: "general-purpose"
+  model: "opus"
   prompt: "你是模板分析专家，负责分析DOCX模板的统计逻辑、格式规范和写作风格。
 
     ## 执行指导
@@ -112,6 +113,7 @@ echo "SESSION_DIR=$SESSION_DIR"
 ```
 使用 Agent 工具：
   subagent_type: "general-purpose"
+  model: "opus"
   prompt: "你是数据提取和计算专家，负责根据模板分析结果提取完整的多维度数据。
 
     ## 执行指导
@@ -155,6 +157,7 @@ REPORT_TS=$(date +%s)
 ```
 使用 Agent 工具：
   subagent_type: "general-purpose"
+  model: "opus"
   prompt: "你是文档仿写专家，负责根据模板分析和提取数据智能生成新报告。
 
     ## 执行指导
