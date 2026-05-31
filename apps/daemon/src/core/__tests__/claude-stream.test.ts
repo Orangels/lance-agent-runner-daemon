@@ -59,7 +59,10 @@ describe('Claude stream parser', () => {
       }),
     );
 
-    expect(events).toEqual([{ type: 'text_delta', delta: 'hello' }]);
+    expect(events).toEqual([
+      { type: 'assistant_message_start', messageId: 'msg-1' },
+      { type: 'text_delta', delta: 'hello' },
+    ]);
   });
 
   it('emits final assistant wrapper text when no streamed text was seen', () => {
@@ -75,7 +78,40 @@ describe('Claude stream parser', () => {
       }),
     );
 
-    expect(events).toEqual([{ type: 'text_delta', delta: 'fallback text' }]);
+    expect(events).toEqual([
+      { type: 'assistant_message_start', messageId: 'msg-1' },
+      { type: 'text_delta', delta: 'fallback text' },
+    ]);
+  });
+
+  it('emits assistant boundaries from final wrappers when partial messages are unavailable', () => {
+    const { events, handler } = collectEvents();
+
+    handler.feed(
+      jsonLine({
+        type: 'assistant',
+        message: {
+          id: 'msg-1',
+          content: [{ type: 'text', text: 'first' }],
+        },
+      }),
+    );
+    handler.feed(
+      jsonLine({
+        type: 'assistant',
+        message: {
+          id: 'msg-2',
+          content: [{ type: 'text', text: 'second' }],
+        },
+      }),
+    );
+
+    expect(events).toEqual([
+      { type: 'assistant_message_start', messageId: 'msg-1' },
+      { type: 'text_delta', delta: 'first' },
+      { type: 'assistant_message_start', messageId: 'msg-2' },
+      { type: 'text_delta', delta: 'second' },
+    ]);
   });
 
   it('does not duplicate final assistant wrapper text after streamed text', () => {
@@ -110,7 +146,10 @@ describe('Claude stream parser', () => {
       }),
     );
 
-    expect(events).toEqual([{ type: 'text_delta', delta: 'hello' }]);
+    expect(events).toEqual([
+      { type: 'assistant_message_start', messageId: 'msg-1' },
+      { type: 'text_delta', delta: 'hello' },
+    ]);
   });
 
   it('emits thinking_start and thinking_delta', () => {
@@ -193,6 +232,7 @@ describe('Claude stream parser', () => {
     );
 
     expect(events).toEqual([
+      { type: 'assistant_message_start', messageId: 'msg-1' },
       {
         type: 'tool_use',
         id: 'tool-1',
@@ -246,6 +286,7 @@ describe('Claude stream parser', () => {
     );
 
     expect(events).toEqual([
+      { type: 'assistant_message_start', messageId: 'msg-1' },
       {
         type: 'tool_use',
         id: 'tool-1',
@@ -306,6 +347,7 @@ describe('Claude stream parser', () => {
     handler.feed(jsonLine({ type: 'stream_event', event: { type: 'content_block_stop', index: 0 } }));
 
     expect(events).toEqual([
+      { type: 'assistant_message_start', messageId: 'msg-1' },
       {
         type: 'tool_use',
         id: 'tool-1',
@@ -336,6 +378,7 @@ describe('Claude stream parser', () => {
     handler.feed(jsonLine(assistantToolUse));
 
     expect(events).toEqual([
+      { type: 'assistant_message_start', messageId: 'msg-1' },
       {
         type: 'tool_use',
         id: 'tool-1',
@@ -421,6 +464,9 @@ describe('Claude stream parser', () => {
     );
     handler.flush();
 
-    expect(events).toEqual([{ type: 'text_delta', delta: 'last line' }]);
+    expect(events).toEqual([
+      { type: 'assistant_message_start', messageId: 'msg-1' },
+      { type: 'text_delta', delta: 'last line' },
+    ]);
   });
 });

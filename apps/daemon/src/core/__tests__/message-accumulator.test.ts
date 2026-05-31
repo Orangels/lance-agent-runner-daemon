@@ -5,11 +5,15 @@ import type { RunEvent } from '../run-events.js';
 const updateRunMessage = vi.fn();
 const updateAssistantMessageStarted = vi.fn();
 const updateAssistantMessageTerminal = vi.fn();
+const updateAssistantMessagesTerminalForRun = vi.fn();
+const insertAssistantRunMessage = vi.fn();
 
 vi.mock('../../db/repositories.js', () => ({
+  insertAssistantRunMessage,
   updateRunMessage,
   updateAssistantMessageStarted,
   updateAssistantMessageTerminal,
+  updateAssistantMessagesTerminalForRun,
 }));
 
 const { createMessageAccumulator } = await import('../message-accumulator.js');
@@ -73,6 +77,8 @@ describe('message accumulator', () => {
     updateRunMessage.mockReset();
     updateAssistantMessageStarted.mockReset();
     updateAssistantMessageTerminal.mockReset();
+    updateAssistantMessagesTerminalForRun.mockReset();
+    insertAssistantRunMessage.mockReset();
   });
 
   it('marks the assistant message running with startedAt when the run starts', () => {

@@ -12,6 +12,10 @@ export type RunEvent =
       ttftMs?: number;
     }
   | {
+      type: 'assistant_message_start';
+      messageId: string | null;
+    }
+  | {
       type: 'text_delta';
       delta: string;
     }

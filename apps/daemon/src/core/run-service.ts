@@ -134,6 +134,7 @@ interface RunState {
   accumulator: ReturnType<typeof createMessageAccumulator> | null;
   logHandle: RunLogHandle | null;
   assistantMessageId: string;
+  conversationId: string;
   queueStatus: 'queued' | 'starting' | 'running' | 'finishing' | 'terminal';
   sequence: number;
   runTimeoutTimer: unknown;
@@ -261,6 +262,11 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     state.accumulator = createMessageAccumulator({
       db: input.db,
       messageId: state.assistantMessageId,
+      workspaceId: state.workspace.id,
+      conversationId: state.conversationId,
+      runId: state.runId,
+      initialPosition: 1,
+      nextMessageId: nextAssistantMessageId,
       clock: { now },
       timer,
     });
@@ -658,6 +664,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
         accumulator: null,
         logHandle: null,
         assistantMessageId,
+        conversationId: created.conversation.id,
         queueStatus: 'queued',
         sequence,
         runTimeoutTimer: null,

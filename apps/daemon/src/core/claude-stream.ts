@@ -19,6 +19,8 @@ export function createClaudeStreamHandler(onEvent: RunEventSink) {
   const blocks = new Map<string, BlockState>();
   // Tool uses already emitted from either streamed input or final wrappers.
   const emittedToolUseIds = new Set<string>();
+  // Assistant message boundaries already emitted from streamed or final wrappers.
+  const emittedAssistantMessageStartIds = new Set<string>();
   // Most recent assistant message id for content_block_* events without ids.
   let currentMessageId: string | null = null;
   // Message ids that already streamed text via `stream_event` deltas.
@@ -81,8 +83,11 @@ export function createClaudeStreamHandler(onEvent: RunEventSink) {
     }
 
     if (obj.type === 'assistant' && isRecord(obj.message) && Array.isArray(obj.message.content)) {
-      currentMessageId = typeof obj.message.id === 'string' ? obj.message.id : currentMessageId;
       const msgId = typeof obj.message.id === 'string' ? obj.message.id : null;
+      currentMessageId = msgId ?? currentMessageId;
+      if (msgId) {
+        emitAssistantMessageStart(msgId);
+      }
       const alreadyStreamed = msgId ? textStreamed.has(msgId) : false;
       for (const block of obj.message.content) {
         if (!isRecord(block)) continue;
@@ -137,6 +142,7 @@ export function createClaudeStreamHandler(onEvent: RunEventSink) {
   function handleStreamEvent(ev: Record<string, unknown>) {
     if (ev.type === 'message_start') {
       currentMessageId = isRecord(ev.message) && typeof ev.message.id === 'string' ? ev.message.id : null;
+      emitAssistantMessageStart(currentMessageId);
       if (typeof ev.ttft_ms === 'number') {
         onEvent({ type: 'status', label: 'streaming', ttftMs: ev.ttft_ms });
       }
@@ -202,6 +208,15 @@ export function createClaudeStreamHandler(onEvent: RunEventSink) {
       name,
       input,
     });
+  }
+
+  function emitAssistantMessageStart(messageId: string | null) {
+    if (messageId) {
+      if (emittedAssistantMessageStartIds.has(messageId)) return;
+      emittedAssistantMessageStartIds.add(messageId);
+    }
+
+    onEvent({ type: 'assistant_message_start', messageId });
   }
 
   return { feed, flush };

@@ -30,6 +30,7 @@ const rankedVisibilities: EventVisibility[] = ['quiet', 'normal', 'debug'];
 
 const eventVisibilityByType: Record<RunEvent['type'], EventVisibility> = {
   status: 'quiet',
+  assistant_message_start: 'quiet',
   text_delta: 'quiet',
   usage: 'quiet',
   error: 'quiet',

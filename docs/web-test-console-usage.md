@@ -47,7 +47,7 @@ The console shows three business adapter flows:
    - Creates the same kind of `generate` run.
    - Does not call `/events`.
    - Polls `GET /api/runs/:runId`.
-   - Updates the same local assistant bubble from durable `run_messages`.
+   - Reconciles durable `run_messages`, including multiple assistant bubbles when a run has multiple Claude assistant message turns.
 
 3. `Revise`
    - Requires an existing workspace from an earlier run.

@@ -510,7 +510,7 @@ Expected:
 - Run create inserts a durable `queued` row before execution.
 - SSE shows start/status/text/error/end events.
 - SQLite run status reaches `succeeded`, `failed`, or `canceled`.
-- `run_messages` has one user message and one assistant message.
+- `run_messages` has one user message and one or more assistant messages, split by Claude Code assistant message boundaries.
 - `assistant.events_json` is present without relying on an SSE consumer.
 
 ### Do Not Implement In Phase 1

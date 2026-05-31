@@ -76,40 +76,83 @@ export function applyRunEventToMessage(message: DemoChatMessage, record: Streame
   return next;
 }
 
+export function applyRunEventToMessages(
+  messages: DemoChatMessage[],
+  runId: string,
+  record: StreamedRunEvent,
+  nextAssistantId: () => string,
+): DemoChatMessage[] {
+  if (record.event.type === 'assistant_message_start') {
+    return applyAssistantMessageStart(messages, runId, record, nextAssistantId);
+  }
+
+  const targetIndex = findLastAssistantIndexForRun(messages, runId);
+  if (targetIndex === -1) {
+    return messages;
+  }
+
+  return messages.map((message, index) =>
+    index === targetIndex ? applyRunEventToMessage(message, record) : message,
+  );
+}
+
 export function reconcileMessagesWithRunDetail(
   messages: DemoChatMessage[],
   detail: RunDetailResponse,
 ): DemoChatMessage[] {
-  const durableAssistant = detail.messages
+  const durableAssistants = detail.messages
     .filter((message) => message.role === 'assistant')
-    .sort((left, right) => right.position - left.position)[0];
+    .sort((left, right) => left.position - right.position);
 
-  if (!durableAssistant) {
+  if (durableAssistants.length === 0) {
     return messages;
   }
 
-  return messages.map((message) => {
-    if (message.role !== 'assistant' || message.runId !== detail.run.id) {
-      return message;
-    }
+  const firstAssistantIndex = messages.findIndex(
+    (message) => message.role === 'assistant' && message.runId === detail.run.id,
+  );
+  const insertIndex = firstAssistantIndex === -1 ? messages.length : firstAssistantIndex;
+  const localAssistants = messages.filter(
+    (message) => message.role === 'assistant' && message.runId === detail.run.id,
+  );
+  const template = localAssistants[0];
+  const artifactSource = [...localAssistants].reverse().find((message) => (message.artifacts ?? []).length > 0);
+  const durableChatMessages = durableAssistants.map((message, index) =>
+    toDemoAssistantMessageFromDetail(detail, message, {
+      template: index === 0 ? template : undefined,
+      artifacts: index === durableAssistants.length - 1 ? (artifactSource?.artifacts ?? []) : [],
+      includeRunError: index === durableAssistants.length - 1,
+    }),
+  );
 
-    const error = detail.run.errorCode || detail.run.errorMessage
-      ? {
-          code: detail.run.errorCode ?? undefined,
-          message: detail.run.errorMessage ?? 'Run failed',
-        }
-      : message.error;
+  const withoutLocalAssistants = messages.filter(
+    (message) => !(message.role === 'assistant' && message.runId === detail.run.id),
+  );
 
-    return {
-      ...message,
-      content: durableAssistant.content,
-      events: normalizeDurableEvents(durableAssistant.events),
-      runStatus: durableAssistant.runStatus ?? detail.run.status,
-      lastRunEventId: durableAssistant.lastRunEventId ?? detail.run.lastRunEventId ?? message.lastRunEventId,
-      endedAt: durableAssistant.endedAt ?? message.endedAt,
-      error,
-    };
-  });
+  // Current-run assistant messages are removed before slicing. Because
+  // insertIndex points at the first one, the filtered prefix length is stable.
+  return [
+    ...withoutLocalAssistants.slice(0, insertIndex),
+    ...durableChatMessages,
+    ...withoutLocalAssistants.slice(insertIndex),
+  ];
+}
+
+export function attachArtifactsToLastAssistantMessage(
+  messages: DemoChatMessage[],
+  runId: string,
+  artifacts: DemoArtifact[],
+): DemoChatMessage[] {
+  const targetIndex = findLastAssistantIndexForRun(messages, runId);
+  if (targetIndex === -1) {
+    return messages;
+  }
+
+  return messages.map((message, index) =>
+    message.role === 'assistant' && message.runId === runId
+      ? { ...message, artifacts: index === targetIndex ? artifacts : [] }
+      : message,
+  );
 }
 
 function toDemoRunEvent(record: StreamedRunEvent): DemoRunEvent {
@@ -128,6 +171,92 @@ function toDemoArtifact(value: unknown): DemoArtifact | null {
 
 function normalizeDurableEvents(events: unknown[] | null): DemoRunEvent[] {
   return Array.isArray(events) ? (events as DemoRunEvent[]) : [];
+}
+
+function applyAssistantMessageStart(
+  messages: DemoChatMessage[],
+  runId: string,
+  record: StreamedRunEvent,
+  nextAssistantId: () => string,
+): DemoChatMessage[] {
+  const targetIndex = findLastAssistantIndexForRun(messages, runId);
+  if (targetIndex === -1) {
+    return messages;
+  }
+
+  const target = messages[targetIndex]!;
+  if (isEmptyAssistantPlaceholder(target)) {
+    return messages.map((message, index) =>
+      index === targetIndex ? applyRunEventToMessage(message, record) : message,
+    );
+  }
+
+  const nextMessage = applyRunEventToMessage(
+    {
+      ...createAssistantMessage({
+        id: nextAssistantId(),
+        runId,
+        runMode: target.runMode,
+      }),
+      runStatus: target.runStatus,
+    },
+    record,
+  );
+
+  return [
+    ...messages.slice(0, targetIndex + 1),
+    nextMessage,
+    ...messages.slice(targetIndex + 1),
+  ];
+}
+
+function findLastAssistantIndexForRun(messages: DemoChatMessage[], runId: string): number {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role === 'assistant' && message.runId === runId) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function isEmptyAssistantPlaceholder(message: DemoChatMessage): boolean {
+  return (
+    message.content.length === 0 &&
+    (message.events ?? []).every((event) => event.type === 'status' || event.type === 'assistant_message_start')
+  );
+}
+
+function toDemoAssistantMessageFromDetail(
+  detail: RunDetailResponse,
+  message: RunDetailResponse['messages'][number],
+  input: {
+    template?: DemoChatMessage;
+    artifacts: DemoArtifact[];
+    includeRunError: boolean;
+  },
+): DemoChatMessage {
+  const error = input.includeRunError && (detail.run.errorCode || detail.run.errorMessage)
+    ? {
+        code: detail.run.errorCode ?? undefined,
+        message: detail.run.errorMessage ?? 'Run failed',
+      }
+    : input.template?.error;
+
+  return {
+    id: input.template?.id ?? message.id,
+    role: 'assistant',
+    content: message.content,
+    createdAt: message.createdAt,
+    runId: detail.run.id,
+    runMode: input.template?.runMode,
+    runStatus: message.runStatus ?? detail.run.status,
+    events: normalizeDurableEvents(message.events),
+    artifacts: input.artifacts,
+    lastRunEventId: message.lastRunEventId ?? detail.run.lastRunEventId ?? input.template?.lastRunEventId,
+    endedAt: message.endedAt ?? input.template?.endedAt,
+    error,
+  };
 }
 
 function isRunStatus(value: unknown): value is RunStatus {

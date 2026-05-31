@@ -12,7 +12,12 @@ import { fetchArtifactDownload, triggerBrowserDownload } from './api/download.js
 import { streamRunEvents } from './api/sse-stream.js';
 import type { ChatSendRequest, SelectedWorkspaceFile } from './app-types.js';
 import type { DemoArtifact, DemoChatMessage, WorkflowMode } from './chat/chat-types.js';
-import { applyRunEventToMessage, createAssistantMessage, reconcileMessagesWithRunDetail } from './chat/run-event-reducer.js';
+import {
+  applyRunEventToMessages,
+  attachArtifactsToLastAssistantMessage,
+  createAssistantMessage,
+  reconcileMessagesWithRunDetail,
+} from './chat/run-event-reducer.js';
 import { pollRunDetail } from './chat/run-polling.js';
 import { ChatPanel } from './components/ChatPanel.js';
 import { ConnectionPanel } from './components/ConnectionPanel.js';
@@ -226,11 +231,7 @@ export function App() {
       runId,
       signal: controller.signal,
       onEvent: (record) => {
-        setMessages((current) =>
-          current.map((message) =>
-            message.role === 'assistant' && message.runId === runId ? applyRunEventToMessage(message, record) : message,
-          ),
-        );
+        setMessages((current) => applyRunEventToMessages(current, runId, record, () => nextLocalId('assistant')));
         if (record.event.type === 'end' && typeof record.event.status === 'string') {
           setRunStatus(record.event.status as RunStatus);
         }
@@ -278,11 +279,7 @@ export function App() {
   async function fetchArtifacts(runId: string) {
     const response = await client.listRunArtifacts(runId);
     setArtifacts(response.artifacts);
-    setMessages((current) =>
-      current.map((message) =>
-        message.role === 'assistant' && message.runId === runId ? { ...message, artifacts: response.artifacts } : message,
-      ),
-    );
+    setMessages((current) => attachArtifactsToLastAssistantMessage(current, runId, response.artifacts));
   }
 
   async function refreshRun() {

@@ -696,6 +696,45 @@ describe('run service', () => {
     });
   });
 
+  it('persists separate assistant messages for separate Claude assistant message starts', async () => {
+    const { config, db, workspace, service, runners, runNextTimer } = setup();
+    service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'revise',
+        prompt: 'Run.',
+        artifactRuleIds: [],
+      },
+    });
+    await runScheduledStart(runNextTimer);
+
+    runners[0]!.input.onEvent({ type: 'assistant_message_start', messageId: 'claude_msg_1' });
+    runners[0]!.input.onEvent({ type: 'text_delta', delta: 'First.' });
+    runners[0]!.input.onEvent({ type: 'assistant_message_start', messageId: 'claude_msg_2' });
+    runners[0]!.input.onEvent({ type: 'text_delta', delta: 'Second.' });
+    runners[0]!.complete({
+      status: 'succeeded',
+      exitCode: 0,
+      signal: null,
+      stdoutTail: '',
+      stderrTail: '',
+    });
+    await flushAsync();
+
+    await vi.waitFor(() => {
+      expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.run.status).toBe('succeeded');
+    });
+    const detail = getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' });
+    expect(detail?.messages).toEqual([
+      expect.objectContaining({ id: 'msg_user', role: 'user', position: 0, content: 'Run.' }),
+      expect.objectContaining({ id: 'msg_assistant', role: 'assistant', position: 1, content: 'First.' }),
+      expect.objectContaining({ id: 'msg_assistant_2', role: 'assistant', position: 2, content: 'Second.' }),
+    ]);
+    expect(detail?.messages.slice(1).map((message) => message.runStatus)).toEqual(['succeeded', 'succeeded']);
+  });
+
   it('persists artifact events before terminal end on successful generate', async () => {
     const { root, config, db, workspace, workspaceCwd, service, runners, runNextTimer } = setup();
     writeSkill(root);

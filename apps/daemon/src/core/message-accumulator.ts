@@ -1,7 +1,9 @@
 import type { RunnerDatabase } from '../db/connection.js';
 import {
+  insertAssistantRunMessage,
   updateAssistantMessageStarted,
   updateAssistantMessageTerminal,
+  updateAssistantMessagesTerminalForRun,
   updateRunMessage,
 } from '../db/repositories.js';
 import type { RunEvent } from './run-events.js';
@@ -19,6 +21,11 @@ export interface MessageAccumulatorTimer {
 export interface CreateMessageAccumulatorInput {
   db: RunnerDatabase;
   messageId: string;
+  workspaceId?: string;
+  conversationId?: string;
+  runId?: string;
+  initialPosition?: number;
+  nextMessageId?: () => string;
   clock?: MessageAccumulatorClock;
   timer?: MessageAccumulatorTimer;
 }
@@ -54,9 +61,15 @@ export function createMessageAccumulator(input: CreateMessageAccumulatorInput) {
 
 class MessageAccumulator {
   private readonly db: RunnerDatabase;
-  private readonly messageId: string;
+  private messageId: string;
+  private readonly workspaceId: string | null;
+  private readonly conversationId: string | null;
+  private readonly runId: string | null;
+  private readonly nextMessageId: (() => string) | null;
   private readonly clock: MessageAccumulatorClock;
   private readonly timer: MessageAccumulatorTimer;
+  private nextPosition: number;
+  private sawAssistantMessageStart = false;
   private content = '';
   private thinkingContent = '';
   private events: RunEvent[] = [];
@@ -68,6 +81,11 @@ class MessageAccumulator {
   constructor(input: CreateMessageAccumulatorInput) {
     this.db = input.db;
     this.messageId = input.messageId;
+    this.workspaceId = input.workspaceId ?? null;
+    this.conversationId = input.conversationId ?? null;
+    this.runId = input.runId ?? null;
+    this.nextMessageId = input.nextMessageId ?? null;
+    this.nextPosition = (input.initialPosition ?? 1) + 1;
     this.clock = input.clock ?? systemClock;
     this.timer = input.timer ?? systemTimer;
   }
@@ -82,6 +100,11 @@ class MessageAccumulator {
   }
 
   consume(event: RunEvent, eventId?: string): void {
+    if (event.type === 'assistant_message_start') {
+      this.startAssistantMessageSegment();
+      return;
+    }
+
     if (eventId !== undefined) {
       this.lastRunEventId = eventId;
     }
@@ -129,6 +152,14 @@ class MessageAccumulator {
     this.forceFlush();
 
     const now = this.clock.now();
+    if (this.runId) {
+      updateAssistantMessagesTerminalForRun(this.db, {
+        runId: this.runId,
+        runStatus: input.runStatus,
+        endedAt: input.endedAt ?? now,
+        now,
+      });
+    }
     updateAssistantMessageTerminal(this.db, {
       messageId: this.messageId,
       runStatus: input.runStatus,
@@ -157,6 +188,42 @@ class MessageAccumulator {
       this.flushTimer = null;
       this.flushPending();
     }, runMessageFlushPolicy.throttleMs);
+  }
+
+  private startAssistantMessageSegment(): void {
+    if (!this.sawAssistantMessageStart) {
+      this.sawAssistantMessageStart = true;
+      return;
+    }
+
+    if (!this.canInsertAdditionalAssistantMessages()) {
+      return;
+    }
+
+    this.forceFlush();
+    const now = this.clock.now();
+    const messageId = this.nextMessageId!();
+    insertAssistantRunMessage(this.db, {
+      id: messageId,
+      workspaceId: this.workspaceId!,
+      conversationId: this.conversationId!,
+      runId: this.runId!,
+      position: this.nextPosition,
+      runStatus: 'running',
+      startedAt: now,
+      now,
+    });
+
+    this.messageId = messageId;
+    this.nextPosition += 1;
+    this.content = '';
+    this.thinkingContent = '';
+    this.events = [];
+    this.lastRunEventId = null;
+  }
+
+  private canInsertAdditionalAssistantMessages(): boolean {
+    return Boolean(this.workspaceId && this.conversationId && this.runId && this.nextMessageId);
   }
 
   private flushPending(): void {

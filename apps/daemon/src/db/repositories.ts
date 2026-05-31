@@ -489,6 +489,67 @@ export function insertRunMessagesForRunCreate(
   return getRunMessages(db, input.runId);
 }
 
+export function insertAssistantRunMessage(
+  db: RunnerDatabase,
+  input: {
+    id: string;
+    workspaceId: string;
+    conversationId: string;
+    runId: string;
+    position: number;
+    runStatus: RunStatus;
+    startedAt?: number | null;
+    now: number;
+  },
+): RunMessageRecord {
+  db.prepare(
+    `
+    INSERT INTO run_messages (
+      id, workspace_id, conversation_id, run_id, role, content, thinking_content,
+      run_status, started_at, position, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, 'assistant', '', '', ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    input.id,
+    input.workspaceId,
+    input.conversationId,
+    input.runId,
+    input.runStatus,
+    input.startedAt ?? null,
+    input.position,
+    input.now,
+    input.now,
+  );
+
+  return getRunMessageById(db, input.id);
+}
+
+export function updateAssistantMessagesTerminalForRun(
+  db: RunnerDatabase,
+  input: {
+    runId: string;
+    runStatus: RunStatus;
+    endedAt: number;
+    now: number;
+  },
+): number {
+  const result = db
+    .prepare(
+      `
+      UPDATE run_messages
+      SET run_status = ?,
+          ended_at = ?,
+          updated_at = ?
+      WHERE run_id = ?
+        AND role = 'assistant'
+      `,
+    )
+    .run(input.runStatus, input.endedAt, input.now, input.runId);
+
+  return result.changes;
+}
+
 export function updateRunStatus(
   db: RunnerDatabase,
   input: {

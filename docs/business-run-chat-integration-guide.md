@@ -258,6 +258,7 @@ data: {"type":"end","status":"succeeded"}
 
 - `status/queued`：展示排队中。
 - `status/running`：展示运行中。
+- `assistant_message_start`：开始一段新的 assistant 消息；业务端如果要还原 daemon 的分段展示，应从此事件开始创建/切换当前 assistant 消息。
 - `text_delta`：追加到当前 assistant 消息。
 - `artifact_finalized`：记录 artifact id 和相对路径。
 - `error`：记录错误码和消息。
@@ -282,6 +283,13 @@ GET /api/runs/:runId
 - `messages[].content`
 - `messages[].thinkingContent`
 - `messages[].events`
+
+`messages` 按 `position ASC` 返回。一个 run 通常有一条 user message，并可能有多条 assistant messages：
+
+- 聊天 UI：按顺序渲染所有 assistant messages，不要假设只有一条 assistant。
+- 需要完整 assistant 文本：按 `position ASC` 拼接所有 assistant `content`。
+- 只需要最后一次 assistant 回复：取最后一条非空 assistant `content`。
+- 报告生成结果：以 artifacts/download 为准，assistant `content` 只作为执行说明和过程摘要。
 
 ### 7. 获取 artifact 并下载
 

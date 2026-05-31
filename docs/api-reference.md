@@ -562,8 +562,9 @@ Authorization: Bearer <api-key>
 ### Notes
 
 - `messages[].events` 会按 event visibility 过滤。
-- `content` 是 assistant 聚合文本，不保证包含所有 tool/debug 信息。
-- `thinkingContent` 是 assistant 聚合 thinking 文本；没有 thinking 时为空字符串。`quiet` visibility 下返回空字符串，避免绕过 events visibility。
+- 一个 run 会包含一条 user message，并可能包含多条 assistant messages。daemon 会按 Claude Code 的 assistant message 边界分段保存，而不是把整个 run 的所有 assistant 文本压成一条消息。
+- `content` 是单条 assistant message 的正文文本，不保证包含所有 tool/debug 信息。
+- `thinkingContent` 是单条 assistant message 的聚合 thinking 文本；没有 thinking 时为空字符串。`quiet` visibility 下返回空字符串，避免绕过 events visibility。
 - terminal 后长期查看应以该接口为准，不以 SSE 为准。
 
 ### Common Errors

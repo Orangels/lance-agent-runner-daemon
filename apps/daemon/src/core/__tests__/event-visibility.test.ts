@@ -8,6 +8,7 @@ import {
 
 const allEvents: RunEvent[] = [
   { type: 'status', label: 'running' },
+  { type: 'assistant_message_start', messageId: 'msg_1' },
   { type: 'text_delta', delta: 'hello' },
   { type: 'usage', usage: { input_tokens: 1 }, costUsd: null, durationMs: 10, stopReason: null },
   { type: 'error', message: 'failed', code: 'CLAUDE_CLI_FAILED' },
@@ -39,6 +40,7 @@ describe('event visibility filtering', () => {
   it('quiet includes status, text_delta, usage, error, artifact_finalized, and end', () => {
     expect(filterRunEvents(allEvents, 'quiet').map((event) => event.type)).toEqual([
       'status',
+      'assistant_message_start',
       'text_delta',
       'usage',
       'error',
@@ -50,6 +52,7 @@ describe('event visibility filtering', () => {
   it('normal includes thinking and tool use while excluding tool results, stderr, and raw', () => {
     expect(filterRunEvents(allEvents, 'normal').map((event) => event.type)).toEqual([
       'status',
+      'assistant_message_start',
       'text_delta',
       'usage',
       'error',
