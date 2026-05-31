@@ -10,11 +10,12 @@ import {
   upsertWorkspace,
   type WorkspaceRecord,
 } from '../db/repositories.js';
-import { daemonError, notFound } from './errors.js';
+import { DaemonError, daemonError, notFound } from './errors.js';
 
 export interface WorkspaceService {
   createOrGetWorkspace(input: CreateOrGetWorkspaceInput): PublicWorkspace;
   prepareWorkspaceFiles(input: PrepareWorkspaceFilesInput): PreparedWorkspaceFiles;
+  prepareUploadedWorkspaceFile(input: PrepareUploadedWorkspaceFileInput): UploadedWorkspaceFileResult;
 }
 
 export interface PublicWorkspace {
@@ -33,6 +34,15 @@ export interface PreparedWorkspaceFile {
   size: number;
 }
 
+export interface UploadedWorkspaceFileResult extends PublicWorkspace {
+  file: {
+    targetPath: string;
+    size: number;
+    originalName: string;
+    mimeType: string | null;
+  };
+}
+
 interface CreateOrGetWorkspaceInput {
   clientId: string;
   profile: ProfileConfig;
@@ -46,6 +56,17 @@ interface PrepareWorkspaceFilesInput {
   profile: ProfileConfig;
   workspaceId: string;
   files: PrepareWorkspaceFileRequest[];
+}
+
+interface PrepareUploadedWorkspaceFileInput {
+  clientId: string;
+  isAdmin?: boolean;
+  profile: ProfileConfig;
+  workspaceId: string;
+  sourcePath: string;
+  targetPath: string;
+  originalName: string;
+  mimeType: string | null;
 }
 
 interface WorkspaceServiceDependencies {
@@ -93,17 +114,39 @@ export function createWorkspaceService(dependencies: WorkspaceServiceDependencie
       const cwd = getWorkspaceCwd(input.profile, workspace);
       const files = input.files.map((file) => {
         const sourcePath = resolveAllowedSourcePath(input.profile.allowedInputRoots, file.sourcePath);
-        const targetPath = assertWorkspaceRelativePath(file.targetPath);
-        const targetAbsolutePath = resolveUnderRoot(cwd, targetPath);
-        mkdirSync(path.dirname(targetAbsolutePath), { recursive: true });
-        copyFileSync(sourcePath, targetAbsolutePath);
-        const size = statSync(targetAbsolutePath).size;
-        return { targetPath, size };
+        return copyFileIntoWorkspace({ workspaceCwd: cwd, sourcePath, targetPath: file.targetPath });
       });
 
       return {
         ...toPublicWorkspace(workspace),
         files,
+      };
+    },
+
+    prepareUploadedWorkspaceFile(input): UploadedWorkspaceFileResult {
+      const workspace = getWorkspaceForClient(dependencies.db, {
+        workspaceId: input.workspaceId,
+        clientId: input.clientId,
+        isAdmin: input.isAdmin,
+      });
+      if (!workspace) {
+        throw notFound('Workspace not found');
+      }
+
+      const cwd = getWorkspaceCwd(input.profile, workspace);
+      const file = copyFileIntoWorkspace({
+        workspaceCwd: cwd,
+        sourcePath: input.sourcePath,
+        targetPath: input.targetPath,
+      });
+
+      return {
+        ...toPublicWorkspace(workspace),
+        file: {
+          ...file,
+          originalName: input.originalName,
+          mimeType: input.mimeType,
+        },
       };
     },
   };
@@ -144,6 +187,34 @@ function resolveAllowedSourcePath(allowedInputRoots: readonly string[], sourcePa
   throw daemonError('PATH_NOT_ALLOWED', 'Source path is not under an allowed input root', 400, {
     sourcePath,
   });
+}
+
+function copyFileIntoWorkspace(input: {
+  workspaceCwd: string;
+  sourcePath: string;
+  targetPath: string;
+}): PreparedWorkspaceFile {
+  const targetPath = assertWorkspaceRelativePath(input.targetPath);
+  const targetAbsolutePath = resolveUnderRoot(input.workspaceCwd, targetPath);
+  try {
+    if (statSync(targetAbsolutePath).isDirectory()) {
+      throw daemonError('PATH_NOT_ALLOWED', 'Target path cannot be a directory', 400, {
+        targetPath,
+      });
+    }
+  } catch (error) {
+    if (error instanceof DaemonError) {
+      throw error;
+    }
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw error;
+    }
+  }
+
+  mkdirSync(path.dirname(targetAbsolutePath), { recursive: true });
+  copyFileSync(input.sourcePath, targetAbsolutePath);
+  const size = statSync(targetAbsolutePath).size;
+  return { targetPath, size };
 }
 
 function toPublicWorkspace(workspace: WorkspaceRecord): PublicWorkspace {

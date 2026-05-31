@@ -176,3 +176,187 @@ describe('workspace prepare', () => {
     ).toThrow(DaemonError);
   });
 });
+
+describe('workspace uploaded file import', () => {
+  it('copies a daemon temp file to input/upload.docx and returns public file metadata', () => {
+    const { root, profile, service } = setup();
+    const workspace = service.createOrGetWorkspace({
+      clientId: 'lqbot',
+      profile,
+      workspace: { originId: 'lqbot', userId: 'user_1', projectId: 'project_123' },
+    });
+    const sourcePath = path.join(root, 'upload-tmp', 'upload.docx');
+    mkdirSync(path.dirname(sourcePath), { recursive: true });
+    writeFileSync(sourcePath, 'uploaded content');
+
+    const uploaded = service.prepareUploadedWorkspaceFile({
+      clientId: 'lqbot',
+      profile,
+      workspaceId: workspace.workspaceId,
+      sourcePath,
+      targetPath: 'input/upload.docx',
+      originalName: 'upload.docx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    });
+
+    const cwd = getWorkspaceCwd(profile, {
+      originId: 'lqbot',
+      userId: 'user_1',
+      projectId: 'project_123',
+    });
+    expect(uploaded).toEqual({
+      workspaceId: 'ws_1',
+      workspaceKey: 'lqbot/user_1/project_123',
+      file: {
+        targetPath: 'input/upload.docx',
+        size: 16,
+        originalName: 'upload.docx',
+        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      },
+    });
+    expect(readFileSync(path.join(cwd, 'input/upload.docx'), 'utf8')).toBe('uploaded content');
+  });
+
+  it('does not expose temp, workspace, sandbox, or allowed input paths in the response', () => {
+    const { root, profile, service } = setup();
+    const workspace = service.createOrGetWorkspace({
+      clientId: 'lqbot',
+      profile,
+      workspace: { originId: 'lqbot', userId: 'user_1', projectId: 'project_123' },
+    });
+    const sourcePath = path.join(root, 'upload-tmp', 'upload.docx');
+    mkdirSync(path.dirname(sourcePath), { recursive: true });
+    writeFileSync(sourcePath, 'uploaded content');
+
+    const uploaded = service.prepareUploadedWorkspaceFile({
+      clientId: 'lqbot',
+      profile,
+      workspaceId: workspace.workspaceId,
+      sourcePath,
+      targetPath: 'input/upload.docx',
+      originalName: 'upload.docx',
+      mimeType: null,
+    });
+
+    const cwd = getWorkspaceCwd(profile, {
+      originId: 'lqbot',
+      userId: 'user_1',
+      projectId: 'project_123',
+    });
+    const responseJson = JSON.stringify(uploaded);
+    expect(responseJson).not.toContain(sourcePath);
+    expect(responseJson).not.toContain(cwd);
+    expect(responseJson).not.toContain(profile.sandboxRoot);
+    for (const allowedInputRoot of profile.allowedInputRoots) {
+      expect(responseJson).not.toContain(allowedInputRoot);
+    }
+  });
+
+  it('overwrites an existing file at input/upload.docx', () => {
+    const { root, profile, service } = setup();
+    const workspace = service.createOrGetWorkspace({
+      clientId: 'lqbot',
+      profile,
+      workspace: { originId: 'lqbot', userId: 'user_1', projectId: 'project_123' },
+    });
+    const cwd = getWorkspaceCwd(profile, {
+      originId: 'lqbot',
+      userId: 'user_1',
+      projectId: 'project_123',
+    });
+    writeFileSync(path.join(cwd, 'input/upload.docx'), 'old');
+    const sourcePath = path.join(root, 'upload-tmp', 'upload.docx');
+    mkdirSync(path.dirname(sourcePath), { recursive: true });
+    writeFileSync(sourcePath, 'new upload');
+
+    const uploaded = service.prepareUploadedWorkspaceFile({
+      clientId: 'lqbot',
+      profile,
+      workspaceId: workspace.workspaceId,
+      sourcePath,
+      targetPath: 'input/upload.docx',
+      originalName: 'upload.docx',
+      mimeType: null,
+    });
+
+    expect(uploaded.file).toEqual({
+      targetPath: 'input/upload.docx',
+      size: 10,
+      originalName: 'upload.docx',
+      mimeType: null,
+    });
+    expect(readFileSync(path.join(cwd, 'input/upload.docx'), 'utf8')).toBe('new upload');
+  });
+
+  it('rejects targetPath input when input is an existing directory', () => {
+    const { root, profile, service } = setup();
+    const workspace = service.createOrGetWorkspace({
+      clientId: 'lqbot',
+      profile,
+      workspace: { originId: 'lqbot', userId: 'user_1', projectId: 'project_123' },
+    });
+    const sourcePath = path.join(root, 'upload-tmp', 'upload.docx');
+    mkdirSync(path.dirname(sourcePath), { recursive: true });
+    writeFileSync(sourcePath, 'uploaded content');
+
+    expect(() =>
+      service.prepareUploadedWorkspaceFile({
+        clientId: 'lqbot',
+        profile,
+        workspaceId: workspace.workspaceId,
+        sourcePath,
+        targetPath: 'input',
+        originalName: 'upload.docx',
+        mimeType: null,
+      }),
+    ).toThrow(expect.objectContaining({ code: 'PATH_NOT_ALLOWED' }));
+  });
+
+  it('rejects protected skill staging targets', () => {
+    const { root, profile, service } = setup();
+    const workspace = service.createOrGetWorkspace({
+      clientId: 'lqbot',
+      profile,
+      workspace: { originId: 'lqbot', userId: 'user_1', projectId: 'project_123' },
+    });
+    const sourcePath = path.join(root, 'upload-tmp', 'upload.docx');
+    mkdirSync(path.dirname(sourcePath), { recursive: true });
+    writeFileSync(sourcePath, 'uploaded content');
+
+    expect(() =>
+      service.prepareUploadedWorkspaceFile({
+        clientId: 'lqbot',
+        profile,
+        workspaceId: workspace.workspaceId,
+        sourcePath,
+        targetPath: '.claude-runner-skills/upload.docx',
+        originalName: 'upload.docx',
+        mimeType: null,
+      }),
+    ).toThrow(expect.objectContaining({ code: 'PATH_NOT_ALLOWED' }));
+  });
+
+  it('returns not found when another client imports into this workspace', () => {
+    const { root, profile, service } = setup();
+    const workspace = service.createOrGetWorkspace({
+      clientId: 'lqbot',
+      profile,
+      workspace: { originId: 'lqbot', userId: 'user_1', projectId: 'project_123' },
+    });
+    const sourcePath = path.join(root, 'upload-tmp', 'upload.docx');
+    mkdirSync(path.dirname(sourcePath), { recursive: true });
+    writeFileSync(sourcePath, 'uploaded content');
+
+    expect(() =>
+      service.prepareUploadedWorkspaceFile({
+        clientId: 'another-client',
+        profile,
+        workspaceId: workspace.workspaceId,
+        sourcePath,
+        targetPath: 'input/upload.docx',
+        originalName: 'upload.docx',
+        mimeType: null,
+      }),
+    ).toThrow(expect.objectContaining({ code: 'NOT_FOUND' }));
+  });
+});
