@@ -22,13 +22,15 @@ Start the web console:
 pnpm dev:web
 ```
 
-Open the Vite URL shown in the terminal. The default daemon URL in the page is:
+Open the Vite URL shown in the terminal. By default, leave `Daemon URL` blank. Blank means the web app calls same-origin `/api/*`, and the Vite dev server proxies those requests to:
 
 ```text
-http://localhost:3000
+http://127.0.0.1:17890
 ```
 
-Paste the API key used by the daemon client config, then click `Load profiles`.
+This avoids browser CORS preflight issues while keeping API keys in the `Authorization` header. Paste the API key used by the daemon client config, then click `Load profiles`.
+
+If your daemon listens somewhere else, either edit `apps/web/vite.config.ts` or enter a fully qualified daemon URL and ensure that deployment path provides CORS or a reverse proxy.
 
 ## What The Console Demonstrates
 

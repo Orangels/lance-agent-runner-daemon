@@ -119,7 +119,7 @@ describe('App daemon flows', () => {
 
     expect(await screen.findByText('Hello report')).toBeInTheDocument();
     const eventsCall = fetchImpl.mock.calls.find(([url]) => String(url).includes('/events'));
-    expect(eventsCall?.[0]).toBe('http://localhost:3000/api/runs/run_1/events');
+    expect(eventsCall?.[0]).toBe('/api/runs/run_1/events');
     expect(eventsCall?.[1]).toMatchObject({ headers: { Authorization: 'Bearer secret' } });
   });
 
@@ -181,5 +181,49 @@ describe('App daemon flows', () => {
     await waitFor(() => expect(runBodies).toHaveLength(2));
     expect(runBodies[1]).toMatchObject({ kind: 'revise', workspaceId: 'ws_1' });
     expect(runBodies[1]).not.toHaveProperty('skillId');
+  });
+
+  it('clears uploaded files after a successful send so revise does not re-upload old files', async () => {
+    const uploadUrls: string[] = [];
+    let runCreateCount = 0;
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/api/profiles')) return jsonResponse({ profiles: [profile] });
+      if (url.endsWith('/api/workspaces')) return jsonResponse({ workspaceId: 'ws_1', workspaceKey: 'demo/user_001/project_001' });
+      if (url.endsWith('/files') && init?.method === 'POST') {
+        uploadUrls.push(url);
+        return jsonResponse({
+          workspaceId: 'ws_1',
+          workspaceKey: 'demo/user_001/project_001',
+          file: { targetPath: 'input/source.docx', size: 4, originalName: 'source.docx', mimeType: null },
+        });
+      }
+      if (url.endsWith('/api/runs') && init?.method === 'POST') {
+        runCreateCount += 1;
+        const runId = runCreateCount === 1 ? 'run_upload_1' : 'run_upload_2';
+        return jsonResponse({ runId, status: 'queued' }, { status: 202 });
+      }
+      if (url.includes('/events')) return streamResponse(['event: agent\ndata: {"type":"end","status":"succeeded"}\n\n']);
+      if (url.endsWith('/api/runs/run_upload_1')) return jsonResponse(runDetail('run_upload_1', 'succeeded', 'Generated'));
+      if (url.endsWith('/api/runs/run_upload_2')) return jsonResponse(runDetail('run_upload_2', 'succeeded', 'Revised'));
+      if (url.includes('/artifacts')) return jsonResponse({ artifacts: [] });
+      return jsonResponse({ error: { code: 'NOT_FOUND', message: url } }, { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchImpl);
+
+    render(<App />);
+    await userEvent.type(screen.getByLabelText('API Key'), 'secret');
+    await userEvent.click(screen.getByRole('button', { name: 'Load profiles' }));
+    await waitFor(() => expect(screen.getByLabelText('Profile')).toHaveValue('report-docx'));
+    await userEvent.upload(screen.getByLabelText('Input files'), new File(['docx'], 'source.docx'));
+    await userEvent.type(screen.getByLabelText('Prompt'), 'Generate with file');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Generated');
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Revise' }));
+    await userEvent.type(screen.getByLabelText('Prompt'), 'Revise without new upload');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Revised');
+
+    expect(uploadUrls).toHaveLength(1);
   });
 });

@@ -23,6 +23,18 @@ describe('DaemonClient', () => {
     });
   });
 
+  it('supports same-origin API paths for the local Vite proxy', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ ok: true }));
+    const client = new DaemonClient({ baseUrl: '', apiKey: 'secret', fetchImpl });
+
+    await client.getHealth();
+
+    expect(fetchImpl).toHaveBeenCalledWith('/api/health', {
+      headers: {},
+      method: 'GET',
+    });
+  });
+
   it('adds bearer auth to protected JSON requests', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ profiles: [] }));
     const client = new DaemonClient({ baseUrl: 'http://daemon.test', apiKey: 'secret', fetchImpl });

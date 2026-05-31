@@ -43,6 +43,9 @@ export function applyRunEventToMessage(message: DemoChatMessage, record: Streame
     return { ...next, content: `${next.content}${event.delta}` };
   }
 
+  // Daemon status labels are free-form. Treat labels that happen to match a
+  // public RunStatus as a best-effort UI hint, and leave all other labels as
+  // event-only display data.
   if (event.type === 'status' && typeof event.label === 'string' && isRunStatus(event.label)) {
     return { ...next, runStatus: event.label };
   }

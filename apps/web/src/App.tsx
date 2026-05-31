@@ -20,7 +20,7 @@ import { WorkspacePanel } from './components/WorkspacePanel.js';
 import { isSafeWorkspaceSegment } from './components/workspace-validation.js';
 
 export function App() {
-  const [baseUrl, setBaseUrl] = useState('http://localhost:3000');
+  const [baseUrl, setBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [healthStatus, setHealthStatus] = useState<'idle' | 'checking' | 'ok' | 'error'>('idle');
   const [profiles, setProfiles] = useState<PublicProfile[]>([]);
@@ -44,6 +44,7 @@ export function App() {
   const [lastRunId, setLastRunId] = useState<string | null>(null);
   const [workflowMode, setWorkflowMode] = useState<WorkflowMode>('generate-sse');
   const abortRef = useRef<AbortController | null>(null);
+  const cancelingRunIdRef = useRef<string | null>(null);
 
   const client = useMemo(() => new DaemonClient({ baseUrl, apiKey }), [apiKey, baseUrl]);
 
@@ -202,12 +203,17 @@ export function App() {
       return;
     }
     setRunStatus('uploading');
+    const uploadedFileIds: string[] = [];
     for (const selectedFile of selectedFiles) {
       await client.uploadWorkspaceFile({
         workspaceId: currentWorkspaceId,
         file: selectedFile.file,
         targetPath: selectedFile.targetPath,
       });
+      uploadedFileIds.push(selectedFile.id);
+    }
+    if (uploadedFileIds.length > 0) {
+      setSelectedFiles((current) => current.filter((file) => !uploadedFileIds.includes(file.id)));
     }
   }
 
@@ -231,6 +237,10 @@ export function App() {
       },
     });
 
+    if (!result.ok && result.reason === 'aborted' && cancelingRunIdRef.current === runId) {
+      return;
+    }
+
     if (!result.ok || !result.terminal) {
       await reconcileRun(runId);
       return;
@@ -242,12 +252,15 @@ export function App() {
   async function runGenerateByPolling(runId: string) {
     const controller = new AbortController();
     abortRef.current = controller;
-    await pollRunDetail({
+    const result = await pollRunDetail({
       runId,
       signal: controller.signal,
       getRunDetail: (id) => client.getRunDetail(id),
       onDetail: (detail) => reconcileDetailInState(detail),
     });
+    if (!result.ok && result.reason === 'aborted' && cancelingRunIdRef.current === runId) {
+      return;
+    }
     await fetchArtifacts(runId);
   }
 
@@ -284,15 +297,21 @@ export function App() {
   }
 
   async function cancelRun() {
-    if (!activeRunId) {
+    const runId = activeRunId;
+    if (!runId) {
       return;
     }
-    abortRef.current?.abort();
+    cancelingRunIdRef.current = runId;
     try {
-      await client.cancelRun(activeRunId);
-      await reconcileRun(activeRunId);
+      await client.cancelRun(runId);
+      abortRef.current?.abort();
+      await reconcileRun(runId);
     } catch (error) {
       appendLocalError(error);
+    } finally {
+      if (cancelingRunIdRef.current === runId) {
+        cancelingRunIdRef.current = null;
+      }
     }
   }
 

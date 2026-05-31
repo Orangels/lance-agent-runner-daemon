@@ -29,7 +29,11 @@ export function ConnectionPanel({
       </div>
       <label>
         Daemon URL
-        <input value={baseUrl} onChange={(event) => onBaseUrlChange(event.target.value)} />
+        <input
+          placeholder="Blank uses same-origin /api proxy"
+          value={baseUrl}
+          onChange={(event) => onBaseUrlChange(event.target.value)}
+        />
       </label>
       <label>
         API Key
