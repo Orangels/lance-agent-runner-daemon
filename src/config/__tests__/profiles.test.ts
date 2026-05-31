@@ -64,8 +64,27 @@ describe('daemon config parsing', () => {
     });
 
     expect(config.server.port).toBe(17890);
+    expect(config.server.logRetentionMs).toBe(7 * 24 * 60 * 60 * 1000);
+    expect(config.server.maxLogBytesPerRun).toBe(4 * 1024 * 1024);
     expect(config.clients[0]?.apiKey).toBe('secret-key');
     expect(config.profiles[0]?.id).toBe('report-docx');
+  });
+
+  it('accepts explicit log retention and per-run log byte caps', () => {
+    const config = parseDaemonConfig(
+      {
+        ...validConfig,
+        server: {
+          ...validConfig.server,
+          logRetentionMs: 3_600_000,
+          maxLogBytesPerRun: 1024,
+        },
+      },
+      { env: { CLAUDE_RUNNER_TEST_KEY: 'secret-key' } },
+    );
+
+    expect(config.server.logRetentionMs).toBe(3_600_000);
+    expect(config.server.maxLogBytesPerRun).toBe(1024);
   });
 
   it('resolves client apiKey values from env references', () => {

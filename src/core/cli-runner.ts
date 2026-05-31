@@ -3,6 +3,7 @@ import type { EventEmitter } from 'node:events';
 import type { ClaudeInvocation } from './claude-adapter.js';
 import { diagnoseClaudeCliFailure } from './claude-diagnostics.js';
 import { createClaudeStreamHandler } from './claude-stream.js';
+import { sanitizeLogText } from './log-sanitizer.js';
 import { capRawEventLine, type RunEvent, type RunEventSink } from './run-events.js';
 import type { DaemonErrorCode, RunStatus } from './run-types.js';
 
@@ -39,11 +40,18 @@ export interface CliRunnerTimer {
   clearTimeout(timerId: unknown): void;
 }
 
+export interface CliRunnerLogSink {
+  stdout?(chunk: string): void;
+  stderr?(chunk: string): void;
+  debugEvent?(event: RunEvent): void;
+}
+
 export interface StartClaudeCliRunInput {
   invocation: ClaudeInvocation;
   inactivityTimeoutMs: number;
   cancelGraceMs: number;
   onEvent: RunEventSink;
+  logSink?: CliRunnerLogSink;
   spawn?: SpawnClaudeProcess;
   timer?: CliRunnerTimer;
 }
@@ -121,7 +129,25 @@ export function startClaudeCliRun(input: StartClaudeCliRunInput): ClaudeCliRunHa
     message: string,
     details: unknown,
   ) => {
-    input.onEvent({ type: 'error', code, message, details });
+    emitEvent({ type: 'error', code, message, details });
+  };
+
+  const emitLogSinkError = () => {
+    input.onEvent({ type: 'stderr', text: 'Run log sink failed.' });
+  };
+
+  const writeLogSink = (write: (() => void) | undefined) => {
+    if (!write) return;
+    try {
+      write();
+    } catch {
+      emitLogSinkError();
+    }
+  };
+
+  const emitEvent = (event: RunEvent) => {
+    input.onEvent(event);
+    writeLogSink(() => input.logSink?.debugEvent?.(event));
   };
 
   const failWithDiagnostic = (failure: {
@@ -179,7 +205,7 @@ export function startClaudeCliRun(input: StartClaudeCliRunInput): ClaudeCliRunHa
     const code = 'RUN_INACTIVITY_TIMEOUT';
     const message = 'Claude CLI produced no output before the inactivity timeout.';
     const details = { category: 'timeout' };
-    input.onEvent({ type: 'error', code, message, details });
+    emitEvent({ type: 'error', code, message, details });
     complete({
       status: 'failed',
       exitCode: null,
@@ -218,13 +244,14 @@ export function startClaudeCliRun(input: StartClaudeCliRunInput): ClaudeCliRunHa
 
   const claudeStream = createClaudeStreamHandler((event) => {
     noteActivity();
-    input.onEvent(sanitizeDebugEvent(event));
+    emitEvent(sanitizeDebugEvent(event));
   });
 
   child.stdout.on('data', (chunk: unknown) => {
     const text = String(chunk);
     noteActivity();
     stdoutTail = `${stdoutTail}${text}`.slice(-2_000);
+    writeLogSink(() => input.logSink?.stdout?.(sanitizeLogText(text)));
     claudeStream.feed(text);
   });
 
@@ -232,7 +259,8 @@ export function startClaudeCliRun(input: StartClaudeCliRunInput): ClaudeCliRunHa
     const text = String(chunk);
     noteActivity();
     stderrTail = `${stderrTail}${text}`.slice(-2_000);
-    input.onEvent({ type: 'stderr', text: sanitizeDebugText(capRawEventLine(text)) });
+    writeLogSink(() => input.logSink?.stderr?.(sanitizeLogText(text)));
+    emitEvent({ type: 'stderr', text: sanitizeDebugText(capRawEventLine(text)) });
   });
 
   child.on('error', (error: unknown) => {
@@ -307,12 +335,5 @@ function sanitizeDebugEvent(event: RunEvent): RunEvent {
 }
 
 function sanitizeDebugText(text: string): string {
-  return text
-    .replace(/\bCLAUDE_CONFIG_DIR\s*=\s*\S+/gi, '[redacted]')
-    .replace(/\b(?:authorization|bearer|cookie|token|api[_-]?key)\b\s*[:=]?\s*\S*/gi, '[redacted]')
-    .replace(/\bsk-ant-[A-Za-z0-9_-]+/g, '[redacted]')
-    .replace(/(?:^|[\s"'([{:=])\/[^\s"'()[\]{}<>]+/g, (match) => {
-      const prefix = match.startsWith('/') ? '' : match[0]!;
-      return `${prefix}[redacted-path]`;
-    });
+  return sanitizeLogText(text);
 }

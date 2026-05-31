@@ -3,6 +3,7 @@ import { openInMemoryDatabase } from '../connection.js';
 import {
   createRunQueuedWithMessagesAndSnapshot,
   getActiveRunForWorkspace,
+  getRunLogForRunForClient,
   getOrCreateDefaultConversation,
   getProfileSnapshotForRun,
   getRunDetail,
@@ -10,15 +11,17 @@ import {
   insertRunMessagesForRunCreate,
   insertRunQueued,
   getArtifactForRunForClient,
+  listRunLogsFinishedBefore,
   listRunsForClient,
   listArtifactsForRun,
   markInterruptedRunsOnStartup,
   replaceArtifactsForRun,
+  deleteRunLogRows,
   updateRunMessage,
   updateRunStatus,
   updateRunTerminal,
+  upsertRunLogPaths,
   upsertWorkspace,
-  WorkspaceRunActiveRepositoryError,
 } from '../repositories.js';
 import { applySchema } from '../schema.js';
 
@@ -250,7 +253,7 @@ describe('run repository', () => {
     expect(db.prepare('SELECT COUNT(*) AS count FROM conversations').get()).toEqual({ count: 0 });
   });
 
-  it('rejects a second active run for the same workspace in the create transaction', () => {
+  it('allows multiple queued runs for the same workspace in the create transaction', () => {
     const { db, workspace } = insertWorkspaceFixture();
     createRunQueuedWithMessagesAndSnapshot(db, {
       runId: 'run_1',
@@ -266,23 +269,29 @@ describe('run repository', () => {
       now: 5000,
     });
 
-    expect(() =>
-      createRunQueuedWithMessagesAndSnapshot(db, {
-        runId: 'run_2',
-        conversationId: 'conv_2',
-        userMessageId: 'msg_user_2',
-        assistantMessageId: 'msg_assistant_2',
-        workspaceId: workspace.id,
-        profileId: workspace.profileId,
-        clientId: workspace.clientId,
-        kind: 'revise',
-        prompt: 'Second run.',
-        profileSnapshot: { version: 1, profileId: workspace.profileId },
-        now: 6000,
-      }),
-    ).toThrow(WorkspaceRunActiveRepositoryError);
+    const second = createRunQueuedWithMessagesAndSnapshot(db, {
+      runId: 'run_2',
+      conversationId: 'conv_2',
+      userMessageId: 'msg_user_2',
+      assistantMessageId: 'msg_assistant_2',
+      workspaceId: workspace.id,
+      profileId: workspace.profileId,
+      clientId: workspace.clientId,
+      kind: 'revise',
+      prompt: 'Second run.',
+      profileSnapshot: { version: 1, profileId: workspace.profileId },
+      now: 6000,
+    });
 
-    expect(listRunsForClient(db, { clientId: workspace.clientId }).map((run) => run.id)).toEqual(['run_1']);
+    expect(second.run).toMatchObject({ id: 'run_2', status: 'queued' });
+    expect(second.messages).toEqual([
+      expect.objectContaining({ id: 'msg_user_2', role: 'user', content: 'Second run.' }),
+      expect.objectContaining({ id: 'msg_assistant_2', role: 'assistant', runStatus: 'queued' }),
+    ]);
+    expect(listRunsForClient(db, { clientId: workspace.clientId }).map((run) => run.id)).toEqual([
+      'run_2',
+      'run_1',
+    ]);
   });
 
   it('finds active runs for a workspace and ignores terminal runs', () => {
@@ -451,6 +460,142 @@ describe('run repository', () => {
     expect(listRunsForClient(db, { clientId: 'lqbot', status: 'queued' }).map((run) => run.id)).toEqual([
       'run_1',
     ]);
+  });
+});
+
+describe('run log repository', () => {
+  it('upserts relative log paths and reads them for the owning client', () => {
+    const { db, workspace } = insertWorkspaceFixture();
+    insertRunQueued(db, {
+      id: 'run_1',
+      workspaceId: workspace.id,
+      profileId: workspace.profileId,
+      clientId: workspace.clientId,
+      kind: 'revise',
+      prompt: 'Run.',
+      now: 5000,
+    });
+
+    const record = upsertRunLogPaths(db, {
+      runId: 'run_1',
+      stdoutLogPath: 'logs/runs/run_1/stdout.log',
+      stderrLogPath: 'logs/runs/run_1/stderr.log',
+      debugEventsLogPath: 'logs/runs/run_1/debug-events.ndjson',
+      now: 6000,
+    });
+
+    expect(record).toEqual({
+      runId: 'run_1',
+      stdoutLogPath: 'logs/runs/run_1/stdout.log',
+      stderrLogPath: 'logs/runs/run_1/stderr.log',
+      debugEventsLogPath: 'logs/runs/run_1/debug-events.ndjson',
+      createdAt: 6000,
+    });
+    expect(getRunLogForRunForClient(db, { runId: 'run_1', clientId: workspace.clientId })).toEqual(record);
+  });
+
+  it('rejects absolute log paths', () => {
+    const { db, workspace } = insertWorkspaceFixture();
+    insertRunQueued(db, {
+      id: 'run_1',
+      workspaceId: workspace.id,
+      profileId: workspace.profileId,
+      clientId: workspace.clientId,
+      kind: 'revise',
+      prompt: 'Run.',
+      now: 5000,
+    });
+
+    expect(() =>
+      upsertRunLogPaths(db, {
+        runId: 'run_1',
+        stdoutLogPath: '/tmp/stdout.log',
+        stderrLogPath: null,
+        debugEventsLogPath: null,
+        now: 6000,
+      }),
+    ).toThrow(/relative/);
+  });
+
+  it('scopes run log reads by client unless admin', () => {
+    const { db, workspace } = insertWorkspaceFixture();
+    insertRunQueued(db, {
+      id: 'run_1',
+      workspaceId: workspace.id,
+      profileId: workspace.profileId,
+      clientId: workspace.clientId,
+      kind: 'revise',
+      prompt: 'Run.',
+      now: 5000,
+    });
+    const record = upsertRunLogPaths(db, {
+      runId: 'run_1',
+      stdoutLogPath: 'logs/runs/run_1/stdout.log',
+      stderrLogPath: null,
+      debugEventsLogPath: null,
+      now: 6000,
+    });
+
+    expect(getRunLogForRunForClient(db, { runId: 'run_1', clientId: 'other' })).toBeNull();
+    expect(getRunLogForRunForClient(db, { runId: 'run_1', clientId: 'admin', isAdmin: true })).toEqual(
+      record,
+    );
+  });
+
+  it('lists and deletes log rows for terminal runs finished before a cutoff', () => {
+    const { db, workspace } = insertWorkspaceFixture();
+    insertRunQueued(db, {
+      id: 'old',
+      workspaceId: workspace.id,
+      profileId: workspace.profileId,
+      clientId: workspace.clientId,
+      kind: 'revise',
+      prompt: 'Old.',
+      now: 5000,
+    });
+    updateRunTerminal(db, {
+      runId: 'old',
+      status: 'succeeded',
+      finishedAt: 6000,
+      now: 6000,
+    });
+    upsertRunLogPaths(db, {
+      runId: 'old',
+      stdoutLogPath: 'logs/runs/old/stdout.log',
+      stderrLogPath: null,
+      debugEventsLogPath: null,
+      now: 6100,
+    });
+    insertRunQueued(db, {
+      id: 'new',
+      workspaceId: workspace.id,
+      profileId: workspace.profileId,
+      clientId: workspace.clientId,
+      kind: 'revise',
+      prompt: 'New.',
+      now: 7000,
+    });
+    updateRunTerminal(db, {
+      runId: 'new',
+      status: 'succeeded',
+      finishedAt: 9000,
+      now: 9000,
+    });
+    upsertRunLogPaths(db, {
+      runId: 'new',
+      stdoutLogPath: 'logs/runs/new/stdout.log',
+      stderrLogPath: null,
+      debugEventsLogPath: null,
+      now: 9100,
+    });
+
+    expect(listRunLogsFinishedBefore(db, { finishedBefore: 8000, limit: 10 }).map((record) => record.runId)).toEqual([
+      'old',
+    ]);
+
+    expect(deleteRunLogRows(db, ['old'])).toBe(1);
+    expect(getRunLogForRunForClient(db, { runId: 'old', clientId: workspace.clientId })).toBeNull();
+    expect(getRunLogForRunForClient(db, { runId: 'new', clientId: workspace.clientId })?.runId).toBe('new');
   });
 });
 

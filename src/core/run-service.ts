@@ -8,17 +8,16 @@ import {
 } from '../config/profiles.js';
 import type { RunnerDatabase } from '../db/connection.js';
 import {
-  WorkspaceRunActiveRepositoryError,
   createRunQueuedWithMessagesAndSnapshot,
   getRunDetail,
   getRunForClient,
   getWorkspaceForClient,
   listRunsForClient,
+  updateAssistantMessageTerminal,
   updateRunStarted,
   updateRunTerminal,
   type RunDetailRecord,
   type RunRecord,
-  type RunMessageRecord,
   type WorkspaceRecord,
 } from '../db/repositories.js';
 import { createArtifactService, type ArtifactService } from './artifact-service.js';
@@ -33,6 +32,17 @@ import { createId } from './ids.js';
 import { createMessageAccumulator } from './message-accumulator.js';
 import { composeRunPrompt } from './prompt-composer.js';
 import { createSanitizedProfileSnapshot } from './profile-snapshot.js';
+import {
+  countQueued,
+  selectDispatchableCandidates,
+  type QueueCandidate,
+  type QueueLimits,
+} from './run-queue.js';
+import {
+  createRunLogService,
+  type RunLogHandle,
+  type RunLogService,
+} from './run-log-service.js';
 import { formatRunEventId, shouldReplayEventAfter, type RunEvent } from './run-events.js';
 import {
   isTerminalRunStatus,
@@ -59,6 +69,7 @@ export interface CreateRunServiceInput {
   db: RunnerDatabase;
   runnerFactory?: RunServiceRunnerFactory;
   artifactService?: ArtifactService;
+  runLogService?: RunLogService;
   capabilityProbe?: (profile: ProfileConfig) => Promise<ClaudeCapabilities>;
   clock?: () => number;
   timer?: RunServiceTimer;
@@ -83,6 +94,7 @@ export interface RunService {
     listener: (record: BufferedRunEvent) => void,
   ): { replay: BufferedRunEvent[]; terminal: boolean; unsubscribe: () => void };
   cancelRun(input: { client: ClientConfig; runId: string }): { ok: true };
+  shutdownActive(input?: { graceMs?: number }): Promise<{ interrupted: number }>;
 }
 
 export interface RunServiceRunnerInput {
@@ -94,6 +106,7 @@ export interface RunServiceRunnerInput {
   model?: string;
   capabilities?: ClaudeCapabilities;
   extraAllowedDirs?: string[];
+  logSink?: RunLogHandle;
   onEvent: (event: RunEvent) => void;
 }
 
@@ -119,7 +132,11 @@ interface RunState {
   subscribers: Set<(record: BufferedRunEvent) => void>;
   runner: ClaudeCliRunHandle | null;
   accumulator: ReturnType<typeof createMessageAccumulator> | null;
+  logHandle: RunLogHandle | null;
   assistantMessageId: string;
+  queueStatus: 'queued' | 'starting' | 'running' | 'finishing' | 'terminal';
+  sequence: number;
+  runTimeoutTimer: unknown;
   finishing: boolean;
   terminal: boolean;
   cleanupTimer: unknown;
@@ -137,6 +154,9 @@ export function createRunService(input: CreateRunServiceInput): RunService {
   const maxBufferedEvents = input.maxBufferedEvents ?? 1_000;
   const states = new Map<string, RunState>();
   const capabilitiesByBin = new Map<string, Promise<ClaudeCapabilities>>();
+  let nextSequence = 1;
+  let dispatchTimer: unknown = null;
+  let shuttingDown = false;
   const nextRunId = input.ids?.runId ?? (() => createId('run'));
   const nextConversationId = input.ids?.conversationId ?? (() => createId('conv'));
   const nextUserMessageId = input.ids?.userMessageId ?? (() => createId('msg'));
@@ -144,6 +164,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
   const runnerFactory = input.runnerFactory ?? defaultRunnerFactory;
   const artifactService =
     input.artifactService ?? createArtifactService({ config: input.config, db: input.db, clock: now });
+  const runLogService = input.runLogService ?? createRunLogService({ config: input.config, db: input.db });
   const capabilityProbe =
     input.capabilityProbe ??
     ((profile: ProfileConfig) => probeClaudeCapabilities({ claudeBin: profile.claudeBin }));
@@ -175,8 +196,58 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     return record;
   }
 
-  function scheduleStart(state: RunState): void {
-    timer.setTimeout(() => startRun(state), 0);
+  function scheduleDispatch(): void {
+    if (shuttingDown) return;
+    if (dispatchTimer !== null) return;
+
+    dispatchTimer = timer.setTimeout(() => {
+      dispatchTimer = null;
+      dispatchQueuedRuns();
+    }, 0);
+  }
+
+  function dispatchQueuedRuns(): void {
+    const selected = selectDispatchableCandidates(queueCandidates(), queueLimits());
+    for (const candidate of selected) {
+      const state = states.get(candidate.runId);
+      if (!state || state.queueStatus !== 'queued' || state.terminal) {
+        continue;
+      }
+      state.queueStatus = 'starting';
+      void startRun(state);
+    }
+  }
+
+  function queueCandidates(): QueueCandidate[] {
+    return Array.from(states.values()).map((state) => ({
+      runId: state.runId,
+      profileId: state.profile.id,
+      workspaceId: state.workspace.id,
+      status: state.queueStatus,
+      sequence: state.sequence,
+    }));
+  }
+
+  function queueLimits(): QueueLimits {
+    return {
+      globalConcurrency: input.config.server.globalConcurrency,
+      profileConcurrencyById: new Map(
+        input.config.profiles.map((profile) => [profile.id, profile.profileConcurrency]),
+      ),
+    };
+  }
+
+  function canStartNewRun(profile: ProfileConfig, workspace: WorkspaceRecord, sequence: number): boolean {
+    const candidate: QueueCandidate = {
+      runId: '__new__',
+      profileId: profile.id,
+      workspaceId: workspace.id,
+      status: 'queued',
+      sequence,
+    };
+    return selectDispatchableCandidates([...queueCandidates(), candidate], queueLimits()).some(
+      (selected) => selected.runId === candidate.runId,
+    );
   }
 
   async function startRun(state: RunState): Promise<void> {
@@ -186,6 +257,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
 
     const startedAt = now();
     const run = updateRunStarted(input.db, { runId: state.runId, startedAt, now: startedAt });
+    state.queueStatus = 'running';
     state.accumulator = createMessageAccumulator({
       db: input.db,
       messageId: state.assistantMessageId,
@@ -193,6 +265,8 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       timer,
     });
     state.accumulator.startRun({ startedAt });
+    state.logHandle = runLogService.openRunLogs({ runId: state.runId });
+    scheduleRunTimeout(state);
     emitRunEvent(state, { type: 'status', label: 'running' });
     let prompt = state.prompt;
     let extraAllowedDirs: string[] = [];
@@ -257,6 +331,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       model: state.model,
       capabilities,
       extraAllowedDirs,
+      logSink: state.logHandle ?? undefined,
       onEvent: (event) => emitRunEvent(state, event),
     });
 
@@ -328,6 +403,8 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       return;
     }
     state.finishing = true;
+    state.queueStatus = 'finishing';
+    clearRunTimeout(state);
 
     let finalStatus = result.status;
     let finalErrorCode = result.errorCode ?? null;
@@ -385,10 +462,20 @@ export function createRunService(input: CreateRunServiceInput): RunService {
 
     emitRunEvent(state, { type: 'end', status: finalStatus });
     const finishedAt = now();
-    state.accumulator?.flushTerminal({
-      runStatus: finalStatus,
-      endedAt: finishedAt,
-    });
+    if (state.accumulator) {
+      state.accumulator.flushTerminal({
+        runStatus: finalStatus,
+        endedAt: finishedAt,
+      });
+    } else {
+      updateAssistantMessageTerminal(input.db, {
+        messageId: state.assistantMessageId,
+        runStatus: finalStatus,
+        lastRunEventId: state.events.at(-1)?.id ?? null,
+        endedAt: finishedAt,
+        now: finishedAt,
+      });
+    }
 
     updateRunTerminal(input.db, {
       runId: state.runId,
@@ -403,14 +490,57 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       now: finishedAt,
     });
 
+    state.logHandle?.close();
+    state.logHandle = null;
     state.terminal = true;
+    state.queueStatus = 'terminal';
     state.finishing = false;
 
-    if (eventBufferTtlMs >= 0) {
+    if (eventBufferTtlMs >= 0 && !shuttingDown) {
       state.cleanupTimer = timer.setTimeout(() => {
         state.accumulator?.dispose();
         states.delete(state.runId);
       }, eventBufferTtlMs);
+    }
+    scheduleDispatch();
+  }
+
+  function scheduleRunTimeout(state: RunState): void {
+    if (state.profile.runTimeoutMs <= 0) return;
+    state.runTimeoutTimer = timer.setTimeout(() => {
+      state.runTimeoutTimer = null;
+      void timeoutRun(state);
+    }, state.profile.runTimeoutMs);
+  }
+
+  async function timeoutRun(state: RunState): Promise<void> {
+    if (state.terminal) return;
+
+    emitRunEvent(state, {
+      type: 'error',
+      code: 'RUN_TIMEOUT',
+      message: 'Run exceeded total timeout.',
+    });
+    state.runner?.cancel();
+    await finishRun(
+      state,
+      {
+        status: 'failed',
+        exitCode: null,
+        signal: null,
+        errorCode: 'RUN_TIMEOUT',
+        errorMessage: 'Run exceeded total timeout.',
+        stdoutTail: '',
+        stderrTail: '',
+      },
+      { finalizeArtifacts: false },
+    );
+  }
+
+  function clearRunTimeout(state: RunState): void {
+    if (state.runTimeoutTimer !== null) {
+      timer.clearTimeout(state.runTimeoutTimer);
+      state.runTimeoutTimer = null;
     }
   }
 
@@ -452,6 +582,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       }
 
       const runId = nextRunId();
+      const sequence = nextSequence++;
       const assistantMessageId = nextAssistantMessageId();
       const selectedArtifactRules = artifactService.resolveSelectedArtifactRules({
         profile,
@@ -459,38 +590,32 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       });
       const selectedArtifactRuleIds = selectedArtifactRules.map((rule) => rule.id);
 
-      let created: {
-        run: RunRecord;
-        messages: RunMessageRecord[];
-      };
-      try {
-        created = createRunQueuedWithMessagesAndSnapshot(input.db, {
-          runId,
-          conversationId: nextConversationId(),
-          userMessageId: nextUserMessageId(),
-          assistantMessageId,
-          workspaceId: workspace.id,
-          profileId: profile.id,
-          clientId: client.id,
-          kind: request.kind,
-          skillId: request.skillId,
-          prompt: request.prompt,
-          artifactRuleIds: selectedArtifactRuleIds,
-          metadata: request.metadata,
-          profileSnapshot: createSanitizedProfileSnapshot(profile, {
-            selectedModel,
-            selectedArtifactRuleIds,
-          }),
-          now: now(),
-        });
-      } catch (error) {
-        if (error instanceof WorkspaceRunActiveRepositoryError) {
-          throw daemonError('WORKSPACE_RUN_ACTIVE', 'Workspace already has an active run', 409, {
-            reason: 'WORKSPACE_RUN_ACTIVE',
-          });
-        }
-        throw error;
+      if (
+        !canStartNewRun(profile, workspace, sequence) &&
+        countQueued(queueCandidates()) >= input.config.server.maxQueueSize
+      ) {
+        throw daemonError('RUN_QUEUE_FULL', 'Run queue is full', 429);
       }
+
+      const created = createRunQueuedWithMessagesAndSnapshot(input.db, {
+        runId,
+        conversationId: nextConversationId(),
+        userMessageId: nextUserMessageId(),
+        assistantMessageId,
+        workspaceId: workspace.id,
+        profileId: profile.id,
+        clientId: client.id,
+        kind: request.kind,
+        skillId: request.skillId,
+        prompt: request.prompt,
+        artifactRuleIds: selectedArtifactRuleIds,
+        metadata: request.metadata,
+        profileSnapshot: createSanitizedProfileSnapshot(profile, {
+          selectedModel,
+          selectedArtifactRuleIds,
+        }),
+        now: now(),
+      });
 
       const state: RunState = {
         runId,
@@ -507,14 +632,18 @@ export function createRunService(input: CreateRunServiceInput): RunService {
         subscribers: new Set(),
         runner: null,
         accumulator: null,
+        logHandle: null,
         assistantMessageId,
+        queueStatus: 'queued',
+        sequence,
+        runTimeoutTimer: null,
         finishing: false,
         terminal: false,
         cleanupTimer: null,
       };
       states.set(runId, state);
       emitRunEvent(state, { type: 'status', label: 'queued' });
-      scheduleStart(state);
+      scheduleDispatch();
 
       return { runId: created.run.id, status: 'queued' };
     },
@@ -598,11 +727,44 @@ export function createRunService(input: CreateRunServiceInput): RunService {
           },
           { finalizeArtifacts: false },
         );
+        scheduleDispatch();
         return { ok: true };
       }
 
       state.runner.cancel();
       return { ok: true };
+    },
+
+    async shutdownActive() {
+      shuttingDown = true;
+      if (dispatchTimer !== null) {
+        timer.clearTimeout(dispatchTimer);
+        dispatchTimer = null;
+      }
+
+      let interrupted = 0;
+      for (const state of Array.from(states.values())) {
+        if (state.terminal) {
+          continue;
+        }
+        interrupted += 1;
+        state.runner?.cancel();
+        await finishRun(
+          state,
+          {
+            status: 'interrupted',
+            exitCode: null,
+            signal: null,
+            errorCode: 'RUN_INTERRUPTED_BY_DAEMON_RESTART',
+            errorMessage: 'Run interrupted by daemon shutdown',
+            stdoutTail: '',
+            stderrTail: '',
+          },
+          { finalizeArtifacts: false },
+        );
+      }
+
+      return { interrupted };
     },
   };
 }
@@ -614,6 +776,7 @@ function defaultRunnerFactory(input: RunServiceRunnerInput): ClaudeCliRunHandle 
     invocation,
     inactivityTimeoutMs: input.profile.inactivityTimeoutMs,
     cancelGraceMs: input.profile.cancelGraceMs,
+    logSink: input.logSink,
     onEvent: input.onEvent,
   });
 }

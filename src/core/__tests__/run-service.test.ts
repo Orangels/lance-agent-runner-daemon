@@ -80,7 +80,9 @@ function createTimerHarness() {
       },
     },
     runNextTimer: () => {
-      const task = timers.find((candidate) => !candidate.cleared);
+      const task = timers
+        .filter((candidate) => !candidate.cleared)
+        .sort((left, right) => left.delayMs - right.delayMs)[0];
       if (!task) throw new Error('No pending timer');
       task.cleared = true;
       task.callback();
@@ -98,9 +100,15 @@ function createDeferred<T>() {
   return { promise, resolve };
 }
 
-function setup(options: { capabilities?: Parameters<RunServiceRunnerFactory>[0]['capabilities'] } = {}) {
+function setup(
+  options: {
+    capabilities?: Parameters<RunServiceRunnerFactory>[0]['capabilities'];
+    configure?: (config: DaemonConfig) => void;
+  } = {},
+) {
   const root = mkdtempSync(path.join(tmpdir(), 'runner-service-test-'));
   const config = makeConfig(root);
+  options.configure?.(config);
   const db = openInMemoryDatabase();
   applySchema(db);
   const workspace = upsertWorkspace(db, {
@@ -118,6 +126,10 @@ function setup(options: { capabilities?: Parameters<RunServiceRunnerFactory>[0][
   mkdirSync(path.join(workspaceCwd, 'work'), { recursive: true });
   mkdirSync(path.join(workspaceCwd, '.claude-runner-skills'), { recursive: true });
   const timerHarness = createTimerHarness();
+  let runId = 1;
+  let conversationId = 1;
+  let userMessageId = 1;
+  let assistantMessageId = 1;
   const runners: Array<{
     input: Parameters<RunServiceRunnerFactory>[0];
     cancel: ReturnType<typeof vi.fn>;
@@ -138,10 +150,16 @@ function setup(options: { capabilities?: Parameters<RunServiceRunnerFactory>[0][
     clock: () => 5000,
     eventBufferTtlMs: 1000,
     ids: {
-      runId: () => `run_${runners.length + 1}`,
-      conversationId: () => 'conv_1',
-      userMessageId: () => 'msg_user',
-      assistantMessageId: () => 'msg_assistant',
+      runId: () => `run_${runId++}`,
+      conversationId: () => `conv_${conversationId++}`,
+      userMessageId: () => {
+        const id = userMessageId++;
+        return id === 1 ? 'msg_user' : `msg_user_${id}`;
+      },
+      assistantMessageId: () => {
+        const id = assistantMessageId++;
+        return id === 1 ? 'msg_assistant' : `msg_assistant_${id}`;
+      },
     },
   });
 
@@ -353,19 +371,261 @@ describe('run service', () => {
     });
   });
 
-  it('rejects a second active run for the same workspace', () => {
-    const { config, workspace, service } = setup();
+  it('queues a second run for the same workspace until the first terminalizes', async () => {
+    const { config, db, workspace, service, runners, runNextTimer } = setup({
+      configure: (config) => {
+        config.server.globalConcurrency = 2;
+        config.profiles[0]!.profileConcurrency = 2;
+      },
+    });
     service.createRun({
       client: config.clients[0]!,
-      request: { profileId: 'report-docx', workspaceId: workspace.id, kind: 'revise', prompt: 'One.' },
+      request: { profileId: 'report-docx', workspaceId: workspace.id, kind: 'revise', prompt: 'One.', artifactRuleIds: [] },
+    });
+    await runScheduledStart(runNextTimer);
+
+    service.createRun({
+      client: config.clients[0]!,
+      request: { profileId: 'report-docx', workspaceId: workspace.id, kind: 'revise', prompt: 'Two.', artifactRuleIds: [] },
+    });
+    await runScheduledStart(runNextTimer);
+
+    expect(runners).toHaveLength(1);
+    expect(getRunDetail(db, { runId: 'run_2', clientId: 'lqbot' })?.run.status).toBe('queued');
+
+    runners[0]!.complete({ status: 'succeeded', exitCode: 0, signal: null, stdoutTail: '', stderrTail: '' });
+    await flushAsync();
+    runNextTimer();
+    await flushAsync();
+
+    expect(runners).toHaveLength(2);
+    expect(getRunDetail(db, { runId: 'run_2', clientId: 'lqbot' })?.run.status).toBe('running');
+  });
+
+  it('enforces global concurrency across different workspaces', async () => {
+    const { config, db, workspace, service, runners, runNextTimer } = setup({
+      configure: (config) => {
+        config.server.globalConcurrency = 1;
+        config.profiles[0]!.profileConcurrency = 2;
+      },
+    });
+    const otherWorkspace = upsertWorkspace(db, {
+      id: 'ws_2',
+      clientId: 'lqbot',
+      profileId: 'report-docx',
+      originId: 'lqbot',
+      userId: 'user_2',
+      projectId: 'project_123',
+      now: 1000,
+    });
+
+    service.createRun({
+      client: config.clients[0]!,
+      request: { profileId: 'report-docx', workspaceId: workspace.id, kind: 'revise', prompt: 'One.', artifactRuleIds: [] },
+    });
+    await runScheduledStart(runNextTimer);
+    service.createRun({
+      client: config.clients[0]!,
+      request: { profileId: 'report-docx', workspaceId: otherWorkspace.id, kind: 'revise', prompt: 'Two.', artifactRuleIds: [] },
+    });
+    await runScheduledStart(runNextTimer);
+
+    expect(runners).toHaveLength(1);
+    expect(getRunDetail(db, { runId: 'run_2', clientId: 'lqbot' })?.run.status).toBe('queued');
+  });
+
+  it('does not let a workspace-blocked queued run block a later eligible workspace', async () => {
+    const { config, db, workspace, service, runners, runNextTimer } = setup({
+      configure: (config) => {
+        config.server.globalConcurrency = 2;
+        config.profiles[0]!.profileConcurrency = 2;
+      },
+    });
+    const otherWorkspace = upsertWorkspace(db, {
+      id: 'ws_2',
+      clientId: 'lqbot',
+      profileId: 'report-docx',
+      originId: 'lqbot',
+      userId: 'user_2',
+      projectId: 'project_123',
+      now: 1000,
+    });
+
+    service.createRun({
+      client: config.clients[0]!,
+      request: { profileId: 'report-docx', workspaceId: workspace.id, kind: 'revise', prompt: 'One.', artifactRuleIds: [] },
+    });
+    await runScheduledStart(runNextTimer);
+    service.createRun({
+      client: config.clients[0]!,
+      request: { profileId: 'report-docx', workspaceId: workspace.id, kind: 'revise', prompt: 'Two.', artifactRuleIds: [] },
+    });
+    service.createRun({
+      client: config.clients[0]!,
+      request: { profileId: 'report-docx', workspaceId: otherWorkspace.id, kind: 'revise', prompt: 'Three.', artifactRuleIds: [] },
+    });
+    runNextTimer();
+    await flushAsync();
+
+    expect(runners.map((runner) => runner.input.run.id)).toEqual(['run_1', 'run_3']);
+    expect(getRunDetail(db, { runId: 'run_2', clientId: 'lqbot' })?.run.status).toBe('queued');
+  });
+
+  it('allows different profiles to run concurrently when global capacity is available', async () => {
+    const { config, db, workspace, service, runners, runNextTimer } = setup({
+      configure: (config) => {
+        config.server.globalConcurrency = 2;
+        config.clients[0]!.allowedProfileIds.push('summary-docx');
+        config.profiles.push({
+          ...config.profiles[0]!,
+          id: 'summary-docx',
+          profileConcurrency: 1,
+        });
+      },
+    });
+    const secondProfileWorkspace = upsertWorkspace(db, {
+      id: 'ws_2',
+      clientId: 'lqbot',
+      profileId: 'summary-docx',
+      originId: 'lqbot',
+      userId: 'user_2',
+      projectId: 'project_123',
+      now: 1000,
+    });
+
+    service.createRun({
+      client: config.clients[0]!,
+      request: { profileId: 'report-docx', workspaceId: workspace.id, kind: 'revise', prompt: 'One.', artifactRuleIds: [] },
+    });
+    await runScheduledStart(runNextTimer);
+    service.createRun({
+      client: config.clients[0]!,
+      request: { profileId: 'summary-docx', workspaceId: secondProfileWorkspace.id, kind: 'revise', prompt: 'Two.', artifactRuleIds: [] },
+    });
+    await runScheduledStart(runNextTimer);
+
+    expect(runners.map((runner) => runner.input.profile.id)).toEqual(['report-docx', 'summary-docx']);
+  });
+
+  it('returns RUN_QUEUE_FULL before inserting when a waiting run would exceed maxQueueSize', async () => {
+    const { config, db, workspace, service, runNextTimer } = setup({
+      configure: (config) => {
+        config.server.globalConcurrency = 1;
+        config.server.maxQueueSize = 0;
+      },
+    });
+    const otherWorkspace = upsertWorkspace(db, {
+      id: 'ws_2',
+      clientId: 'lqbot',
+      profileId: 'report-docx',
+      originId: 'lqbot',
+      userId: 'user_2',
+      projectId: 'project_123',
+      now: 1000,
+    });
+
+    service.createRun({
+      client: config.clients[0]!,
+      request: { profileId: 'report-docx', workspaceId: workspace.id, kind: 'revise', prompt: 'One.', artifactRuleIds: [] },
+    });
+    await runScheduledStart(runNextTimer);
+
+    expect(() =>
+      service.createRun({
+        client: config.clients[0]!,
+        request: { profileId: 'report-docx', workspaceId: otherWorkspace.id, kind: 'revise', prompt: 'Two.', artifactRuleIds: [] },
+      }),
+    ).toThrow(expect.objectContaining({ code: 'RUN_QUEUE_FULL', status: 429 }));
+    expect(getRunDetail(db, { runId: 'run_2', clientId: 'lqbot' })).toBeNull();
+  });
+
+  it('counts earlier queued runs when checking maxQueueSize before dispatch has started', () => {
+    const { config, db, workspace, service } = setup({
+      configure: (config) => {
+        config.server.globalConcurrency = 1;
+        config.server.maxQueueSize = 0;
+      },
+    });
+    const otherWorkspace = upsertWorkspace(db, {
+      id: 'ws_2',
+      clientId: 'lqbot',
+      profileId: 'report-docx',
+      originId: 'lqbot',
+      userId: 'user_2',
+      projectId: 'project_123',
+      now: 1000,
+    });
+
+    service.createRun({
+      client: config.clients[0]!,
+      request: { profileId: 'report-docx', workspaceId: workspace.id, kind: 'revise', prompt: 'One.', artifactRuleIds: [] },
     });
 
     expect(() =>
       service.createRun({
         client: config.clients[0]!,
-        request: { profileId: 'report-docx', workspaceId: workspace.id, kind: 'revise', prompt: 'Two.' },
+        request: { profileId: 'report-docx', workspaceId: otherWorkspace.id, kind: 'revise', prompt: 'Two.', artifactRuleIds: [] },
       }),
-    ).toThrow(expect.objectContaining({ code: 'WORKSPACE_RUN_ACTIVE', status: 409 }));
+    ).toThrow(expect.objectContaining({ code: 'RUN_QUEUE_FULL', status: 429 }));
+    expect(getRunDetail(db, { runId: 'run_2', clientId: 'lqbot' })).toBeNull();
+  });
+
+  it('cancels a queued run without spawning and dispatches the next eligible run', async () => {
+    const { config, db, workspace, service, runners, runNextTimer } = setup({
+      configure: (config) => {
+        config.server.globalConcurrency = 1;
+        config.server.maxQueueSize = 10;
+        config.profiles[0]!.profileConcurrency = 2;
+      },
+    });
+    const ws2 = upsertWorkspace(db, {
+      id: 'ws_2',
+      clientId: 'lqbot',
+      profileId: 'report-docx',
+      originId: 'lqbot',
+      userId: 'user_2',
+      projectId: 'project_123',
+      now: 1000,
+    });
+    const ws3 = upsertWorkspace(db, {
+      id: 'ws_3',
+      clientId: 'lqbot',
+      profileId: 'report-docx',
+      originId: 'lqbot',
+      userId: 'user_3',
+      projectId: 'project_123',
+      now: 1000,
+    });
+
+    service.createRun({
+      client: config.clients[0]!,
+      request: { profileId: 'report-docx', workspaceId: workspace.id, kind: 'revise', prompt: 'One.', artifactRuleIds: [] },
+    });
+    await runScheduledStart(runNextTimer);
+    service.createRun({
+      client: config.clients[0]!,
+      request: { profileId: 'report-docx', workspaceId: ws2.id, kind: 'revise', prompt: 'Two.', artifactRuleIds: [] },
+    });
+    service.createRun({
+      client: config.clients[0]!,
+      request: { profileId: 'report-docx', workspaceId: ws3.id, kind: 'revise', prompt: 'Three.', artifactRuleIds: [] },
+    });
+
+    expect(service.cancelRun({ client: config.clients[0]!, runId: 'run_2' })).toEqual({ ok: true });
+    expect(getRunDetail(db, { runId: 'run_2', clientId: 'lqbot' })?.run.status).toBe('canceled');
+    expect(getRunDetail(db, { runId: 'run_2', clientId: 'lqbot' })?.messages[1]).toMatchObject({
+      runStatus: 'canceled',
+      endedAt: 5000,
+    });
+    expect(runners).toHaveLength(1);
+
+    runners[0]!.complete({ status: 'succeeded', exitCode: 0, signal: null, stdoutTail: '', stderrTail: '' });
+    await flushAsync();
+    runNextTimer();
+    await flushAsync();
+
+    expect(runners).toHaveLength(2);
+    expect(runners[1]!.input.run.id).toBe('run_3');
   });
 
   it('passes probed capabilities to the runner and replays numeric event ids', async () => {
@@ -567,6 +827,7 @@ describe('run service', () => {
     });
 
     runNextTimer();
+    runNextTimer();
 
     expect(() => service.replayRunEvents({ client: config.clients[0]!, runId: 'run_1' })).toThrow(
       expect.objectContaining({ code: 'NOT_FOUND' }),
@@ -600,5 +861,97 @@ describe('run service', () => {
     await Promise.resolve();
 
     expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.run.status).toBe('canceled');
+  });
+
+  it('fails a running run with RUN_TIMEOUT and cancels the runner', async () => {
+    const { config, db, workspace, service, runners, runNextTimer, pendingTimers } = setup({
+      configure: (config) => {
+        config.profiles[0]!.runTimeoutMs = 50;
+      },
+    });
+    service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'revise',
+        prompt: 'Run.',
+        artifactRuleIds: [],
+      },
+    });
+    await runScheduledStart(runNextTimer);
+
+    expect(pendingTimers().some((timer) => timer.delayMs === 50)).toBe(true);
+    runNextTimer();
+    await flushAsync();
+
+    expect(runners[0]!.cancel).toHaveBeenCalledTimes(1);
+    expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.run).toMatchObject({
+      status: 'failed',
+      errorCode: 'RUN_TIMEOUT',
+    });
+    expect(service.replayRunEvents({ client: config.clients[0]!, runId: 'run_1' })).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          event: { type: 'error', code: 'RUN_TIMEOUT', message: 'Run exceeded total timeout.' },
+        }),
+      ]),
+    );
+  });
+
+  it('shutdownActive interrupts queued runs without spawning them', async () => {
+    const { config, db, workspace, service, runners } = setup();
+    service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'revise',
+        prompt: 'Run.',
+        artifactRuleIds: [],
+      },
+    });
+
+    await expect(service.shutdownActive()).resolves.toEqual({ interrupted: 1 });
+
+    expect(runners).toHaveLength(0);
+    expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.run).toMatchObject({
+      status: 'interrupted',
+      errorCode: 'RUN_INTERRUPTED_BY_DAEMON_RESTART',
+    });
+    expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.messages[1]).toMatchObject({
+      runStatus: 'interrupted',
+      endedAt: 5000,
+    });
+  });
+
+  it('shutdownActive cancels running runs and clears run timeout timers', async () => {
+    const { config, db, workspace, service, runners, runNextTimer, pendingTimers } = setup({
+      configure: (config) => {
+        config.profiles[0]!.runTimeoutMs = 50;
+      },
+    });
+    service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'revise',
+        prompt: 'Run.',
+        artifactRuleIds: [],
+      },
+    });
+    await runScheduledStart(runNextTimer);
+    expect(pendingTimers().some((timer) => timer.delayMs === 50)).toBe(true);
+
+    await expect(service.shutdownActive()).resolves.toEqual({ interrupted: 1 });
+
+    expect(runners[0]!.cancel).toHaveBeenCalledTimes(1);
+    expect(pendingTimers().some((timer) => timer.delayMs === 50)).toBe(false);
+    expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.run).toMatchObject({
+      status: 'interrupted',
+      errorCode: 'RUN_INTERRUPTED_BY_DAEMON_RESTART',
+      errorMessage: 'Run interrupted by daemon shutdown',
+    });
   });
 });

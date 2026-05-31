@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type { RunKind, RunStatus } from '../core/run-types.js';
 import type { RunnerDatabase } from './connection.js';
 
@@ -92,6 +93,14 @@ export interface RunWithWorkspaceRecord {
   workspace: WorkspaceRecord;
 }
 
+export interface RunLogRecord {
+  runId: string;
+  stdoutLogPath: string | null;
+  stderrLogPath: string | null;
+  debugEventsLogPath: string | null;
+  createdAt: number;
+}
+
 export interface ProfileSnapshotRecord {
   runId: string;
   profile: unknown;
@@ -103,18 +112,6 @@ export interface CreateRunQueuedWithMessagesAndSnapshotResult {
   conversation: ConversationRecord;
   messages: RunMessageRecord[];
   profileSnapshot: ProfileSnapshotRecord;
-}
-
-export class WorkspaceRunActiveRepositoryError extends Error {
-  readonly code = 'WORKSPACE_RUN_ACTIVE';
-
-  constructor(
-    readonly workspaceId: string,
-    readonly activeRunId: string,
-  ) {
-    super(`Workspace already has an active run: ${workspaceId}`);
-    this.name = 'WorkspaceRunActiveRepositoryError';
-  }
 }
 
 interface WorkspaceRow {
@@ -201,6 +198,14 @@ interface ArtifactRow {
   mtime: number | null;
   sha256: string | null;
   metadata_json: string | null;
+  created_at: number;
+}
+
+interface RunLogRow {
+  run_id: string;
+  stdout_log_path: string | null;
+  stderr_log_path: string | null;
+  debug_events_log_path: string | null;
   created_at: number;
 }
 
@@ -365,11 +370,6 @@ export function createRunQueuedWithMessagesAndSnapshot(
   },
 ): CreateRunQueuedWithMessagesAndSnapshotResult {
   const create = db.transaction((): CreateRunQueuedWithMessagesAndSnapshotResult => {
-    const activeRun = getActiveRunForWorkspace(db, input.workspaceId);
-    if (activeRun) {
-      throw new WorkspaceRunActiveRepositoryError(input.workspaceId, activeRun.id);
-    }
-
     const conversation = getOrCreateDefaultConversation(db, {
       id: input.conversationId,
       workspaceId: input.workspaceId,
@@ -793,6 +793,99 @@ export function getArtifactForRunForClient(
   return row ? mapArtifact(row) : null;
 }
 
+export function upsertRunLogPaths(
+  db: RunnerDatabase,
+  input: {
+    runId: string;
+    stdoutLogPath: string | null;
+    stderrLogPath: string | null;
+    debugEventsLogPath: string | null;
+    now: number;
+  },
+): RunLogRecord {
+  assertRelativeLogPath(input.stdoutLogPath);
+  assertRelativeLogPath(input.stderrLogPath);
+  assertRelativeLogPath(input.debugEventsLogPath);
+
+  db.prepare(
+    `
+    INSERT INTO run_logs (
+      run_id, stdout_log_path, stderr_log_path, debug_events_log_path, created_at
+    )
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(run_id) DO UPDATE SET
+      stdout_log_path = excluded.stdout_log_path,
+      stderr_log_path = excluded.stderr_log_path,
+      debug_events_log_path = excluded.debug_events_log_path
+    `,
+  ).run(
+    input.runId,
+    input.stdoutLogPath,
+    input.stderrLogPath,
+    input.debugEventsLogPath,
+    input.now,
+  );
+
+  return getRunLogByRunId(db, input.runId);
+}
+
+export function getRunLogForRunForClient(
+  db: RunnerDatabase,
+  input: { runId: string; clientId: string; isAdmin?: boolean },
+): RunLogRecord | null {
+  const row = input.isAdmin
+    ? (db.prepare('SELECT * FROM run_logs WHERE run_id = ?').get(input.runId) as
+        | RunLogRow
+        | undefined)
+    : (db
+        .prepare(
+          `
+          SELECT run_logs.*
+          FROM run_logs
+          JOIN runs ON runs.id = run_logs.run_id
+          WHERE run_logs.run_id = ? AND runs.client_id = ?
+          `,
+        )
+        .get(input.runId, input.clientId) as RunLogRow | undefined);
+
+  return row ? mapRunLog(row) : null;
+}
+
+export function listRunLogsFinishedBefore(
+  db: RunnerDatabase,
+  input: { finishedBefore: number; limit: number },
+): RunLogRecord[] {
+  const rows = db
+    .prepare(
+      `
+      SELECT run_logs.*
+      FROM run_logs
+      JOIN runs ON runs.id = run_logs.run_id
+      WHERE runs.finished_at IS NOT NULL
+        AND runs.finished_at < ?
+        AND runs.status IN ('succeeded', 'failed', 'canceled', 'interrupted')
+      ORDER BY runs.finished_at ASC, run_logs.created_at ASC
+      LIMIT ?
+      `,
+    )
+    .all(input.finishedBefore, input.limit) as RunLogRow[];
+
+  return rows.map(mapRunLog);
+}
+
+export function deleteRunLogRows(db: RunnerDatabase, runIds: readonly string[]): number {
+  const deleteRows = db.transaction(() => {
+    const statement = db.prepare('DELETE FROM run_logs WHERE run_id = ?');
+    let changes = 0;
+    for (const runId of runIds) {
+      changes += statement.run(runId).changes;
+    }
+    return changes;
+  });
+
+  return deleteRows();
+}
+
 export function getRunDetail(
   db: RunnerDatabase,
   input: { runId: string; clientId: string; isAdmin?: boolean },
@@ -922,6 +1015,16 @@ function getRunMessageById(db: RunnerDatabase, messageId: string): RunMessageRec
     throw new Error(`Run message not found after write: ${messageId}`);
   }
   return mapRunMessage(row);
+}
+
+function getRunLogByRunId(db: RunnerDatabase, runId: string): RunLogRecord {
+  const row = db.prepare('SELECT * FROM run_logs WHERE run_id = ?').get(runId) as
+    | RunLogRow
+    | undefined;
+  if (!row) {
+    throw new Error(`Run log not found after write: ${runId}`);
+  }
+  return mapRunLog(row);
 }
 
 function getRunMessages(db: RunnerDatabase, runId: string): RunMessageRecord[] {
@@ -1066,10 +1169,26 @@ function mapArtifact(row: ArtifactRow): ArtifactRecord {
   };
 }
 
+function mapRunLog(row: RunLogRow): RunLogRecord {
+  return {
+    runId: row.run_id,
+    stdoutLogPath: row.stdout_log_path,
+    stderrLogPath: row.stderr_log_path,
+    debugEventsLogPath: row.debug_events_log_path,
+    createdAt: row.created_at,
+  };
+}
+
 function stringifyNullable(value: unknown): string | null {
   return value === undefined || value === null ? null : JSON.stringify(value);
 }
 
 function parseNullable(value: string | null): unknown {
   return value === null ? null : JSON.parse(value);
+}
+
+function assertRelativeLogPath(value: string | null): void {
+  if (value !== null && path.isAbsolute(value)) {
+    throw new Error('Run log paths must be relative to dataDir');
+  }
 }

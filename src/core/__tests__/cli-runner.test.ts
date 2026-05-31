@@ -4,6 +4,7 @@ import type { ClaudeInvocation } from '../claude-adapter.js';
 import {
   startClaudeCliRun,
   type CliChildProcess,
+  type CliRunnerLogSink,
   type SpawnClaudeProcess,
 } from '../cli-runner.js';
 import type { RunEvent } from '../run-events.js';
@@ -102,7 +103,9 @@ function createTimerHarness() {
   };
 }
 
-function startHarness(input: { invocation?: ClaudeInvocation; throwOnSpawn?: unknown } = {}) {
+function startHarness(
+  input: { invocation?: ClaudeInvocation; throwOnSpawn?: unknown; logSink?: CliRunnerLogSink } = {},
+) {
   const events: RunEvent[] = [];
   const spawnHarness = createSpawnHarness({ throwOnSpawn: input.throwOnSpawn });
   const timerHarness = createTimerHarness();
@@ -113,6 +116,7 @@ function startHarness(input: { invocation?: ClaudeInvocation; throwOnSpawn?: unk
     spawn: spawnHarness.spawn,
     timer: timerHarness.timer,
     onEvent: (event) => events.push(event),
+    logSink: input.logSink,
   });
 
   return { ...spawnHarness, ...timerHarness, events, run };
@@ -293,5 +297,67 @@ describe('startClaudeCliRun', () => {
     canceled.run.cancel();
     canceled.runNextTimer();
     expect(canceled.events).toEqual([]);
+  });
+
+  it('writes sanitized stdout and stderr chunks to the log sink', async () => {
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const harness = startHarness({
+      logSink: {
+        stdout: (chunk) => stdout.push(chunk),
+        stderr: (chunk) => stderr.push(chunk),
+      },
+    });
+
+    harness.child.stdout.emitData('raw stdout /tmp/workspace/secret.txt output/report.docx\n');
+    harness.child.stderr.emitData('token=secret CLAUDE_CONFIG_DIR=/tmp/claude');
+    harness.child.close(0);
+
+    await expect(harness.run.completed).resolves.toMatchObject({ status: 'succeeded' });
+    expect(stdout.join('')).toContain('[redacted-path]');
+    expect(stdout.join('')).toContain('output/report.docx');
+    expect(stderr.join('')).not.toContain('token=secret');
+    expect(stderr.join('')).not.toContain('CLAUDE_CONFIG_DIR');
+  });
+
+  it('writes sanitized debug events to the log sink', async () => {
+    const debugEvents: RunEvent[] = [];
+    const harness = startHarness({
+      logSink: {
+        debugEvent: (event) => debugEvents.push(event),
+      },
+    });
+
+    harness.child.stdout.emitData('not-json /tmp/workspace/secret.txt\n');
+    harness.child.close(0);
+
+    await expect(harness.run.completed).resolves.toMatchObject({ status: 'succeeded' });
+    expect(debugEvents).toEqual([{ type: 'raw', line: 'not-json [redacted-path]' }]);
+  });
+
+  it('continues the run when a log sink throws', async () => {
+    const harness = startHarness({
+      logSink: {
+        stdout: () => {
+          throw new Error('sink failed /tmp/secret');
+        },
+      },
+    });
+
+    harness.child.stdout.emitData(
+      jsonLine({
+        type: 'stream_event',
+        event: {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'text_delta', text: 'hello' },
+        },
+      }),
+    );
+    harness.child.close(0);
+
+    await expect(harness.run.completed).resolves.toMatchObject({ status: 'succeeded' });
+    expect(harness.events).toContainEqual({ type: 'stderr', text: 'Run log sink failed.' });
+    expect(JSON.stringify(harness.events)).not.toContain('/tmp/secret');
   });
 });

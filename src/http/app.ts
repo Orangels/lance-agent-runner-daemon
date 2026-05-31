@@ -4,12 +4,14 @@ import type { DaemonConfig } from '../config/profiles.js';
 import { DaemonError, badRequest, internalError, toErrorResponse } from '../core/errors.js';
 import type { WorkspaceService } from '../core/workspace-service.js';
 import type { RunService } from '../core/run-service.js';
+import type { RunLogService } from '../core/run-log-service.js';
 import type { ArtifactService } from '../core/artifact-service.js';
 import type { RunnerDatabase } from '../db/connection.js';
 import { zodErrorToDaemonError } from './validation.js';
 import { createArtifactsRouter } from './artifacts-routes.js';
 import { createHealthRouter } from './health-routes.js';
 import { createProfilesRouter } from './profiles-routes.js';
+import { createLogsRouter } from './logs-routes.js';
 import { createRunsRouter } from './runs-routes.js';
 import { createWorkspacesRouter } from './workspaces-routes.js';
 
@@ -18,6 +20,7 @@ interface CreateAppDependencies {
   db: RunnerDatabase;
   workspaceService: WorkspaceService;
   runService?: RunService;
+  runLogService?: RunLogService;
   artifactService?: ArtifactService;
 }
 
@@ -33,6 +36,15 @@ export function createApp(dependencies: CreateAppDependencies): express.Express 
       createArtifactsRouter({
         config: dependencies.config,
         artifactService: dependencies.artifactService,
+      }),
+    );
+  }
+  if (dependencies.runLogService) {
+    app.use(
+      '/api/runs/:runId/logs',
+      createLogsRouter({
+        config: dependencies.config,
+        runLogService: dependencies.runLogService,
       }),
     );
   }

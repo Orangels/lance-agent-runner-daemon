@@ -1,4 +1,5 @@
 import { capRawEventLine, type RunEvent } from './run-events.js';
+import { sanitizeLogText } from './log-sanitizer.js';
 import type { EventVisibility } from './run-types.js';
 
 interface VisibilityClient {
@@ -102,8 +103,5 @@ function sanitizeValue(value: unknown): unknown {
 }
 
 function sanitizeString(value: string): string {
-  return value.replace(/(?:^|[\s"'([{:=])\/[^\s"'()[\]{}<>]+/g, (match) => {
-    const prefix = match.startsWith('/') ? '' : match[0]!;
-    return `${prefix}[redacted-path]`;
-  });
+  return sanitizeLogText(value);
 }

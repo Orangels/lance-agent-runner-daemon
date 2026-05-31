@@ -1,12 +1,12 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { parseDaemonConfig } from '../config/profiles.js';
 import { openRunnerDatabase } from '../db/connection.js';
 import { getRunDetail, insertRunQueued, upsertWorkspace } from '../db/repositories.js';
 import { applySchema } from '../db/schema.js';
-import { createServerContext } from '../index.js';
+import { createServerContext, installShutdownHandlers } from '../index.js';
 
 function makeConfig(root: string) {
   return parseDaemonConfig(
@@ -85,5 +85,44 @@ describe('server startup context', () => {
       finishedAt: 2000,
     });
     context.db.close();
+  });
+});
+
+describe('server shutdown handlers', () => {
+  it('registers signal handlers that close HTTP, shutdown runs, and close the database', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'runner-index-test-'));
+    const config = makeConfig(root);
+    const listeners = new Map<string, () => Promise<void>>();
+    const signalTarget = {
+      exitCode: undefined as number | undefined,
+      once: vi.fn((signal: string, listener: () => Promise<void>) => {
+        listeners.set(signal, listener);
+        return signalTarget;
+      }),
+      off: vi.fn(),
+    };
+    const server = {
+      close: vi.fn((callback: () => void) => {
+        callback();
+        return server;
+      }),
+    };
+    const runService = {
+      shutdownActive: vi.fn(async () => ({ interrupted: 2 })),
+    };
+    const db = { close: vi.fn() };
+    const context = {
+      config,
+      db,
+      runService,
+    };
+
+    installShutdownHandlers(context as unknown as Parameters<typeof installShutdownHandlers>[0], server as never, signalTarget);
+    await listeners.get('SIGTERM')?.();
+
+    expect(server.close).toHaveBeenCalledTimes(1);
+    expect(runService.shutdownActive).toHaveBeenCalledWith({ graceMs: 100 });
+    expect(db.close).toHaveBeenCalledTimes(1);
+    expect(signalTarget.exitCode).toBe(0);
   });
 });

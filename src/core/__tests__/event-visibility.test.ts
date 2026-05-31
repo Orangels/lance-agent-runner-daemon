@@ -144,4 +144,23 @@ describe('event visibility filtering', () => {
     expect(output).not.toBe(input);
     expect((output as Extract<RunEvent, { type: 'tool_use' }>).input).not.toBe(input.input);
   });
+
+  it('redacts token-like values from filtered event payloads', () => {
+    const output = filterRunEvent(
+      {
+        type: 'tool_result',
+        toolUseId: 'tool_1',
+        content: 'authorization: Bearer secret-token\ncookie=session=secret-cookie',
+        isError: true,
+      },
+      'normal',
+    );
+
+    expect(output).toEqual({
+      type: 'tool_result',
+      toolUseId: 'tool_1',
+      content: 'authorization: [redacted]\ncookie=[redacted]',
+      isError: true,
+    });
+  });
 });

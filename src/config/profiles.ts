@@ -11,6 +11,8 @@ export interface ServerConfig {
   dataDir: string;
   globalConcurrency: number;
   maxQueueSize: number;
+  logRetentionMs: number;
+  maxLogBytesPerRun: number;
 }
 
 export interface ClientConfig {
@@ -69,6 +71,8 @@ const serverSchema = z
     dataDir: nonEmptyString,
     globalConcurrency: z.number().int().min(1),
     maxQueueSize: z.number().int().min(0),
+    logRetentionMs: z.number().int().min(0).default(7 * 24 * 60 * 60 * 1000),
+    maxLogBytesPerRun: z.number().int().min(1).default(4 * 1024 * 1024),
   })
   .strict();
 

@@ -3,6 +3,7 @@ import { pathToFileURL } from 'node:url';
 import { getConfigPathFromArgs, loadDaemonConfig } from './config/config.js';
 import type { DaemonConfig } from './config/profiles.js';
 import { createArtifactService, type ArtifactService } from './core/artifact-service.js';
+import { createRunLogService, type RunLogService } from './core/run-log-service.js';
 import { createRunService, type RunService } from './core/run-service.js';
 import { createWorkspaceService, type WorkspaceService } from './core/workspace-service.js';
 import { openRunnerDatabase, type RunnerDatabase } from './db/connection.js';
@@ -15,6 +16,7 @@ export interface ServerContext {
   db: RunnerDatabase;
   workspaceService: WorkspaceService;
   artifactService: ArtifactService;
+  runLogService: RunLogService;
   runService: RunService;
   app: ReturnType<typeof createApp>;
   interruptedRuns: number;
@@ -22,6 +24,12 @@ export interface ServerContext {
 
 interface CreateServerContextOptions {
   clock?: () => number;
+}
+
+interface SignalTarget {
+  exitCode?: string | number;
+  once(signal: NodeJS.Signals, listener: () => void | Promise<void>): unknown;
+  off(signal: NodeJS.Signals, listener: () => void | Promise<void>): unknown;
 }
 
 export function createServerContext(
@@ -33,14 +41,16 @@ export function createServerContext(
   const interruptedRuns = markInterruptedRunsOnStartup(db, (options.clock ?? Date.now)());
   const workspaceService = createWorkspaceService({ db });
   const artifactService = createArtifactService({ config, db, clock: options.clock });
-  const runService = createRunService({ config, db, artifactService, clock: options.clock });
-  const app = createApp({ config, db, workspaceService, runService, artifactService });
+  const runLogService = createRunLogService({ config, db });
+  const runService = createRunService({ config, db, artifactService, runLogService, clock: options.clock });
+  const app = createApp({ config, db, workspaceService, runService, runLogService, artifactService });
 
   return {
     config,
     db,
     workspaceService,
     artifactService,
+    runLogService,
     runService,
     app,
     interruptedRuns,
@@ -48,11 +58,41 @@ export function createServerContext(
 }
 
 export function startServer(context: ServerContext): Server {
-  return context.app.listen(context.config.server.port, context.config.server.host, () => {
+  const server = context.app.listen(context.config.server.port, context.config.server.host, () => {
     console.log(
       `claude runner daemon listening on ${context.config.server.host}:${context.config.server.port}`,
     );
   });
+  installShutdownHandlers(context, server);
+  return server;
+}
+
+export function installShutdownHandlers(
+  context: Pick<ServerContext, 'config' | 'db' | 'runService'>,
+  server: Pick<Server, 'close'>,
+  signalTarget: SignalTarget = process,
+): void {
+  let shuttingDown = false;
+  const handleSignal = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    signalTarget.off('SIGINT', handleSignal);
+    signalTarget.off('SIGTERM', handleSignal);
+
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+    await context.runService.shutdownActive({ graceMs: getMaxCancelGraceMs(context.config) });
+    context.db.close();
+    signalTarget.exitCode = 0;
+  };
+
+  signalTarget.once('SIGINT', handleSignal);
+  signalTarget.once('SIGTERM', handleSignal);
+}
+
+function getMaxCancelGraceMs(config: DaemonConfig): number {
+  return Math.max(0, ...config.profiles.map((profile) => profile.cancelGraceMs));
 }
 
 export function main(
