@@ -66,6 +66,12 @@ GET  /api/profiles
 GET  /api/health
 ```
 
+Second-version Phase 4 extension:
+
+```text
+POST /api/workspaces/:workspaceId/files
+```
+
 `POST /api/runs` references `workspaceId`; it does not inline `originId/userId/projectId`.
 
 ## Security Boundary
@@ -138,4 +144,3 @@ When tests are added, also run the relevant package test command.
 ## Git
 
 Do not add co-author trailers to commits.
-

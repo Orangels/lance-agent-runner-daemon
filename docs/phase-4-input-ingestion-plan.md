@@ -84,6 +84,7 @@ Phase 4 is complete when this flow works:
 9. Oversized uploads return HTTP `413` with structured `BAD_REQUEST` and no temp path leakage.
 10. Missing file, duplicate file fields, unsafe `targetPath`, protected skill directory targets, and cross-client workspace access fail with structured errors.
 11. Startup prunes stale temp upload directories under `server.dataDir/uploads/tmp` without touching workspaces, artifacts, logs, or messages.
+12. Uploading to an existing file path overwrites that file, matching current `prepare` copy semantics.
 
 ## API Contract
 
@@ -131,7 +132,9 @@ Error mapping:
 - Missing `file`: `400 BAD_REQUEST`.
 - More than one file or wrong file field: `400 BAD_REQUEST`.
 - Oversized upload: HTTP `413`, error code `BAD_REQUEST`, message `"Uploaded file is too large"`.
+  - Phase 4 reuses `BAD_REQUEST` so the upload slice does not expand the public error-code surface for a single size validation case.
 - Unsafe `targetPath`: existing `400 PATH_NOT_ALLOWED`.
+- `targetPath` resolves to an existing directory: existing `400 PATH_NOT_ALLOWED`.
 - Unexpected multer/storage failure: existing `500 INTERNAL_ERROR`, with sanitized generic message.
 
 No new public API returns upload temp ids, temp file paths, absolute workspace paths, or source paths.
@@ -150,6 +153,7 @@ Create these modules:
 - `src/http/workspace-files-routes.ts`
   - Owns `POST /api/workspaces/:workspaceId/files`.
   - Uses auth middleware, multer, validation schema, `WorkspaceService`, and `UploadTempService`.
+  - Calls multer through a route-local promise wrapper so multer errors and temp cleanup happen in one controlled scope.
   - Converts multer errors into daemon errors.
 
 Modify these modules:
@@ -169,6 +173,8 @@ Modify these modules:
   - Keep `prepareWorkspaceFiles()` behavior unchanged.
 - `src/http/app.ts`
   - Wire the workspace files route under `/api/workspaces` before or alongside the existing workspaces router.
+- `AGENTS.md`
+  - Register the Phase 4 endpoint as a second-version extension so future agents see the current API surface.
 - `src/index.ts`
   - Construct `uploadTempService`.
   - Call startup pruning once after config/db/service wiring and before accepting traffic.
@@ -403,6 +409,16 @@ function copyFileIntoWorkspace(input: {
 }): PreparedWorkspaceFile {
   const targetPath = assertWorkspaceRelativePath(input.targetPath);
   const targetAbsolutePath = resolveUnderRoot(input.workspaceCwd, targetPath);
+  try {
+    if (statSync(targetAbsolutePath).isDirectory()) {
+      throw daemonError('PATH_NOT_ALLOWED', 'Target path cannot be a directory', 400, {
+        targetPath,
+      });
+    }
+  } catch (error) {
+    if (error instanceof DaemonError) throw error;
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
   mkdirSync(path.dirname(targetAbsolutePath), { recursive: true });
   copyFileSync(input.sourcePath, targetAbsolutePath);
   const size = statSync(targetAbsolutePath).size;
@@ -422,6 +438,8 @@ return copyFileIntoWorkspace({ workspaceCwd: cwd, sourcePath, targetPath: file.t
   - return `NOT_FOUND` if the workspace is unavailable to the client;
   - use `getWorkspaceCwd(profile, workspace)`;
   - copy the daemon-owned temp `sourcePath` into `targetPath`;
+  - overwrite an existing file at `targetPath`, matching current `prepareWorkspaceFiles()` copy semantics;
+  - reject a `targetPath` that resolves to an existing directory with `PATH_NOT_ALLOWED`;
   - return public workspace data plus uploaded file metadata;
   - do not check `profile.allowedInputRoots`, because this path was created by the daemon upload temp service;
   - do not expose absolute source or target paths.
@@ -430,6 +448,8 @@ return copyFileIntoWorkspace({ workspaceCwd: cwd, sourcePath, targetPath: file.t
   - copies a daemon temp file to `input/upload.docx`;
   - response contains `workspaceId`, `workspaceKey`, `targetPath`, `size`, `originalName`, and `mimeType`;
   - response does not contain temp path, workspace absolute path, `sandboxRoot`, or `allowedInputRoots`;
+  - overwrites an existing file at `input/upload.docx`;
+  - rejects `targetPath: 'input'` when `input` is an existing directory;
   - rejects `.claude-runner-skills/upload.docx`;
   - another client cannot import into this workspace;
   - existing `prepareWorkspaceFiles()` tests still prove `allowedInputRoots` checks for sourcePath.
@@ -470,24 +490,57 @@ export function createWorkspaceFilesRouter(dependencies: {
 ```
 
 - [ ] Use multer disk storage:
-  - destination is `uploadTempService.createUploadDirectory()`;
+  - destination calls `uploadTempService.createUploadDirectory()`;
+  - destination stores the created directory on the request object as `uploadDir` before invoking the multer callback;
   - filename is a safe internal filename such as `file`;
   - `limits.fileSize` is `config.server.maxUploadBytesPerFile`;
   - `limits.files` is `1`;
   - accept only `.single('file')`.
 
+- [ ] Add a local request type for cleanup bookkeeping:
+
+```ts
+interface UploadRequest extends AuthenticatedRequest {
+  uploadDir?: string;
+  file?: Express.Multer.File;
+}
+```
+
+- [ ] Wrap multer manually instead of mounting it as a standalone middleware:
+
+```ts
+function runUploadMiddleware(
+  upload: ReturnType<typeof multer>,
+  request: Request,
+  response: Response,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    upload.single('file')(request, response, (error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+```
+
+This wrapper is required so the route can map multer errors and remove any temp directory created before a stream failure such as `LIMIT_FILE_SIZE`.
+
 - [ ] Route flow for `POST /api/workspaces/:workspaceId/files`:
   1. authenticate with existing `requireAuth(config)`;
-  2. run multer `.single('file')`;
-  3. parse `request.body` with `workspaceUploadFieldsSchema`;
-  4. require `request.file`;
-  5. verify workspace with `getWorkspaceForClient(db, { workspaceId, clientId, isAdmin })`;
-  6. require profile access for the workspace profile;
-  7. load profile with `getProfile(config, workspace.profileId)`;
-  8. call `uploadTempService.assertTempPath(request.file.path)`;
-  9. call `workspaceService.prepareUploadedWorkspaceFile()`;
-  10. delete temp path in `finally`;
-  11. respond with the service result.
+  2. call the promisified multer wrapper in a `try/catch`;
+  3. in the `catch`, remove `request.file?.path` if present, otherwise remove `request.uploadDir` if present, then map multer errors to daemon errors;
+  4. parse `request.body` with `workspaceUploadFieldsSchema`;
+  5. require `request.file`;
+  6. verify workspace with `getWorkspaceForClient(db, { workspaceId, clientId, isAdmin })`;
+  7. require profile access for the workspace profile;
+  8. load profile with `getProfile(config, workspace.profileId)`;
+  9. call `uploadTempService.assertTempPath(request.file.path)`;
+  10. call `workspaceService.prepareUploadedWorkspaceFile()`;
+  11. delete the temp file or upload directory in `finally`;
+  12. respond with the service result.
 
 - [ ] Error handling:
   - `LIMIT_FILE_SIZE` -> `daemonError('BAD_REQUEST', 'Uploaded file is too large', 413)`;
@@ -495,6 +548,16 @@ export function createWorkspaceFilesRouter(dependencies: {
   - missing file -> `badRequest('Missing upload file')`;
   - validation errors route through existing zod error mapping;
   - unexpected filesystem/multer errors route through app error handler as generic internal errors.
+
+- [ ] Implement a helper such as `toUploadDaemonError(error: unknown): DaemonError | null`:
+  - return the exact mappings above for multer errors;
+  - return `null` for non-multer errors so the app error handler can produce a generic internal error.
+
+- [ ] Implement cleanup helper behavior:
+  - if `request.file?.path` exists, call `uploadTempService.removeUploadPath(request.file.path)`;
+  - otherwise if `request.uploadDir` exists, call `uploadTempService.removeUploadPath(request.uploadDir)`;
+  - cleanup failures must not hide the original validation/multer error;
+  - on a successful import, cleanup still runs in `finally`.
 
 - [ ] Wire route in `src/http/app.ts`:
 
@@ -524,7 +587,11 @@ Mount it before the existing `createWorkspacesRouter()` call. The existing `POST
   - `.claude-runner-skills/source.txt` returns `400 PATH_NOT_ALLOWED`;
   - a second file field returns `400 BAD_REQUEST`;
   - file larger than `maxUploadBytesPerFile` returns HTTP `413` with `BAD_REQUEST`;
+  - oversized upload deletes the temp directory created by multer destination;
   - another client cannot upload into this workspace;
+  - a client without profile access gets `403 PROFILE_NOT_ALLOWED`;
+  - upload to an existing file path overwrites that file;
+  - upload to an existing directory target returns `400 PATH_NOT_ALLOWED`;
   - temp upload directory is removed after success;
   - temp upload directory is removed after service/validation failure.
 
@@ -548,8 +615,17 @@ git commit -m "feat: add workspace file upload route"
 
 **Files:**
 
+- Modify: `AGENTS.md`
 - Modify: `src/index.ts`
 - Test: `src/__tests__/index.test.ts`
+
+- [ ] Register the Phase 4 endpoint in `AGENTS.md` under the existing API contract:
+
+```text
+Second-version Phase 4 extension:
+
+POST /api/workspaces/:workspaceId/files
+```
 
 - [ ] Construct the upload temp service in `createServerContext()`:
 
@@ -557,6 +633,8 @@ git commit -m "feat: add workspace file upload route"
 const uploadTempService = createUploadTempService({ config, clock: options.clock });
 uploadTempService.pruneExpiredUploads();
 ```
+
+Per-request `finally` cleanup is the primary cleanup path. Startup pruning is only the crash/failed-process fallback for temp upload directories that survived a previous daemon process.
 
 - [ ] Pass `uploadTempService` to `createApp()`.
 
@@ -585,7 +663,7 @@ Expected: index/upload tests and typecheck pass.
 - [ ] Commit:
 
 ```bash
-git add src/index.ts src/__tests__/index.test.ts
+git add AGENTS.md src/index.ts src/__tests__/index.test.ts
 git commit -m "feat: prune upload temp files on startup"
 ```
 
