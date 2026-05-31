@@ -863,6 +863,31 @@ describe('run service', () => {
     expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.run.status).toBe('canceled');
   });
 
+  it('clears the run timeout when canceling a running run', async () => {
+    const { config, workspace, service, runners, runNextTimer, pendingTimers } = setup({
+      configure: (config) => {
+        config.profiles[0]!.runTimeoutMs = 50;
+      },
+    });
+    service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'revise',
+        prompt: 'Run.',
+        artifactRuleIds: [],
+      },
+    });
+    await runScheduledStart(runNextTimer);
+
+    expect(pendingTimers().some((timer) => timer.delayMs === 50)).toBe(true);
+    expect(service.cancelRun({ client: config.clients[0]!, runId: 'run_1' })).toEqual({ ok: true });
+
+    expect(runners[0]!.cancel).toHaveBeenCalledTimes(1);
+    expect(pendingTimers().some((timer) => timer.delayMs === 50)).toBe(false);
+  });
+
   it('fails a running run with RUN_TIMEOUT and cancels the runner', async () => {
     const { config, db, workspace, service, runners, runNextTimer, pendingTimers } = setup({
       configure: (config) => {
@@ -925,6 +950,103 @@ describe('run service', () => {
     });
   });
 
+  it('shutdownActive waits up to graceMs for running runner completion before returning', async () => {
+    const { config, db, workspace, service, runners, runNextTimer, pendingTimers } = setup();
+    service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'revise',
+        prompt: 'Run.',
+        artifactRuleIds: [],
+      },
+    });
+    await runScheduledStart(runNextTimer);
+
+    let settled = false;
+    const shutdown = service.shutdownActive({ graceMs: 100 }).then((result) => {
+      settled = true;
+      return result;
+    });
+    await flushAsync();
+
+    expect(runners[0]!.cancel).toHaveBeenCalledTimes(1);
+    expect(settled).toBe(false);
+    runners[0]!.complete({
+      status: 'canceled',
+      exitCode: null,
+      signal: 'SIGTERM',
+      stdoutTail: '',
+      stderrTail: '',
+    });
+
+    await expect(shutdown).resolves.toEqual({ interrupted: 1 });
+    expect(pendingTimers().some((timer) => timer.delayMs === 100)).toBe(false);
+    expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.run).toMatchObject({
+      status: 'interrupted',
+      errorCode: 'RUN_INTERRUPTED_BY_DAEMON_RESTART',
+    });
+  });
+
+  it('shutdownActive cancels all running runs before waiting for graceMs', async () => {
+    const { config, db, workspace, service, runners, runNextTimer, pendingTimers } = setup({
+      configure: (config) => {
+        config.profiles[0]!.profileConcurrency = 2;
+      },
+    });
+    const secondWorkspace = upsertWorkspace(db, {
+      id: 'ws_2',
+      clientId: 'lqbot',
+      profileId: 'report-docx',
+      originId: 'lqbot',
+      userId: 'user_2',
+      projectId: 'project_456',
+      now: 1000,
+    });
+    const secondWorkspaceCwd = getWorkspaceCwd(config.profiles[0]!, secondWorkspace);
+    mkdirSync(path.join(secondWorkspaceCwd, 'input'), { recursive: true });
+    mkdirSync(path.join(secondWorkspaceCwd, 'output'), { recursive: true });
+    mkdirSync(path.join(secondWorkspaceCwd, 'work'), { recursive: true });
+    mkdirSync(path.join(secondWorkspaceCwd, '.claude-runner-skills'), { recursive: true });
+
+    for (const workspaceId of [workspace.id, secondWorkspace.id]) {
+      service.createRun({
+        client: config.clients[0]!,
+        request: {
+          profileId: 'report-docx',
+          workspaceId,
+          kind: 'revise',
+          prompt: 'Run.',
+          artifactRuleIds: [],
+        },
+      });
+    }
+    await runScheduledStart(runNextTimer);
+    expect(runners).toHaveLength(2);
+
+    const shutdown = service.shutdownActive({ graceMs: 100 });
+    await flushAsync();
+    const cancelCountsBeforeGrace = runners.map((runner) => runner.cancel.mock.calls.length);
+
+    for (const runner of runners) {
+      runner.complete({
+        status: 'canceled',
+        exitCode: null,
+        signal: 'SIGTERM',
+        stdoutTail: '',
+        stderrTail: '',
+      });
+    }
+    await flushAsync();
+    if (pendingTimers().some((timer) => timer.delayMs === 100)) {
+      runNextTimer();
+    }
+
+    await expect(shutdown).resolves.toEqual({ interrupted: 2 });
+    expect(cancelCountsBeforeGrace).toEqual([1, 1]);
+  });
+
   it('shutdownActive cancels running runs and clears run timeout timers', async () => {
     const { config, db, workspace, service, runners, runNextTimer, pendingTimers } = setup({
       configure: (config) => {
@@ -944,7 +1066,7 @@ describe('run service', () => {
     await runScheduledStart(runNextTimer);
     expect(pendingTimers().some((timer) => timer.delayMs === 50)).toBe(true);
 
-    await expect(service.shutdownActive()).resolves.toEqual({ interrupted: 1 });
+    await expect(service.shutdownActive({ graceMs: 0 })).resolves.toEqual({ interrupted: 1 });
 
     expect(runners[0]!.cancel).toHaveBeenCalledTimes(1);
     expect(pendingTimers().some((timer) => timer.delayMs === 50)).toBe(false);

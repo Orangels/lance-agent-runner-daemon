@@ -544,6 +544,30 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     }
   }
 
+  function waitForRunnerCompletion(runner: ClaudeCliRunHandle, graceMs: number): Promise<void> {
+    const waitMs = Math.max(0, graceMs);
+    if (waitMs <= 0) {
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+      let timeoutId: unknown = null;
+      let settled = false;
+      const settle = () => {
+        if (settled) return;
+        settled = true;
+        if (timeoutId !== null) {
+          timer.clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+        resolve();
+      };
+
+      timeoutId = timer.setTimeout(settle, waitMs);
+      runner.completed.then(settle, settle);
+    });
+  }
+
   function assertRunReadable(client: ClientConfig, runId: string): RunRecord {
     const run = getRunForClient(input.db, { runId, clientId: client.id, isAdmin: client.isAdmin });
     if (!run) {
@@ -731,11 +755,12 @@ export function createRunService(input: CreateRunServiceInput): RunService {
         return { ok: true };
       }
 
+      clearRunTimeout(state);
       state.runner.cancel();
       return { ok: true };
     },
 
-    async shutdownActive() {
+    async shutdownActive({ graceMs = 0 } = {}) {
       shuttingDown = true;
       if (dispatchTimer !== null) {
         timer.clearTimeout(dispatchTimer);
@@ -743,12 +768,14 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       }
 
       let interrupted = 0;
+      const waits: Array<Promise<void>> = [];
       for (const state of Array.from(states.values())) {
         if (state.terminal) {
           continue;
         }
         interrupted += 1;
-        state.runner?.cancel();
+        const runner = state.runner;
+        runner?.cancel();
         await finishRun(
           state,
           {
@@ -762,7 +789,11 @@ export function createRunService(input: CreateRunServiceInput): RunService {
           },
           { finalizeArtifacts: false },
         );
+        if (runner) {
+          waits.push(waitForRunnerCompletion(runner, graceMs));
+        }
       }
+      await Promise.all(waits);
 
       return { interrupted };
     },
