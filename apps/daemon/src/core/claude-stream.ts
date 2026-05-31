@@ -17,8 +17,8 @@ export function createClaudeStreamHandler(onEvent: RunEventSink) {
 
   // Per-content-block scratch, keyed by `${messageId}:${blockIndex}`.
   const blocks = new Map<string, BlockState>();
-  // Tool uses already emitted from streamed `input_json_delta` data.
-  const streamedToolUseIds = new Set<string>();
+  // Tool uses already emitted from either streamed input or final wrappers.
+  const emittedToolUseIds = new Set<string>();
   // Most recent assistant message id for content_block_* events without ids.
   let currentMessageId: string | null = null;
   // Message ids that already streamed text via `stream_event` deltas.
@@ -87,16 +87,7 @@ export function createClaudeStreamHandler(onEvent: RunEventSink) {
       for (const block of obj.message.content) {
         if (!isRecord(block)) continue;
         if (block.type === 'tool_use') {
-          if (typeof block.id === 'string' && streamedToolUseIds.has(block.id)) {
-            streamedToolUseIds.delete(block.id);
-            continue;
-          }
-          onEvent({
-            type: 'tool_use',
-            id: block.id,
-            name: block.name,
-            input: block.input ?? null,
-          });
+          emitToolUseOnce(block.id, block.name, block.input ?? null);
         } else if (
           !alreadyStreamed &&
           block.type === 'text' &&
@@ -189,13 +180,7 @@ export function createClaudeStreamHandler(onEvent: RunEventSink) {
       const state = blocks.get(key);
       if (state && state.type === 'tool_use' && typeof state.id === 'string' && state.input.trim()) {
         try {
-          onEvent({
-            type: 'tool_use',
-            id: state.id,
-            name: state.name,
-            input: JSON.parse(state.input),
-          });
-          streamedToolUseIds.add(state.id);
+          emitToolUseOnce(state.id, state.name, JSON.parse(state.input));
         } catch {
           // Let the final assistant wrapper provide the complete input.
         }
@@ -203,6 +188,20 @@ export function createClaudeStreamHandler(onEvent: RunEventSink) {
       blocks.delete(key);
       return;
     }
+  }
+
+  function emitToolUseOnce(id: unknown, name: unknown, input: unknown) {
+    if (typeof id === 'string') {
+      if (emittedToolUseIds.has(id)) return;
+      emittedToolUseIds.add(id);
+    }
+
+    onEvent({
+      type: 'tool_use',
+      id,
+      name,
+      input,
+    });
   }
 
   return { feed, flush };

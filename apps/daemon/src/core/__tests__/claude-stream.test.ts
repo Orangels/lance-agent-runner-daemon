@@ -255,6 +255,96 @@ describe('Claude stream parser', () => {
     ]);
   });
 
+  it('suppresses duplicate streamed tool stop after final-wrapper tool_use emitted', () => {
+    const { events, handler } = collectEvents();
+
+    handler.feed(
+      jsonLine({
+        type: 'stream_event',
+        event: {
+          type: 'message_start',
+          message: { id: 'msg-1' },
+        },
+      }),
+    );
+    handler.feed(
+      jsonLine({
+        type: 'stream_event',
+        event: {
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'tool_use', id: 'tool-1', name: 'TaskCreate' },
+        },
+      }),
+    );
+    handler.feed(
+      jsonLine({
+        type: 'stream_event',
+        event: {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'input_json_delta', partial_json: '{"subject":"Template Analyst"}' },
+        },
+      }),
+    );
+    handler.feed(
+      jsonLine({
+        type: 'assistant',
+        message: {
+          id: 'msg-1',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'tool-1',
+              name: 'TaskCreate',
+              input: { subject: 'Template Analyst' },
+            },
+          ],
+        },
+      }),
+    );
+    handler.feed(jsonLine({ type: 'stream_event', event: { type: 'content_block_stop', index: 0 } }));
+
+    expect(events).toEqual([
+      {
+        type: 'tool_use',
+        id: 'tool-1',
+        name: 'TaskCreate',
+        input: { subject: 'Template Analyst' },
+      },
+    ]);
+  });
+
+  it('suppresses duplicate final-wrapper tool_use entries with the same id', () => {
+    const { events, handler } = collectEvents();
+    const assistantToolUse = {
+      type: 'assistant',
+      message: {
+        id: 'msg-1',
+        content: [
+          {
+            type: 'tool_use',
+            id: 'tool-1',
+            name: 'TaskCreate',
+            input: { subject: 'Template Analyst' },
+          },
+        ],
+      },
+    };
+
+    handler.feed(jsonLine(assistantToolUse));
+    handler.feed(jsonLine(assistantToolUse));
+
+    expect(events).toEqual([
+      {
+        type: 'tool_use',
+        id: 'tool-1',
+        name: 'TaskCreate',
+        input: { subject: 'Template Analyst' },
+      },
+    ]);
+  });
+
   it('emits tool_result from user wrappers', () => {
     const { events, handler } = collectEvents();
 
