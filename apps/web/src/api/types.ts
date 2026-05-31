@@ -129,7 +129,12 @@ export interface PublicRun {
 }
 
 export interface CreateRunResponse {
-  run: PublicRun;
+  runId: string;
+  status: 'queued';
+}
+
+export interface CancelRunResponse {
+  ok: true;
 }
 
 export interface PublicRunMessage {

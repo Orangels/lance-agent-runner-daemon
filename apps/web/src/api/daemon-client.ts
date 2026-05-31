@@ -1,5 +1,6 @@
 import type {
   ArtifactsResponse,
+  CancelRunResponse,
   CreateRunRequest,
   CreateRunResponse,
   CreateWorkspaceRequest,
@@ -70,7 +71,7 @@ export class DaemonClient {
     return this.requestJson(`/api/runs/${encodeURIComponent(runId)}`);
   }
 
-  cancelRun(runId: string): Promise<CreateRunResponse> {
+  cancelRun(runId: string): Promise<CancelRunResponse> {
     return this.requestJson(`/api/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' });
   }
 
