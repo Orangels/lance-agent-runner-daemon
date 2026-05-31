@@ -5,6 +5,7 @@ import type { DaemonConfig } from './config/profiles.js';
 import { createArtifactService, type ArtifactService } from './core/artifact-service.js';
 import { createRunLogService, type RunLogService } from './core/run-log-service.js';
 import { createRunService, type RunService } from './core/run-service.js';
+import { createUploadTempService, type UploadTempService } from './core/upload-temp-service.js';
 import { createWorkspaceService, type WorkspaceService } from './core/workspace-service.js';
 import { openRunnerDatabase, type RunnerDatabase } from './db/connection.js';
 import { markInterruptedRunsOnStartup } from './db/repositories.js';
@@ -18,6 +19,7 @@ export interface ServerContext {
   artifactService: ArtifactService;
   runLogService: RunLogService;
   runService: RunService;
+  uploadTempService: UploadTempService;
   app: ReturnType<typeof createApp>;
   interruptedRuns: number;
 }
@@ -38,12 +40,24 @@ export function createServerContext(
 ): ServerContext {
   const db = openRunnerDatabase(config.server.dataDir);
   applySchema(db);
-  const interruptedRuns = markInterruptedRunsOnStartup(db, (options.clock ?? Date.now)());
+  const now = options.clock ?? Date.now;
+  const startupNow = now();
+  const interruptedRuns = markInterruptedRunsOnStartup(db, startupNow);
   const workspaceService = createWorkspaceService({ db });
   const artifactService = createArtifactService({ config, db, clock: options.clock });
   const runLogService = createRunLogService({ config, db });
   const runService = createRunService({ config, db, artifactService, runLogService, clock: options.clock });
-  const app = createApp({ config, db, workspaceService, runService, runLogService, artifactService });
+  const uploadTempService = createUploadTempService({ config });
+  uploadTempService.pruneExpiredUploads({ now: startupNow });
+  const app = createApp({
+    config,
+    db,
+    workspaceService,
+    runService,
+    runLogService,
+    artifactService,
+    uploadTempService,
+  });
 
   return {
     config,
@@ -52,6 +66,7 @@ export function createServerContext(
     artifactService,
     runLogService,
     runService,
+    uploadTempService,
     app,
     interruptedRuns,
   };

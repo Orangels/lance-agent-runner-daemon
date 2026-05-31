@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -8,7 +8,7 @@ import { getRunDetail, insertRunQueued, upsertWorkspace } from '../db/repositori
 import { applySchema } from '../db/schema.js';
 import { createServerContext, installShutdownHandlers } from '../index.js';
 
-function makeConfig(root: string) {
+function makeConfig(root: string, input: { uploadTempRetentionMs?: number } = {}) {
   return parseDaemonConfig(
     {
       server: {
@@ -17,6 +17,7 @@ function makeConfig(root: string) {
         dataDir: path.join(root, 'data'),
         globalConcurrency: 4,
         maxQueueSize: 100,
+        uploadTempRetentionMs: input.uploadTempRetentionMs,
       },
       clients: [{ id: 'lqbot', apiKey: 'secret', allowedProfileIds: ['report-docx'] }],
       profiles: [
@@ -78,6 +79,7 @@ describe('server startup context', () => {
 
     expect(context.runService).toBeDefined();
     expect(context.artifactService).toBeDefined();
+    expect(context.uploadTempService.getTempRoot()).toBe(path.join(config.server.dataDir, 'uploads', 'tmp'));
     expect(context.interruptedRuns).toBe(1);
     expect(getRunDetail(context.db, { runId: 'run_1', clientId: 'lqbot' })?.run).toMatchObject({
       status: 'interrupted',
@@ -85,6 +87,34 @@ describe('server startup context', () => {
       finishedAt: 2000,
     });
     context.db.close();
+  });
+
+  it('prunes stale upload temp directories on startup while preserving fresh ones', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'runner-index-test-'));
+    const config = makeConfig(root, { uploadTempRetentionMs: 1000 });
+    const tempRoot = path.join(config.server.dataDir, 'uploads', 'tmp');
+    const staleUploadDir = path.join(tempRoot, 'upload_stale');
+    const freshUploadDir = path.join(tempRoot, 'upload_fresh');
+    mkdirSync(staleUploadDir, { recursive: true });
+    mkdirSync(freshUploadDir, { recursive: true });
+    writeFileSync(path.join(staleUploadDir, 'file'), 'stale');
+    writeFileSync(path.join(freshUploadDir, 'file'), 'fresh');
+    utimesSync(staleUploadDir, new Date(8000), new Date(8000));
+    utimesSync(freshUploadDir, new Date(9500), new Date(9500));
+
+    const context = createServerContext(config, { clock: () => 10_000 });
+
+    expect(existsSync(staleUploadDir)).toBe(false);
+    expect(existsSync(freshUploadDir)).toBe(true);
+    expect(readdirSync(tempRoot)).toEqual(['upload_fresh']);
+    context.db.close();
+  });
+
+  it('can import the index module without starting the server', async () => {
+    const module = await import('../index.js');
+
+    expect(module.main).toBeTypeOf('function');
+    expect(module.startServer).toBeTypeOf('function');
   });
 });
 
