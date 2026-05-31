@@ -84,6 +84,19 @@ export interface PrepareWorkspaceRequest {
   files: PrepareWorkspaceFileRequest[];
 }
 
+export interface UploadedWorkspaceFile {
+  targetPath: string;
+  size: number;
+  originalName: string;
+  mimeType: string | null;
+}
+
+export interface UploadWorkspaceFileResponse {
+  workspaceId: string;
+  workspaceKey: string;
+  file: UploadedWorkspaceFile;
+}
+
 export interface CreateRunRequest {
   profileId: string;
   workspaceId: string;

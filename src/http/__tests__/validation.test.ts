@@ -5,7 +5,10 @@ import {
   eventReplayQuerySchema,
   listRunsQuerySchema,
   prepareWorkspaceRequestSchema,
+  workspaceUploadFieldsSchema,
+  zodErrorToDaemonError,
 } from '../validation.js';
+import type { UploadWorkspaceFileResponse } from '../../core/run-types.js';
 
 describe('workspace create request validation', () => {
   it('accepts the two-step workspace creation contract', () => {
@@ -83,6 +86,51 @@ describe('workspace prepare request validation', () => {
         ],
       }),
     ).toThrow();
+  });
+});
+
+describe('workspace file upload field validation', () => {
+  it('accepts a workspace-relative upload target path', () => {
+    expect(workspaceUploadFieldsSchema.parse({ targetPath: 'input/source.docx' })).toEqual({
+      targetPath: 'input/source.docx',
+    });
+  });
+
+  it('rejects unsafe upload target paths', () => {
+    for (const targetPath of [
+      '/tmp/source.docx',
+      '../source.docx',
+      '.claude-runner-skills/source.docx',
+    ]) {
+      expect(() => workspaceUploadFieldsSchema.parse({ targetPath })).toThrow();
+    }
+  });
+
+  it('maps upload target path errors to PATH_NOT_ALLOWED', () => {
+    const result = workspaceUploadFieldsSchema.safeParse({
+      targetPath: '.claude-runner-skills/source.docx',
+    });
+    if (result.success) {
+      throw new Error('expected upload field validation to fail');
+    }
+
+    expect(zodErrorToDaemonError(result.error).code).toBe('PATH_NOT_ALLOWED');
+  });
+
+  it('uses the public upload response shape without absolute paths', () => {
+    const response: UploadWorkspaceFileResponse = {
+      workspaceId: 'ws_123',
+      workspaceKey: 'lqbot/user_1/project_123',
+      file: {
+        targetPath: 'input/source.docx',
+        size: 1024,
+        originalName: 'source.docx',
+        mimeType: 'text/plain',
+      },
+    };
+
+    expect(JSON.stringify(response)).not.toContain('/tmp/');
+    expect(response.file.targetPath).toBe('input/source.docx');
   });
 });
 

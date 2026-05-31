@@ -69,6 +69,12 @@ export const prepareWorkspaceRequestSchema: z.ZodType<PrepareWorkspaceRequest> =
   })
   .strict();
 
+export const workspaceUploadFieldsSchema = z
+  .object({
+    targetPath: workspaceRelativePathSchema,
+  })
+  .strict();
+
 export const createRunRequestSchema: z.ZodType<CreateRunRequest> = z
   .object({
     profileId: runShortStringSchema,

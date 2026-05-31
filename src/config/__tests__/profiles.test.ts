@@ -66,6 +66,8 @@ describe('daemon config parsing', () => {
     expect(config.server.port).toBe(17890);
     expect(config.server.logRetentionMs).toBe(7 * 24 * 60 * 60 * 1000);
     expect(config.server.maxLogBytesPerRun).toBe(4 * 1024 * 1024);
+    expect(config.server.maxUploadBytesPerFile).toBe(50 * 1024 * 1024);
+    expect(config.server.uploadTempRetentionMs).toBe(24 * 60 * 60 * 1000);
     expect(config.clients[0]?.apiKey).toBe('secret-key');
     expect(config.profiles[0]?.id).toBe('report-docx');
   });
@@ -85,6 +87,51 @@ describe('daemon config parsing', () => {
 
     expect(config.server.logRetentionMs).toBe(3_600_000);
     expect(config.server.maxLogBytesPerRun).toBe(1024);
+  });
+
+  it('accepts explicit upload limits and temp retention', () => {
+    const config = parseDaemonConfig(
+      {
+        ...validConfig,
+        server: {
+          ...validConfig.server,
+          maxUploadBytesPerFile: 4096,
+          uploadTempRetentionMs: 60_000,
+        },
+      },
+      { env: { CLAUDE_RUNNER_TEST_KEY: 'secret-key' } },
+    );
+
+    expect(config.server.maxUploadBytesPerFile).toBe(4096);
+    expect(config.server.uploadTempRetentionMs).toBe(60_000);
+  });
+
+  it('rejects invalid upload limits and temp retention', () => {
+    expect(() =>
+      parseDaemonConfig(
+        {
+          ...validConfig,
+          server: {
+            ...validConfig.server,
+            maxUploadBytesPerFile: 0,
+          },
+        },
+        { env: { CLAUDE_RUNNER_TEST_KEY: 'secret-key' } },
+      ),
+    ).toThrow(/maxUploadBytesPerFile/);
+
+    expect(() =>
+      parseDaemonConfig(
+        {
+          ...validConfig,
+          server: {
+            ...validConfig.server,
+            uploadTempRetentionMs: -1,
+          },
+        },
+        { env: { CLAUDE_RUNNER_TEST_KEY: 'secret-key' } },
+      ),
+    ).toThrow(/uploadTempRetentionMs/);
   });
 
   it('resolves client apiKey values from env references', () => {
