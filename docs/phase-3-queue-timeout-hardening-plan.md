@@ -259,6 +259,7 @@ export interface QueueLimits {
   - global concurrency limit;
   - profile concurrency limit;
   - workspace serial limit;
+  - `finishing` still consumes global/profile/workspace capacity until artifact/log finalization completes;
   - FIFO dispatch when all are eligible;
   - no head-of-line blocking when first queued run is blocked by workspace.
 - [ ] Run:
@@ -334,7 +335,7 @@ server: {
 }
 ```
 
-These fields must be optional in config files so existing tests/configs keep working.
+These fields must be optional in config files so existing tests/configs keep working. Implement the defaults in the config schema/normalization layer, not as ad hoc hard-coded constants inside the log service.
 
 - [ ] Implement `createRunLogService({ config, db, clock? })`.
 - [ ] Implement `openRunLogs({ runId })` returning:
@@ -351,6 +352,7 @@ These fields must be optional in config files so existing tests/configs keep wor
 ```
 
 - [ ] Store relative paths such as `logs/runs/run_1/stdout.log` in `run_logs`.
+- [ ] Keep `debug-events.ndjson` separate from `run_messages.events_json`: log files are sanitized diagnostics, while `events_json` remains durable API history filtered by event visibility.
 - [ ] Sanitize all text before writing.
 - [ ] Bound per-run log file size using `server.maxLogBytesPerRun`; once a file reaches the cap, stop appending and write one final marker line:
 
@@ -484,6 +486,7 @@ logHandle: RunLogHandle | null;
 - [ ] `cancelRun()` flow:
   - terminal and finishing runs return `RUN_NOT_CANCELABLE` 409;
   - queued or starting run with no child finishes as `canceled` and never spawns;
+  - queued cancel must persist the assistant message terminal state through repository updates because the message accumulator is only created inside `startRun()`;
   - running run calls child cancel and finishes through runner completion unless timeout already terminalized it;
   - canceling a queued run calls `scheduleDispatch()` so later eligible runs are not blocked.
 - [ ] Write tests:
@@ -514,6 +517,7 @@ Expected: run-service and run-types tests pass.
 - Modify: `src/core/run-service.ts`
 - Test: `src/core/__tests__/run-service.test.ts`
 
+- [ ] Treat total run timeout as a new daemon design requirement. lanceDesign only provides an inactivity watchdog reference; do not copy or reinterpret the lanceDesign watchdog as total wall-clock timeout.
 - [ ] Start the total timeout only after DB status changes to `running`.
 - [ ] Timeout action:
   - emit error event `{ type: "error", code: "RUN_TIMEOUT", message: "Run exceeded total timeout." }`;
