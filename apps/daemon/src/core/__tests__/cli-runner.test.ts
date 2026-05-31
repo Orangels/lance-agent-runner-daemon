@@ -335,6 +335,46 @@ describe('startClaudeCliRun', () => {
     expect(debugEvents).toEqual([{ type: 'raw', line: 'not-json [redacted-path]' }]);
   });
 
+  it('keeps tool_result events in the debug log sink', async () => {
+    const debugEvents: RunEvent[] = [];
+    const harness = startHarness({
+      logSink: {
+        debugEvent: (event) => debugEvents.push(event),
+      },
+    });
+
+    harness.child.stdout.emitData(
+      jsonLine({
+        type: 'user',
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'tool-1',
+              content: [{ type: 'text', text: 'tool output' }],
+              is_error: false,
+            },
+          ],
+        },
+      }),
+    );
+    harness.child.close(0);
+
+    await expect(harness.run.completed).resolves.toMatchObject({ status: 'succeeded' });
+    expect(harness.events).toContainEqual({
+      type: 'tool_result',
+      toolUseId: 'tool-1',
+      content: 'tool output',
+      isError: false,
+    });
+    expect(debugEvents).toContainEqual({
+      type: 'tool_result',
+      toolUseId: 'tool-1',
+      content: 'tool output',
+      isError: false,
+    });
+  });
+
   it('continues the run when a log sink throws', async () => {
     const harness = startHarness({
       logSink: {

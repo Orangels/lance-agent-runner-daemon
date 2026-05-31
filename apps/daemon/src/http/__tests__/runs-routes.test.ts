@@ -306,6 +306,8 @@ describe('runs routes', () => {
         }),
       });
       await startNextRun();
+      runners[0]!.input.onEvent({ type: 'thinking_start' });
+      runners[0]!.input.onEvent({ type: 'thinking_delta', delta: 'Thinking.' });
       runners[0]!.input.onEvent({ type: 'text_delta', delta: 'Done.' });
       runners[0]!.complete({ status: 'succeeded', exitCode: 0, signal: null, stdoutTail: '', stderrTail: '' });
       await Promise.resolve();
@@ -321,10 +323,49 @@ describe('runs routes', () => {
         expect.objectContaining({
           role: 'assistant',
           content: 'Done.',
+          thinkingContent: 'Thinking.',
           events: expect.arrayContaining([{ type: 'text_delta', delta: 'Done.' }]),
           runStatus: 'succeeded',
         }),
       );
+    });
+  });
+
+  it('does not expose aggregated thinking content to quiet run detail', async () => {
+    await withApp(async ({ baseUrl, workspaceId, runners, startNextRun }) => {
+      await fetch(`${baseUrl}/api/runs`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer secret', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          profileId: 'report-docx',
+          workspaceId,
+          kind: 'revise',
+          prompt: 'Run.',
+          artifactRuleIds: [],
+          eventVisibility: 'quiet',
+        }),
+      });
+      await startNextRun();
+      runners[0]!.input.onEvent({ type: 'thinking_start' });
+      runners[0]!.input.onEvent({ type: 'thinking_delta', delta: 'Hidden.' });
+      runners[0]!.input.onEvent({ type: 'text_delta', delta: 'Done.' });
+      runners[0]!.complete({ status: 'succeeded', exitCode: 0, signal: null, stdoutTail: '', stderrTail: '' });
+      await Promise.resolve();
+
+      const response = await fetch(`${baseUrl}/api/runs/run_1`, {
+        headers: { Authorization: 'Bearer secret' },
+      });
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.messages[1]).toEqual(
+        expect.objectContaining({
+          content: 'Done.',
+          thinkingContent: '',
+          events: expect.arrayContaining([{ type: 'text_delta', delta: 'Done.' }]),
+        }),
+      );
+      expect(JSON.stringify(body.messages[1].events)).not.toContain('thinking_delta');
     });
   });
 

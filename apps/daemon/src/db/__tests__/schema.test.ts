@@ -9,6 +9,13 @@ function listNames(db: ReturnType<typeof openInMemoryDatabase>, type: 'table' | 
     .map((row) => (row as { name: string }).name);
 }
 
+function listColumns(db: ReturnType<typeof openInMemoryDatabase>, table: string): string[] {
+  return db
+    .prepare(`PRAGMA table_info(${table})`)
+    .all()
+    .map((row) => (row as { name: string }).name);
+}
+
 describe('sqlite schema', () => {
   it('applies schema idempotently', () => {
     const db = openInMemoryDatabase();
@@ -41,6 +48,48 @@ describe('sqlite schema', () => {
     applySchema(db);
 
     expect(listNames(db, 'table')).not.toContain('run_events');
+  });
+
+  it('stores aggregated thinking content on run messages', () => {
+    const db = openInMemoryDatabase();
+
+    applySchema(db);
+
+    expect(listColumns(db, 'run_messages')).toContain('thinking_content');
+  });
+
+  it('migrates existing run_messages tables to add thinking content', () => {
+    const db = openInMemoryDatabase();
+    db.exec(`
+      CREATE TABLE run_messages (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        conversation_id TEXT,
+        run_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        events_json TEXT,
+        attachments_json TEXT,
+        produced_files_json TEXT,
+        run_status TEXT,
+        last_run_event_id TEXT,
+        started_at INTEGER,
+        ended_at INTEGER,
+        position INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      INSERT INTO run_messages (
+        id, workspace_id, run_id, role, content, position, created_at, updated_at
+      )
+      VALUES ('msg_1', 'ws_1', 'run_1', 'assistant', 'content', 1, 1, 1);
+    `);
+
+    applySchema(db);
+
+    const row = db.prepare('SELECT thinking_content FROM run_messages WHERE id = ?').get('msg_1');
+    expect(row).toEqual({ thinking_content: '' });
   });
 
   it('creates required indexes', () => {

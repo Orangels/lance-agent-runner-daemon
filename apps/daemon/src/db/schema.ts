@@ -72,6 +72,7 @@ export function applySchema(db: RunnerDatabase): void {
       run_id TEXT NOT NULL,
       role TEXT NOT NULL,
       content TEXT NOT NULL,
+      thinking_content TEXT NOT NULL DEFAULT '',
       events_json TEXT,
       attachments_json TEXT,
       produced_files_json TEXT,
@@ -130,4 +131,15 @@ export function applySchema(db: RunnerDatabase): void {
       FOREIGN KEY(run_id) REFERENCES runs(id) ON DELETE CASCADE
     );
   `);
+
+  ensureRunMessagesThinkingContentColumn(db);
+}
+
+function ensureRunMessagesThinkingContentColumn(db: RunnerDatabase): void {
+  const columns = db.prepare('PRAGMA table_info(run_messages)').all() as Array<{ name: string }>;
+  if (columns.some((column) => column.name === 'thinking_content')) {
+    return;
+  }
+
+  db.exec("ALTER TABLE run_messages ADD COLUMN thinking_content TEXT NOT NULL DEFAULT ''");
 }

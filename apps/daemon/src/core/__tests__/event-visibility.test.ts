@@ -47,7 +47,7 @@ describe('event visibility filtering', () => {
     ]);
   });
 
-  it('normal includes thinking and tool events while excluding stderr and raw', () => {
+  it('normal includes thinking and tool use while excluding tool results, stderr, and raw', () => {
     expect(filterRunEvents(allEvents, 'normal').map((event) => event.type)).toEqual([
       'status',
       'text_delta',
@@ -58,13 +58,13 @@ describe('event visibility filtering', () => {
       'thinking_start',
       'thinking_delta',
       'tool_use',
-      'tool_result',
     ]);
   });
 
   it('debug includes capped stderr and raw only when the client can read debug events', () => {
     const longText = 'x'.repeat(2_100);
     const events: RunEvent[] = [
+      { type: 'tool_result', toolUseId: 'tool_1', content: 'hidden tool output', isError: false },
       { type: 'stderr', text: longText },
       { type: 'raw', line: longText },
     ];
@@ -145,7 +145,7 @@ describe('event visibility filtering', () => {
     expect((output as Extract<RunEvent, { type: 'tool_use' }>).input).not.toBe(input.input);
   });
 
-  it('redacts token-like values from filtered event payloads', () => {
+  it('filters tool result content from public event payloads', () => {
     const output = filterRunEvent(
       {
         type: 'tool_result',
@@ -156,11 +156,15 @@ describe('event visibility filtering', () => {
       'normal',
     );
 
-    expect(output).toEqual({
-      type: 'tool_result',
-      toolUseId: 'tool_1',
-      content: 'authorization: [redacted]\ncookie=[redacted]',
-      isError: true,
-    });
+    expect(output).toBeNull();
+  });
+
+  it('filters tool result content even for debug visibility', () => {
+    expect(
+      filterRunEvent(
+        { type: 'tool_result', toolUseId: 'tool_1', content: 'debug tool output', isError: false },
+        'debug',
+      ),
+    ).toBeNull();
   });
 });

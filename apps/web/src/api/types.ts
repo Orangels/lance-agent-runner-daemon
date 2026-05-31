@@ -141,6 +141,7 @@ export interface PublicRunMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  thinkingContent: string;
   events: unknown[] | null;
   runStatus: RunStatus | null;
   lastRunEventId: string | null;

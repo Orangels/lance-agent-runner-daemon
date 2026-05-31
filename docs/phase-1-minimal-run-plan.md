@@ -306,7 +306,7 @@ client.canReadDebugEvents
 Phase 1 visibility rules:
 
 - `quiet`: `status`, `text_delta`, `usage`, `error`, `end`.
-- `normal`: quiet plus `thinking_start`, `thinking_delta`, `tool_use`, `tool_result`.
+- `normal`: quiet plus `thinking_start`, `thinking_delta`, and `tool_use`. `tool_result` is persisted internally and written to debug logs, but filtered from public SSE/run detail responses.
 - `debug`: normal plus capped `stderr` and `raw`, only when the client has `canReadDebugEvents`.
 
 Do not expose sandbox absolute paths in any visibility mode.

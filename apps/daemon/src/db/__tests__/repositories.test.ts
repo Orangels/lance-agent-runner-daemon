@@ -190,7 +190,14 @@ describe('run repository', () => {
     expect(created.conversation).toMatchObject({ id: 'conv_1', workspaceId: workspace.id });
     expect(created.messages).toEqual([
       expect.objectContaining({ id: 'msg_user', role: 'user', content: 'Revise the report.', position: 0 }),
-      expect.objectContaining({ id: 'msg_assistant', role: 'assistant', content: '', runStatus: 'queued', position: 1 }),
+      expect.objectContaining({
+        id: 'msg_assistant',
+        role: 'assistant',
+        content: '',
+        thinkingContent: '',
+        runStatus: 'queued',
+        position: 1,
+      }),
     ]);
     expect(created.profileSnapshot).toMatchObject({
       runId: 'run_1',
@@ -629,7 +636,14 @@ describe('run message repository', () => {
 
     expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.messages).toEqual([
       expect.objectContaining({ id: 'msg_user', role: 'user', content: 'Revise the report.', position: 0 }),
-      expect.objectContaining({ id: 'msg_assistant', role: 'assistant', content: '', runStatus: 'queued', position: 1 }),
+      expect.objectContaining({
+        id: 'msg_assistant',
+        role: 'assistant',
+        content: '',
+        thinkingContent: '',
+        runStatus: 'queued',
+        position: 1,
+      }),
     ]);
   });
 
@@ -662,6 +676,7 @@ describe('run message repository', () => {
     updateRunMessage(db, {
       messageId: 'msg_assistant',
       content: 'Done.',
+      thinkingContent: 'Thought it through.',
       events: [{ type: 'text_delta', text: 'Done.' }],
       runStatus: 'succeeded',
       lastRunEventId: 'evt_1',
@@ -671,6 +686,7 @@ describe('run message repository', () => {
 
     expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.messages[1]).toMatchObject({
       content: 'Done.',
+      thinkingContent: 'Thought it through.',
       events: [{ type: 'text_delta', text: 'Done.' }],
       runStatus: 'succeeded',
       lastRunEventId: 'evt_1',

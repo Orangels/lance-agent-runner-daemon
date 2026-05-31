@@ -153,6 +153,7 @@ function toPublicRunMessage(
     id: message.id,
     role: message.role,
     content: message.content,
+    thinkingContent: visibility === 'quiet' ? '' : message.thinkingContent,
     events: filterMessageEvents(message.events, visibility),
     runStatus: message.runStatus,
     lastRunEventId: message.lastRunEventId,

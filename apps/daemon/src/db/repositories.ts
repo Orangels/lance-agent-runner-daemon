@@ -55,6 +55,7 @@ export interface RunMessageRecord {
   runId: string;
   role: string;
   content: string;
+  thinkingContent: string;
   events: unknown;
   attachments: unknown;
   producedFiles: unknown;
@@ -167,6 +168,7 @@ interface RunMessageRow {
   run_id: string;
   role: string;
   content: string;
+  thinking_content: string;
   events_json: string | null;
   attachments_json: string | null;
   produced_files_json: string | null;
@@ -450,10 +452,10 @@ export function insertRunMessagesForRunCreate(
   const insert = db.prepare(
     `
     INSERT INTO run_messages (
-      id, workspace_id, conversation_id, run_id, role, content, run_status,
-      position, created_at, updated_at
+      id, workspace_id, conversation_id, run_id, role, content, thinking_content,
+      run_status, position, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
   );
 
@@ -464,6 +466,7 @@ export function insertRunMessagesForRunCreate(
     input.runId,
     'user',
     input.prompt,
+    '',
     null,
     0,
     input.now,
@@ -475,6 +478,7 @@ export function insertRunMessagesForRunCreate(
     input.conversationId,
     input.runId,
     'assistant',
+    '',
     '',
     'queued',
     1,
@@ -632,6 +636,7 @@ export function updateRunMessage(
   input: {
     messageId: string;
     content?: string;
+    thinkingContent?: string;
     events?: unknown;
     attachments?: unknown;
     producedFiles?: unknown;
@@ -647,6 +652,7 @@ export function updateRunMessage(
     `
     UPDATE run_messages
     SET content = ?,
+        thinking_content = ?,
         events_json = ?,
         attachments_json = ?,
         produced_files_json = ?,
@@ -659,6 +665,7 @@ export function updateRunMessage(
     `,
   ).run(
     input.content ?? existing.content,
+    input.thinkingContent ?? existing.thinkingContent,
     input.events === undefined ? stringifyNullable(existing.events) : stringifyNullable(input.events),
     input.attachments === undefined
       ? stringifyNullable(existing.attachments)
@@ -1130,6 +1137,7 @@ function mapRunMessage(row: RunMessageRow): RunMessageRecord {
     runId: row.run_id,
     role: row.role,
     content: row.content,
+    thinkingContent: row.thinking_content,
     events: parseNullable(row.events_json),
     attachments: parseNullable(row.attachments_json),
     producedFiles: parseNullable(row.produced_files_json),

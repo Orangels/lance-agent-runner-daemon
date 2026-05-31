@@ -835,7 +835,7 @@ CREATE INDEX idx_runs_status_created
 
 #### run_messages
 
-这是最需要复用 lanceDesign 语义的表。lanceDesign 的 `messages` 保存的是前端翻译/合并后的聊天消息和 agent events，不是每个原始 SSE chunk。新 daemon 也保存翻译/合并后的 `content + events_json`，区别是保存动作由 daemon 后端 accumulator 触发，而不是依赖前端消费 SSE。
+这是最需要复用 lanceDesign 语义的表。lanceDesign 的 `messages` 保存的是前端翻译/合并后的聊天消息和 agent events，不是每个原始 SSE chunk。新 daemon 保存翻译/合并后的 `content + thinking_content + events_json`，区别是保存动作由 daemon 后端 accumulator 触发，而不是依赖前端消费 SSE。
 
 复用 lanceDesign `messages` 字段语义：
 
@@ -843,6 +843,7 @@ CREATE INDEX idx_runs_status_created
 id
 role
 content
+thinking_content
 events_json
 attachments_json
 produced_files_json
@@ -873,6 +874,7 @@ CREATE TABLE run_messages (
   run_id TEXT NOT NULL,
   role TEXT NOT NULL,
   content TEXT NOT NULL,
+  thinking_content TEXT NOT NULL DEFAULT '',
   events_json TEXT,
   attachments_json TEXT,
   produced_files_json TEXT,
@@ -899,8 +901,8 @@ CREATE INDEX idx_run_messages_conversation
 
 - run 创建时初始化 user message 和 assistant draft。
 - Claude parser 事件进入 per-run accumulator。
-- accumulator 合并 `text_delta`、`thinking_delta`、`tool_use`、`tool_result` 等可展示事件。
-- 后端按节流策略保存 `content` 和 `events_json`。
+- accumulator 合并 `text_delta`、`thinking_delta`、`tool_use`、`tool_result` 等结构化事件；对外 SSE/run detail 过滤 `tool_result` 内容，完整排查走 debug log。
+- 后端按节流策略保存 `content`、`thinking_content` 和 `events_json`。
 - run 完成、失败或取消时强制 flush。
 - 每个 run 独立维护 accumulator、timer、message id，避免不同 run 之间数据污染。
 

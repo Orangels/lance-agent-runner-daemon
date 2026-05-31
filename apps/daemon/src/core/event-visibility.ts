@@ -38,7 +38,7 @@ const eventVisibilityByType: Record<RunEvent['type'], EventVisibility> = {
   thinking_start: 'normal',
   thinking_delta: 'normal',
   tool_use: 'normal',
-  tool_result: 'normal',
+  tool_result: 'debug',
   stderr: 'debug',
   raw: 'debug',
 };
@@ -65,6 +65,10 @@ export function filterRunEvents(
 }
 
 export function filterRunEvent(event: RunEvent, visibility: EventVisibility): RunEvent | null {
+  if (event.type === 'tool_result') {
+    return null;
+  }
+
   if (visibilityRank[eventVisibilityByType[event.type]] > visibilityRank[visibility]) {
     return null;
   }

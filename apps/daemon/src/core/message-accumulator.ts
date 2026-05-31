@@ -58,6 +58,7 @@ class MessageAccumulator {
   private readonly clock: MessageAccumulatorClock;
   private readonly timer: MessageAccumulatorTimer;
   private content = '';
+  private thinkingContent = '';
   private events: RunEvent[] = [];
   private lastRunEventId: string | null = null;
   private usage: UsageSnapshot | null = null;
@@ -87,6 +88,13 @@ class MessageAccumulator {
 
     if (event.type === 'text_delta') {
       this.content += event.delta;
+      this.events.push(event);
+      this.markDirty();
+      return;
+    }
+
+    if (event.type === 'thinking_delta') {
+      this.thinkingContent += event.delta;
       this.events.push(event);
       this.markDirty();
       return;
@@ -158,6 +166,7 @@ class MessageAccumulator {
     updateRunMessage(this.db, {
       messageId: this.messageId,
       content: this.content,
+      thinkingContent: this.thinkingContent,
       events: [...this.events],
       lastRunEventId: this.lastRunEventId,
       now: this.clock.now(),

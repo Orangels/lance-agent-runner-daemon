@@ -280,6 +280,7 @@ GET /api/runs/:runId
 - `run.errorMessage`
 - `run.usage`
 - `messages[].content`
+- `messages[].thinkingContent`
 - `messages[].events`
 
 ### 7. 获取 artifact 并下载

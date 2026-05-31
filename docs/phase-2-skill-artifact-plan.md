@@ -671,7 +671,7 @@ Expected: HTTP artifact route tests pass.
   - `allowedSkillIds` can be empty for revise-only profiles;
   - `skillRoots` are config-only and absent from public profile responses.
 - [ ] Add contract tests that `SKILL_UNAVAILABLE`, `SKILL_STAGING_FAILED`, and `ARTIFACT_SCAN_FAILED` are accepted daemon error codes.
-- [ ] Do not change existing Phase 1 visibility behavior except adding `artifact_finalized = quiet`. Phase 1 intentionally exposes `tool_result` at `normal` visibility even though an older design paragraph said otherwise; keep that compatibility unless a separate review decides to change the event contract.
+- [ ] Historical note: Phase 1 originally exposed `tool_result` at `normal` visibility. A later review changed the public event contract so `tool_result` remains in internal persistence/logs but is filtered from SSE/run detail responses.
 - [ ] Run:
 
 ```bash

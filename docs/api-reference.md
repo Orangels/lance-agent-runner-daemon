@@ -507,6 +507,7 @@ Authorization: Bearer <api-key>
       "id": "msg_user",
       "role": "user",
       "content": "请基于 input/source.docx 生成报告，输出到 output/report.docx。",
+      "thinkingContent": "",
       "events": null,
       "runStatus": null,
       "lastRunEventId": null,
@@ -520,6 +521,7 @@ Authorization: Bearer <api-key>
       "id": "msg_assistant",
       "role": "assistant",
       "content": "已生成报告。",
+      "thinkingContent": "用户需要生成报告，我需要读取模板和数据后产出 docx。",
       "events": [
         {
           "type": "text_delta",
@@ -561,6 +563,7 @@ Authorization: Bearer <api-key>
 
 - `messages[].events` 会按 event visibility 过滤。
 - `content` 是 assistant 聚合文本，不保证包含所有 tool/debug 信息。
+- `thinkingContent` 是 assistant 聚合 thinking 文本；没有 thinking 时为空字符串。`quiet` visibility 下返回空字符串，避免绕过 events visibility。
 - terminal 后长期查看应以该接口为准，不以 SSE 为准。
 
 ### Common Errors
@@ -639,7 +642,6 @@ Keepalive comment:
 { type: 'thinking_start' }
 { type: 'thinking_delta'; delta: string }
 { type: 'tool_use'; id: unknown; name: unknown; input: unknown }
-{ type: 'tool_result'; toolUseId: unknown; content: string; isError: boolean }
 ```
 
 `debug` 额外可见：
@@ -655,6 +657,7 @@ Keepalive comment:
 - 请求 `eventVisibility` 只能降低可见性，不能超过 profile。
 - client 没有 `canReadDebugEvents=true` 时，即使请求 debug 也最多得到 normal。
 - `stderr/raw` 会截断并脱敏。
+- `tool_result` 会保存在内部 `events_json` 和 debug log 中，但不会通过 SSE 或 run detail 的 `messages[].events` 返回。
 
 ### Common Errors
 

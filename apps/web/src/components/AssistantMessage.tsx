@@ -8,6 +8,8 @@ interface AssistantMessageProps {
 }
 
 export function AssistantMessage({ message, onDownloadArtifact }: AssistantMessageProps) {
+  const { thinkingText, visibleEvents } = organizeAssistantEvents(message.events ?? []);
+
   return (
     <article className="msg assistant">
       <div className="msg-meta">
@@ -15,8 +17,9 @@ export function AssistantMessage({ message, onDownloadArtifact }: AssistantMessa
         {message.runStatus ? <StatusPill status={message.runStatus} /> : null}
       </div>
       <div className="assistant-flow">
+        {thinkingText ? <ThinkingBlock text={thinkingText} /> : null}
         {message.content ? <p className="assistant-text">{message.content}</p> : <WaitingBlock status={message.runStatus} />}
-        {(message.events ?? []).map((event, index) => (
+        {visibleEvents.map((event, index) => (
           <EventBlock event={event} key={`${event.id ?? index}-${event.type}`} />
         ))}
         {message.error ? (
@@ -31,6 +34,29 @@ export function AssistantMessage({ message, onDownloadArtifact }: AssistantMessa
   );
 }
 
+function organizeAssistantEvents(events: DemoRunEvent[]): {
+  thinkingText: string;
+  visibleEvents: DemoRunEvent[];
+} {
+  let thinkingText = '';
+  const visibleEvents: DemoRunEvent[] = [];
+
+  for (const event of events) {
+    if (event.type === 'thinking_delta' && typeof event.delta === 'string') {
+      thinkingText += event.delta;
+      continue;
+    }
+
+    if (event.type === 'thinking_start') {
+      continue;
+    }
+
+    visibleEvents.push(event);
+  }
+
+  return { thinkingText, visibleEvents };
+}
+
 function WaitingBlock({ status }: { status: DemoChatMessage['runStatus'] }) {
   if (!status || status === 'succeeded' || status === 'failed' || status === 'canceled' || status === 'interrupted') {
     return null;
@@ -38,18 +64,18 @@ function WaitingBlock({ status }: { status: DemoChatMessage['runStatus'] }) {
   return <div className="waiting-pill">Waiting for Claude Code...</div>;
 }
 
+function ThinkingBlock({ text }: { text: string }) {
+  return (
+    <details className="thinking-block" open>
+      <summary>Thinking</summary>
+      <p>{text}</p>
+    </details>
+  );
+}
+
 function EventBlock({ event }: { event: DemoRunEvent }) {
   if (event.type === 'status' && typeof event.label === 'string') {
     return <StatusPill label={event.label} />;
-  }
-
-  if (event.type === 'thinking_delta' && typeof event.delta === 'string') {
-    return (
-      <details className="thinking-block">
-        <summary>Thinking</summary>
-        <p>{event.delta}</p>
-      </details>
-    );
   }
 
   if (event.type === 'tool_use') {

@@ -98,6 +98,7 @@ describe('message accumulator', () => {
     expect(updateRunMessage).toHaveBeenCalledWith(db, {
       messageId: 'assistant-1',
       content: 'hello world',
+      thinkingContent: '',
       events: [
         { type: 'text_delta', delta: 'hello ' },
         { type: 'text_delta', delta: 'world' },
@@ -126,6 +127,7 @@ describe('message accumulator', () => {
     expect(updateRunMessage).toHaveBeenCalledWith(db, {
       messageId: 'message-1',
       content: '',
+      thinkingContent: 'considering',
       events,
       lastRunEventId: '8',
       now: runtime.clock.now(),
@@ -149,6 +151,7 @@ describe('message accumulator', () => {
     expect(updateRunMessage).toHaveBeenCalledWith(db, {
       messageId: 'message-1',
       content: '',
+      thinkingContent: '',
       events: [{ type: 'status', label: 'still alive' }],
       lastRunEventId: '3',
       now: runtime.clock.now(),
@@ -189,6 +192,7 @@ describe('message accumulator', () => {
     expect(updateRunMessage).toHaveBeenCalledWith(db, {
       messageId: 'assistant-1',
       content: 'done',
+      thinkingContent: '',
       events: [{ type: 'text_delta', delta: 'done' }],
       lastRunEventId: '9',
       now: runtime.clock.now(),
@@ -216,6 +220,7 @@ describe('message accumulator', () => {
     expect(updateRunMessage).toHaveBeenCalledWith(first.db, {
       messageId: 'assistant-1',
       content: 'first',
+      thinkingContent: '',
       events: [{ type: 'text_delta', delta: 'first' }],
       lastRunEventId: '1',
       now: first.runtime.clock.now(),
@@ -228,6 +233,7 @@ describe('message accumulator', () => {
     expect(updateRunMessage).toHaveBeenLastCalledWith(second.db, {
       messageId: 'assistant-2',
       content: '',
+      thinkingContent: '',
       events: [{ type: 'status', label: 'second' }],
       lastRunEventId: '7',
       now: second.runtime.clock.now(),

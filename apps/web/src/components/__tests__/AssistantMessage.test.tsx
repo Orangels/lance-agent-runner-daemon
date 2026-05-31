@@ -43,4 +43,35 @@ describe('AssistantMessage', () => {
     expect(screen.getByText('Claude failed')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Download report\.docx/i })).toBeInTheDocument();
   });
+
+  it('renders streamed thinking as one block before assistant text', () => {
+    const message: DemoChatMessage = {
+      id: 'm1',
+      role: 'assistant',
+      content: 'Final answer.',
+      createdAt: 1,
+      runId: 'run_1',
+      runStatus: 'running',
+      events: [
+        { type: 'thinking_start' },
+        { type: 'thinking_delta', delta: 'First ' },
+        { type: 'thinking_delta', delta: 'second.' },
+        { type: 'text_delta', delta: 'Final answer.' },
+      ],
+      artifacts: [],
+    };
+
+    render(<AssistantMessage message={message} onDownloadArtifact={() => undefined} />);
+
+    expect(screen.getAllByText('Thinking')).toHaveLength(1);
+    const thinkingText = screen.getByText('First second.');
+    const assistantText = screen.getByText('Final answer.');
+
+    expect(thinkingText.closest('.thinking-block')).not.toBeNull();
+    expect(
+      thinkingText
+        .closest('.thinking-block')
+        ?.compareDocumentPosition(assistantText) ?? 0,
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
 });
