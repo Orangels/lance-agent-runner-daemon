@@ -21,7 +21,7 @@
     "test": "pnpm test:daemon && pnpm test:web",
     "test:daemon": "pnpm --filter @lance-agent-runner/daemon test",
     "test:web": "pnpm --filter @lance-agent-runner/web test",
-    "typecheck": "pnpm typecheck:daemon",
+    "typecheck": "pnpm typecheck:daemon && pnpm typecheck:web",
     "typecheck:daemon": "pnpm --filter @lance-agent-runner/daemon typecheck",
     "typecheck:web": "pnpm --filter @lance-agent-runner/web typecheck",
     "start:daemon": "pnpm --filter @lance-agent-runner/daemon start",

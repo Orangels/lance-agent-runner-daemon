@@ -4,6 +4,8 @@
 
 当前 daemon 是第一版落地测试候选版本。它提供通用 Claude Code CLI run 能力，不包含 lanceDesign 或 lqBot 的产品逻辑。业务端需要自己维护业务会话、用户权限、文件来源、业务数据库记录和前端展示状态。
 
+本仓库同时提供本地浏览器测试台 `apps/web`，用于演示本文中的 generate、generate-without-SSE 和 revise 三条业务调用路径。启动和操作说明见 `docs/web-test-console-usage.md`。测试台只保存浏览器内存状态，不能替代业务端数据库。
+
 ## 核心模型
 
 业务端不要把 daemon 当成聊天数据库。daemon 负责：

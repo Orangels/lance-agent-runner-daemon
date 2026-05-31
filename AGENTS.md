@@ -15,6 +15,7 @@ Read these first:
 - `docs/business-run-chat-integration-guide.md` — business-side generate/revise integration flow.
 - `docs/api-reference.md` — current HTTP/SSE API request and response reference.
 - `docs/configuration-reference.md` — daemon config keys, relative path behavior, and deployment notes.
+- `docs/web-test-console-usage.md` — local browser demo usage for generate/revise integration testing.
 
 ## Reference Repository
 
@@ -42,7 +43,7 @@ apps/
       http/
       index.ts
     skills/
-  web/                  # reserved for the local test console
+  web/                  # local browser test console
 docs/
 REFERENCE.md
 AGENTS.md
@@ -52,7 +53,7 @@ pnpm-workspace.yaml
 tsconfig.base.json
 ```
 
-Keep daemon source code under `apps/daemon/src/`. Keep daemon-managed business skills under `apps/daemon/skills/`. Keep design and migration notes under `docs/`.
+Keep daemon source code under `apps/daemon/src/`. Keep daemon-managed business skills under `apps/daemon/skills/`. Keep the local browser demo under `apps/web/src/`. Keep design and migration notes under `docs/`.
 
 ## Implementation Boundary
 
@@ -146,6 +147,15 @@ pnpm test:daemon
 pnpm dev:daemon
 pnpm start:daemon
 pnpm start:daemon:local
+```
+
+Web test console commands:
+
+```bash
+pnpm dev:web
+pnpm build:web
+pnpm test:web
+pnpm typecheck:web
 ```
 
 The root package is a pnpm workspace orchestrator. The daemon remains standalone from a product/API perspective; it is not a lanceDesign package.
