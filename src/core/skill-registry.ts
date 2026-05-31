@@ -31,7 +31,7 @@ const productMetadataKeys = new Set([
   'critique',
 ]);
 
-const sideFileDirectoryNames = new Set(['assets', 'references', 'scripts']);
+const sideFileDirectoryNames = new Set(['assets', 'guides', 'references', 'scripts']);
 const sideFileExtensions = new Set([
   '.css',
   '.csv',

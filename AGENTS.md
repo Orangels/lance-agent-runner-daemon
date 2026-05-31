@@ -12,6 +12,8 @@ Read these first:
 - `docs/claude-code-runner-daemon-design.md` — target daemon design.
 - `docs/claude-code-runner-daemon-migration-assessment.md` — migration feasibility and code reuse map.
 - `docs/claude-code-runner-daemon-version-roadmap.md` — current first-version landing-test scope and later-version backlog.
+- `docs/business-run-chat-integration-guide.md` — business-side generate/revise integration flow.
+- `docs/api-reference.md` — current HTTP/SSE API request and response reference.
 
 ## Reference Repository
 

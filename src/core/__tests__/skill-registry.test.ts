@@ -190,6 +190,8 @@ Body
     mkdirSync(path.join(withAssetsDir, 'assets'));
     const withReferenceDir = writeSkill(root, 'reference-skill', 'Reference body\n');
     mkdirSync(path.join(withReferenceDir, 'references'));
+    const withGuidesDir = writeSkill(root, 'guides-skill', 'Guides body\n');
+    mkdirSync(path.join(withGuidesDir, 'guides'));
     const withScriptDir = writeSkill(root, 'script-skill', 'Script body\n');
     mkdirSync(path.join(withScriptDir, 'scripts'));
     const withSibling = writeSkill(root, 'sibling-skill', 'Sibling body\n');
@@ -201,6 +203,7 @@ Body
       'plain-skill': false,
       'asset-skill': true,
       'reference-skill': true,
+      'guides-skill': true,
       'script-skill': true,
       'sibling-skill': true,
     });
