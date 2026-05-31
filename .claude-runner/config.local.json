@@ -23,8 +23,8 @@
   "profiles": [
     {
       "id": "report-docx",
-      "sandboxRoot": "workspaces/report-docx",
-      "claudeConfigDir": "profiles/report-docx/claude",
+      "sandboxRoot": "/data/sandboxes",
+      "claudeConfigDir": "/home/orangels/.claude",
       "claudeBin": "claude",
       "skillRoots": [
         "../apps/daemon/skills"
@@ -53,8 +53,8 @@
       "allowedModels": ["sonnet", "opus", "haiku"],
       "eventVisibility": "normal",
       "profileConcurrency": 1,
-      "runTimeoutMs": 600000,
-      "inactivityTimeoutMs": 120000,
+      "runTimeoutMs": 18000000,
+      "inactivityTimeoutMs": 18000000,
       "cancelGraceMs": 5000,
       "env": {
         "DISABLE_TELEMETRY": "1",

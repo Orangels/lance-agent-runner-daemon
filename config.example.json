@@ -2,8 +2,8 @@
   "server": {
     "host": "127.0.0.1",
     "port": 17890,
-    "dataDir": ".claude-runner/data",
-    "globalConcurrency": 2,
+    "dataDir": "data",
+    "globalConcurrency": 50,
     "maxQueueSize": 100,
     "logRetentionMs": 604800000,
     "maxLogBytesPerRun": 4194304,
@@ -15,7 +15,7 @@
       "id": "lqbot",
       "apiKey": "env:CLAUDE_RUNNER_LQBOT_API_KEY",
       "allowedProfileIds": ["report-docx"],
-      "canReadDebugEvents": false,
+      "canReadDebugEvents": true,
       "canReadLogs": true,
       "isAdmin": false
     }
@@ -23,11 +23,15 @@
   "profiles": [
     {
       "id": "report-docx",
-      "sandboxRoot": ".claude-runner/workspaces/report-docx",
-      "claudeConfigDir": ".claude-runner/profiles/report-docx/claude",
+      "sandboxRoot": "/data/sandboxes",
+      "claudeConfigDir": "/home/orangels/.claude",
       "claudeBin": "claude",
-      "skillRoots": ["apps/daemon/skills"],
-      "allowedInputRoots": [".claude-runner/uploads"],
+      "skillRoots": [
+        "../apps/daemon/skills"
+      ],
+      "allowedInputRoots": [
+        "uploads"
+      ],
       "allowedSkillIds": ["report-gen"],
       "artifactRules": [
         {
@@ -49,8 +53,8 @@
       "allowedModels": ["sonnet", "opus", "haiku"],
       "eventVisibility": "normal",
       "profileConcurrency": 1,
-      "runTimeoutMs": 600000,
-      "inactivityTimeoutMs": 120000,
+      "runTimeoutMs": 18000000,
+      "inactivityTimeoutMs": 18000000,
       "cancelGraceMs": 5000,
       "env": {
         "DISABLE_TELEMETRY": "1",
