@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type { ProfileConfig } from '../config/profiles.js';
 import type { ClaudeCapabilities } from './claude-capabilities.js';
 import { daemonError } from './errors.js';
@@ -44,7 +45,7 @@ export function buildClaudeInvocation(input: BuildClaudeInvocationInput): Claude
     env: {
       ...sanitizeBaseEnv(input.baseEnv ?? process.env),
       ...input.profile.env,
-      CLAUDE_CONFIG_DIR: input.profile.claudeConfigDir,
+      CLAUDE_CONFIG_DIR: path.resolve(input.profile.claudeConfigDir),
     },
     stdinPrompt: input.prompt,
   };

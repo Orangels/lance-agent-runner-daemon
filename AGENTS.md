@@ -14,6 +14,7 @@ Read these first:
 - `docs/claude-code-runner-daemon-version-roadmap.md` — current first-version landing-test scope and later-version backlog.
 - `docs/business-run-chat-integration-guide.md` — business-side generate/revise integration flow.
 - `docs/api-reference.md` — current HTTP/SSE API request and response reference.
+- `docs/configuration-reference.md` — daemon config keys, relative path behavior, and deployment notes.
 
 ## Reference Repository
 

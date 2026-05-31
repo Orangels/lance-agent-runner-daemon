@@ -6,7 +6,18 @@ dist/
 *.tsbuildinfo
 
 # Runtime data
-.claude-runner/
+.claude-runner/data/*
+!.claude-runner/data/.gitkeep
+.claude-runner/uploads/*
+!.claude-runner/uploads/.gitkeep
+.claude-runner/workspaces/*
+!.claude-runner/workspaces/.gitkeep
+!.claude-runner/workspaces/report-docx/
+!.claude-runner/workspaces/report-docx/.gitkeep
+.claude-runner/profiles/*/claude/*
+!.claude-runner/profiles/report-docx/
+!.claude-runner/profiles/report-docx/claude/
+!.claude-runner/profiles/report-docx/claude/.gitkeep
 sandboxes/
 logs/
 runs/
@@ -28,4 +39,3 @@ pnpm-debug.log*
 Thumbs.db
 .idea/
 .vscode/
-

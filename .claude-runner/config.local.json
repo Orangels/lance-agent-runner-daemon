@@ -1,0 +1,69 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 17890,
+    "dataDir": ".claude-runner/data",
+    "globalConcurrency": 2,
+    "maxQueueSize": 100,
+    "logRetentionMs": 604800000,
+    "maxLogBytesPerRun": 4194304,
+    "maxUploadBytesPerFile": 52428800,
+    "uploadTempRetentionMs": 86400000
+  },
+  "clients": [
+    {
+      "id": "lqbot",
+      "apiKey": "env:CLAUDE_RUNNER_LQBOT_API_KEY",
+      "allowedProfileIds": ["report-docx"],
+      "canReadDebugEvents": true,
+      "canReadLogs": true,
+      "isAdmin": false
+    }
+  ],
+  "profiles": [
+    {
+      "id": "report-docx",
+      "sandboxRoot": ".claude-runner/workspaces/report-docx",
+      "claudeConfigDir": ".claude-runner/profiles/report-docx/claude",
+      "claudeBin": "claude",
+      "skillRoots": [
+        "skills"
+      ],
+      "allowedInputRoots": [
+        ".claude-runner/uploads"
+      ],
+      "allowedSkillIds": ["report-gen"],
+      "artifactRules": [
+        {
+          "id": "report-docx",
+          "pattern": "output/**/*.docx",
+          "role": "primary",
+          "required": false
+        },
+        {
+          "id": "report-any",
+          "pattern": "output/**/*",
+          "role": "supporting",
+          "required": false
+        }
+      ],
+      "defaultArtifactRuleIds": ["report-docx", "report-any"],
+      "permissionMode": "bypassPermissions",
+      "defaultModel": "sonnet",
+      "allowedModels": ["sonnet", "opus", "haiku"],
+      "eventVisibility": "normal",
+      "profileConcurrency": 1,
+      "runTimeoutMs": 600000,
+      "inactivityTimeoutMs": 120000,
+      "cancelGraceMs": 5000,
+      "env": {
+        "DISABLE_TELEMETRY": "1",
+        "DO_NOT_TRACK": "1",
+        "DISABLE_AUTOUPDATER": "1",
+        "DISABLE_ERROR_REPORTING": "1",
+        "DISABLE_BUG_COMMAND": "1",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
+      }
+    }
+  ]
+}

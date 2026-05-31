@@ -1,0 +1,413 @@
+# Configuration Reference
+
+This daemon reads a single JSON config file. Use `config.example.json` as the copyable template.
+
+Start with an explicit config path:
+
+```bash
+pnpm dev -- --config .claude-runner/config.local.json
+```
+
+or:
+
+```bash
+CLAUDE_RUNNER_CONFIG=.claude-runner/config.local.json pnpm start
+```
+
+Relative paths are resolved from the daemon process working directory, not from the config file location. For portable deployment, start the process with `WorkingDirectory` set to the repository root. `claudeConfigDir` is also resolved to an absolute path before being passed to the Claude Code child process as `CLAUDE_CONFIG_DIR`.
+
+## Example Setup
+
+```bash
+cp config.example.json .claude-runner/config.local.json
+export CLAUDE_RUNNER_LQBOT_API_KEY="replace-with-a-secret"
+pnpm dev -- --config .claude-runner/config.local.json
+```
+
+The repository tracks `.claude-runner/config.local.json` and empty directory placeholders so a fresh checkout has the expected local runtime layout. Runtime contents under `.claude-runner/data`, `.claude-runner/uploads`, `.claude-runner/workspaces`, and Claude login/config files under `.claude-runner/profiles/*/claude` remain ignored except for `.gitkeep` placeholders.
+
+## Top-Level Keys
+
+### `server`
+
+Runtime settings for the daemon process.
+
+### `clients`
+
+Trusted business callers. Each client has one API key and a list of profiles it may use.
+
+### `profiles`
+
+Claude Code execution profiles. A profile controls workspace roots, Claude Code config, allowed daemon skills, artifact rules, models, visibility, concurrency, timeouts, and allowed environment variables.
+
+## `server` Keys
+
+### `server.host`
+
+HTTP listen host.
+
+Use `127.0.0.1` when another service on the same machine proxies calls to the daemon. Use `0.0.0.0` only when the deployment network boundary is controlled.
+
+### `server.port`
+
+HTTP listen port.
+
+Example:
+
+```json
+"port": 17890
+```
+
+### `server.dataDir`
+
+Daemon runtime data directory. The daemon stores SQLite, run logs, and upload temp files under this directory.
+
+With the example value:
+
+```json
+"dataDir": ".claude-runner/data"
+```
+
+the SQLite file is:
+
+```text
+.claude-runner/data/runner.sqlite
+```
+
+### `server.globalConcurrency`
+
+Maximum number of Claude Code child processes that may run across all profiles.
+
+Queued runs wait until capacity is available.
+
+### `server.maxQueueSize`
+
+Maximum number of queued runs. If the queue is full, `POST /api/runs` returns `429 RUN_QUEUE_FULL` before inserting a run row.
+
+### `server.logRetentionMs`
+
+How long finished run log indexes are retained, in milliseconds.
+
+Example:
+
+```text
+604800000 = 7 days
+```
+
+### `server.maxLogBytesPerRun`
+
+Maximum bytes written to each per-run log file. The daemon writes bounded stdout, stderr, and debug event logs.
+
+### `server.maxUploadBytesPerFile`
+
+Maximum size for `POST /api/workspaces/:workspaceId/files`.
+
+Example:
+
+```text
+52428800 = 50 MiB
+```
+
+### `server.uploadTempRetentionMs`
+
+How long stale upload temp directories may remain before startup pruning removes them.
+
+## `clients[]` Keys
+
+### `clients[].id`
+
+Stable business caller id.
+
+This value is stored on workspaces and runs for client isolation.
+
+### `clients[].apiKey`
+
+API key used by the client.
+
+Use `env:VARIABLE_NAME` to resolve the secret from the daemon process environment:
+
+```json
+"apiKey": "env:CLAUDE_RUNNER_LQBOT_API_KEY"
+```
+
+The client sends it as:
+
+```text
+Authorization: Bearer <api-key>
+```
+
+or:
+
+```text
+X-API-Key: <api-key>
+```
+
+### `clients[].allowedProfileIds`
+
+Profiles this client may use.
+
+Non-admin clients can only list, create workspaces for, and create runs for these profiles.
+
+### `clients[].canReadDebugEvents`
+
+Allows this client to receive `debug` event visibility when the profile and run request also allow it.
+
+If false, requested `debug` visibility is capped to `normal`.
+
+### `clients[].canReadLogs`
+
+Allows this client to call:
+
+```text
+GET /api/runs/:runId/logs
+```
+
+### `clients[].isAdmin`
+
+Allows cross-client workspace/run reads in repository lookups.
+
+Keep this false for normal business callers.
+
+## `profiles[]` Keys
+
+### `profiles[].id`
+
+Profile id used by:
+
+```text
+POST /api/workspaces
+POST /api/runs
+```
+
+Example:
+
+```json
+"id": "report-docx"
+```
+
+### `profiles[].sandboxRoot`
+
+Root directory for workspaces created under this profile.
+
+With:
+
+```json
+"sandboxRoot": ".claude-runner/workspaces/report-docx"
+```
+
+a workspace may be created as:
+
+```text
+.claude-runner/workspaces/report-docx/<originId>/<userId>/<projectId>/
+  input/
+  output/
+  work/
+  .claude-runner-skills/
+```
+
+The Claude Code child process runs with this workspace as its `cwd`.
+
+### `profiles[].claudeConfigDir`
+
+Directory injected into Claude Code as:
+
+```text
+CLAUDE_CONFIG_DIR=<profiles[].claudeConfigDir>
+```
+
+Use a relative project-local directory for portable deployments:
+
+```json
+"claudeConfigDir": ".claude-runner/profiles/report-docx/claude"
+```
+
+The daemon resolves this to an absolute path before spawning Claude Code, so the child process does not interpret it relative to the workspace `cwd`.
+
+If you want to reuse a machine user's default Claude Code config, either set this field in that machine's local config to an absolute path such as `/home/orangels/.claude`, or make the project-local directory a symlink to the user's Claude config directory.
+
+Do not use `~/.claude`; the daemon does not expand `~`.
+
+### `profiles[].claudeBin`
+
+Claude Code CLI binary.
+
+Use:
+
+```json
+"claudeBin": "claude"
+```
+
+to resolve from `PATH`, or use an absolute path to pin a binary.
+
+### `profiles[].skillRoots`
+
+Directories containing daemon-managed business skills.
+
+The daemon scans one directory level below each root:
+
+```text
+skills/
+  report-gen/
+    SKILL.md
+    guides/
+```
+
+Skill id resolution is:
+
+```text
+frontmatter.id -> frontmatter.name -> folder name
+```
+
+### `profiles[].allowedInputRoots`
+
+Source-file whitelist for:
+
+```text
+POST /api/workspaces/:workspaceId/prepare
+```
+
+`prepare` copies from `sourcePath` under one of these roots into the workspace.
+
+This does not affect the upload API. `POST /api/workspaces/:workspaceId/files` writes to daemon temp storage first, then copies into the workspace.
+
+### `profiles[].allowedSkillIds`
+
+Business skill ids allowed for `kind=generate`.
+
+Example:
+
+```json
+"allowedSkillIds": ["report-gen"]
+```
+
+Generate requests must use one of these ids:
+
+```json
+{
+  "kind": "generate",
+  "skillId": "report-gen"
+}
+```
+
+`kind=revise` forbids `skillId`.
+
+### `profiles[].artifactRules`
+
+Rules used to discover artifacts after a run finishes.
+
+Each rule has:
+
+- `id`: artifact rule id used by `artifactRuleIds`.
+- `pattern`: glob pattern relative to workspace root.
+- `role`: business role such as `primary` or `supporting`.
+- `required`: if true, a successful Claude exit is rewritten to failed when no artifact matches this rule.
+
+### `profiles[].defaultArtifactRuleIds`
+
+Artifact rules used when `POST /api/runs` does not provide `artifactRuleIds`.
+
+### `profiles[].permissionMode`
+
+Claude Code permission mode passed as:
+
+```text
+--permission-mode <value>
+```
+
+Allowed values:
+
+```text
+default
+acceptEdits
+bypassPermissions
+```
+
+This daemon is directory-isolation only. If you use `bypassPermissions`, the Claude Code child process has the daemon process user's file and network permissions.
+
+### `profiles[].defaultModel`
+
+Model used when `POST /api/runs` does not provide `model`.
+
+The default model must also be included in `allowedModels`.
+
+### `profiles[].allowedModels`
+
+Models accepted from `POST /api/runs.model`.
+
+If a request provides a model outside this list, the daemon returns `400 MODEL_NOT_ALLOWED`.
+
+### `profiles[].eventVisibility`
+
+Default and maximum event visibility for this profile.
+
+Allowed values:
+
+```text
+quiet
+normal
+debug
+```
+
+Run requests may lower visibility, but cannot raise it above the profile/client ceiling.
+
+### `profiles[].profileConcurrency`
+
+Maximum number of running Claude Code child processes for this profile.
+
+### `profiles[].runTimeoutMs`
+
+Total running timeout in milliseconds.
+
+This starts when the run transitions to `running`, not while it waits in `queued`.
+
+### `profiles[].inactivityTimeoutMs`
+
+Timeout in milliseconds when Claude Code produces no stdout, stderr, or parsed stream events.
+
+### `profiles[].cancelGraceMs`
+
+Milliseconds to wait after cancel/SIGTERM before SIGKILL fallback.
+
+### `profiles[].env`
+
+Allowlisted environment variables overlaid onto the Claude Code child process environment.
+
+Allowed keys:
+
+```text
+ANTHROPIC_BASE_URL
+ANTHROPIC_API_KEY
+DISABLE_TELEMETRY
+DO_NOT_TRACK
+DISABLE_AUTOUPDATER
+DISABLE_ERROR_REPORTING
+DISABLE_BUG_COMMAND
+CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
+```
+
+Unlike `clients[].apiKey`, `profiles[].env` values are literal strings in the current implementation. `env:VARIABLE_NAME` expansion is not supported for profile env values yet.
+
+For portable deployments, prefer putting non-secret behavior flags here and manage Claude credentials through `claudeConfigDir` or the daemon process environment.
+
+## Relative Path Guidance
+
+The example config uses relative paths for project-owned directories:
+
+```json
+"dataDir": ".claude-runner/data",
+"sandboxRoot": ".claude-runner/workspaces/report-docx",
+"claudeConfigDir": ".claude-runner/profiles/report-docx/claude",
+"skillRoots": ["skills"],
+"allowedInputRoots": [".claude-runner/uploads"]
+```
+
+These paths are relative to the daemon process working directory.
+
+For systemd:
+
+```ini
+WorkingDirectory=/path/to/lance-agent-runner-daemon
+Environment=CLAUDE_RUNNER_CONFIG=.claude-runner/config.local.json
+```
+
+For Docker or process managers, set the equivalent working directory to the repository root.

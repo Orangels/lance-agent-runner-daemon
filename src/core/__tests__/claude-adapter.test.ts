@@ -183,6 +183,21 @@ describe('buildClaudeInvocation', () => {
     });
   });
 
+  it('resolves relative CLAUDE_CONFIG_DIR before passing it to the child process', () => {
+    const invocation = buildClaudeInvocation({
+      profile: makeProfile({
+        claudeConfigDir: '.claude-runner/profiles/report-docx/claude',
+      }),
+      prompt: 'hello',
+      workspaceCwd: '/tmp/workspace-cwd',
+      baseEnv: {},
+    });
+
+    expect(invocation.env.CLAUDE_CONFIG_DIR).toBe(
+      path.resolve('.claude-runner/profiles/report-docx/claude'),
+    );
+  });
+
   it('inherits base env while filtering lanceDesign product env', () => {
     const invocation = buildClaudeInvocation({
       profile: makeProfile({
