@@ -6,6 +6,7 @@ import type { WorkspaceService } from '../core/workspace-service.js';
 import type { RunService } from '../core/run-service.js';
 import type { RunLogService } from '../core/run-log-service.js';
 import type { ArtifactService } from '../core/artifact-service.js';
+import type { UploadTempService } from '../core/upload-temp-service.js';
 import type { RunnerDatabase } from '../db/connection.js';
 import { zodErrorToDaemonError } from './validation.js';
 import { createArtifactsRouter } from './artifacts-routes.js';
@@ -13,6 +14,7 @@ import { createHealthRouter } from './health-routes.js';
 import { createProfilesRouter } from './profiles-routes.js';
 import { createLogsRouter } from './logs-routes.js';
 import { createRunsRouter } from './runs-routes.js';
+import { createWorkspaceFilesRouter } from './workspace-files-routes.js';
 import { createWorkspacesRouter } from './workspaces-routes.js';
 
 interface CreateAppDependencies {
@@ -22,6 +24,7 @@ interface CreateAppDependencies {
   runService?: RunService;
   runLogService?: RunLogService;
   artifactService?: ArtifactService;
+  uploadTempService?: UploadTempService;
 }
 
 export function createApp(dependencies: CreateAppDependencies): express.Express {
@@ -50,6 +53,17 @@ export function createApp(dependencies: CreateAppDependencies): express.Express 
   }
   if (dependencies.runService) {
     app.use('/api/runs', createRunsRouter({ config: dependencies.config, runService: dependencies.runService }));
+  }
+  if (dependencies.uploadTempService) {
+    app.use(
+      '/api/workspaces',
+      createWorkspaceFilesRouter({
+        config: dependencies.config,
+        db: dependencies.db,
+        workspaceService: dependencies.workspaceService,
+        uploadTempService: dependencies.uploadTempService,
+      }),
+    );
   }
   app.use(
     '/api/workspaces',
