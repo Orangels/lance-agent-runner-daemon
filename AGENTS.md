@@ -11,6 +11,7 @@ Read these first:
 - `REFERENCE.md` — reference map back to lanceDesign and migration boundaries.
 - `docs/claude-code-runner-daemon-design.md` — target daemon design.
 - `docs/claude-code-runner-daemon-migration-assessment.md` — migration feasibility and code reuse map.
+- `docs/claude-code-runner-daemon-version-roadmap.md` — current first-version landing-test scope and later-version backlog.
 
 ## Reference Repository
 

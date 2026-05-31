@@ -23,6 +23,27 @@
 - SSE `/events` only promises live delivery and short reconnect replay from memory. Long-term run detail reads `run_messages.events_json`.
 - Never expose sandbox absolute paths through API responses.
 
+## Current Milestone Status
+
+The original first-version implementation path is complete:
+
+- Phase 0a: API contract freeze.
+- Phase 0: profile, auth, workspace, and SQLite foundation.
+- Phase 1: minimal Claude Code run with daemon-side message persistence.
+- Phase 2: skill staging and artifact scan/download.
+- Phase 3: queue, timeout, logs, and hardening.
+
+Phase 4 has also landed as a narrow input-ingestion extension:
+
+- `POST /api/workspaces/:workspaceId/files` accepts exactly one trusted multipart upload.
+- The upload is copied into a safe workspace-relative target.
+- Upload temp files stay under daemon `server.dataDir/uploads/tmp`.
+- Remote URL pull and S3/object-storage pull remain later-version work.
+
+The current codebase should now be treated as the **first-version landing-test candidate**. Further capabilities should be planned as later versions, not folded into the first landing test.
+
+See `docs/claude-code-runner-daemon-version-roadmap.md` for the current landing-test scope and later-version backlog.
+
 ## Reference Files
 
 Use these lanceDesign files for behavior and edge-case study only:
@@ -627,7 +648,7 @@ pnpm build
 - Timeouts and cancel use structured error codes.
 - Logs support diagnosis without exposing absolute sandbox paths.
 
-## First Implementation Slice
+## Historical First Implementation Slice
 
 The first round of implementation should stop after Phase 1 unless a reviewer explicitly approves continuing. The minimal working product is:
 
@@ -643,12 +664,11 @@ The first round of implementation should stop after Phase 1 unless a reviewer ex
 
 This slice proves the hardest architecture decision: persistence is daemon-side and independent of SSE consumption.
 
-## Global Exclusions Until Later
+## Later-Version Exclusions After Phase 4
 
-Do not implement these during the first implementation slice:
+Phase 4 has intentionally added the narrow daemon upload API. The following capabilities are still later-version work and should not be implemented as part of the current first-version landing test:
 
 - artifact watcher;
-- upload API;
 - remote URL pull;
 - S3/object storage pull;
 - metrics exposure;

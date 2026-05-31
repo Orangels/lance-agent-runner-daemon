@@ -17,6 +17,8 @@ Local copies in this project:
 ```text
 docs/claude-code-runner-daemon-design.md
 docs/claude-code-runner-daemon-migration-assessment.md
+docs/claude-code-runner-daemon-implementation-plan.md
+docs/claude-code-runner-daemon-version-roadmap.md
 ```
 
 Original docs in lanceDesign:
@@ -124,6 +126,30 @@ ProjectView.tsx: message-level run event id and lastRunEventId handling around l
 ```
 
 The new daemon must move this into a daemon-side per-run accumulator. Persistence is triggered by the run lifecycle and Claude parser events, never by a frontend consuming SSE.
+
+## Current Version Status
+
+The original first-version phases are complete through queue/timeout/hardening:
+
+```text
+Phase 0a: API contract
+Phase 0: profile/auth/workspace/SQLite
+Phase 1: minimal Claude Code run + daemon-side message persistence
+Phase 2: skill + artifact
+Phase 3: queue + timeout + hardening
+```
+
+Phase 4 has also landed as a narrow input-ingestion extension:
+
+```text
+POST /api/workspaces/:workspaceId/files
+```
+
+The current repository should be treated as the first-version landing-test candidate. Later capabilities such as remote URL pull, S3/object-storage pull, metrics exposure, profile hot reload, artifact watcher previews, workspace retention, distributed queue, Claude Code native resume/fork, and OS-level isolation are tracked as later-version work in:
+
+```text
+docs/claude-code-runner-daemon-version-roadmap.md
+```
 
 Cross-service contract prototypes, required for Phase 0a contract freeze:
 

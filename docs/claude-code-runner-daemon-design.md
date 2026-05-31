@@ -305,7 +305,7 @@ profile.sandboxRoot / originId / userId / projectId
 
 第一版由 daemon 负责把业务端提供的源文件复制到 sandbox workspace。
 
-业务端不需要知道 sandbox 真实路径，也不直接写入 sandbox。业务端只把源文件真实地址交给 daemon。源文件可以位于 daemon 本机可访问路径、共享挂载目录，或后续 upload API 暂存目录。daemon 校验源文件路径后，将文件复制到当前 workspace 的 `input/` 或请求指定的安全相对路径下。
+业务端不需要知道 sandbox 真实路径，也不直接写入 sandbox。业务端可以把 daemon 本机可访问路径、共享挂载目录路径，或 Phase 4 upload API 接收后的 daemon 暂存文件交给 daemon。daemon 校验源文件路径后，将文件复制到当前 workspace 的 `input/` 或请求指定的安全相对路径下。
 
 建议提供独立准备接口：
 
@@ -358,7 +358,7 @@ POST /api/workspaces/:workspaceId/prepare
 - daemon copy 时创建目标父目录，但不能覆盖受保护目录，例如 `.claude-runner-skills/`。
 - 普通用户和浏览器前端不接触 `sourcePath` 或 sandbox absolute path；这些只在受信任业务后端和 daemon 间流转。
 
-后续如果需要跨服务器且没有共享挂载，可以增加 upload API。upload API 的本质也是先把文件上传到 daemon 可访问的暂存区，再由 daemon 复制进 sandbox workspace。
+如果需要跨服务器且没有共享挂载，当前 Phase 4 upload API 已提供最小单文件上传路径。upload API 的本质仍然是先把文件上传到 daemon 可访问的暂存区，再由 daemon 复制进 sandbox workspace。远程 URL 拉取、对象存储拉取、多文件 upload manifest 等能力留到后期版本。
 
 ## Skill 处理方式
 
@@ -1186,7 +1186,7 @@ lqBot 不再把报告生成强绑定到聊天 agent SDK。
 
 1. `eventVisibility` 的具体过滤规则和 quiet/normal/debug 的字段级清单。
 2. `allowedInputRoots` 的配置粒度和 `sourcePath` 校验细节。
-3. 第二版是否需要 daemon upload API、远程 URL 拉取或对象存储拉取。
+3. daemon upload API 已作为 Phase 4 的窄接口落地；远程 URL 拉取和对象存储拉取继续留到后期版本。
 4. 是否支持 profile 热更新，第一版暂定启动时读取 config 文件。
 5. 是否长期保持独立 run 模型，还是后续引入 Claude Code 原生 resume/fork。
 6. 后续如需服务不可信租户，选择哪种 OS 级隔离或 permission hook 方案。
@@ -1374,13 +1374,13 @@ POST /api/workspaces/:workspaceId/prepare
 
 `POST /api/workspaces/:workspaceId/prepare` 接收 `sourcePath -> targetPath` 映射。`sourcePath` 是 daemon 可访问的本机路径或共享挂载路径；`targetPath` 是 sandbox workspace 内的安全相对路径，例如 `input/source.docx`。
 
-如果调用方和 daemon 不在同一服务器，业务系统需要先通过共享存储、对象存储同步器、rsync、内部文件服务，或后续 upload API，让源文件出现在 daemon 可访问的 `allowedInputRoots` 下。daemon 仍然只从 `allowedInputRoots` copy 到 sandbox，不读取任意外部路径。
+如果调用方和 daemon 不在同一服务器，当前 Phase 4 提供窄版 upload API：调用方可以通过 `POST /api/workspaces/:workspaceId/files` 上传单个文件到 daemon 暂存区，再由 daemon 复制进 sandbox workspace。共享存储、对象存储同步器、rsync、内部文件服务仍可继续配合 `allowedInputRoots` 使用。
 
-第二版再考虑：
+后期版本再考虑：
 
-- `POST /api/workspaces/:id/files` 上传文件到 daemon 暂存区
 - 远程 URL 拉取
 - S3/object storage pull
+- 多文件 upload manifest 或 durable upload ids
 
 #### 6. SQLite schema
 
