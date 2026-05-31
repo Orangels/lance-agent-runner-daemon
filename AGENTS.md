@@ -33,21 +33,26 @@ Important: do not copy lanceDesign product logic wholesale. The new daemon shoul
 Expected first-version source layout:
 
 ```text
-src/
-  config/
-  core/
-  db/
-  http/
-  index.ts
+apps/
+  daemon/
+    src/
+      config/
+      core/
+      db/
+      http/
+      index.ts
+    skills/
+  web/                  # reserved for the local test console
 docs/
 REFERENCE.md
 AGENTS.md
 CLAUDE.md
 package.json
-tsconfig.json
+pnpm-workspace.yaml
+tsconfig.base.json
 ```
 
-Keep source code under `src/`. Keep design and migration notes under `docs/`.
+Keep daemon source code under `apps/daemon/src/`. Keep daemon-managed business skills under `apps/daemon/skills/`. Keep design and migration notes under `docs/`.
 
 ## Implementation Boundary
 
@@ -95,10 +100,10 @@ This means:
 - Use TypeScript for all project-owned source files.
 - Use ESM modules (`"type": "module"`).
 - Prefer small modules with explicit boundaries:
-  - `src/http/*` handles Express routing only.
-  - `src/core/*` contains runner/domain logic and must not depend on Express.
-  - `src/db/*` owns SQLite schema and repositories.
-  - `src/config/*` owns config, profile, auth, and env validation.
+  - `apps/daemon/src/http/*` handles Express routing only.
+  - `apps/daemon/src/core/*` contains runner/domain logic and must not depend on Express.
+  - `apps/daemon/src/db/*` owns SQLite schema and repositories.
+  - `apps/daemon/src/config/*` owns config, profile, auth, and env validation.
 - Do not add product-specific lqBot or lanceDesign business logic to core modules.
 - Do not expose sandbox absolute paths through API responses.
 - Do not let requests override `claudeConfigDir`, `claudeBin`, `skillRoots`, `allowedInputRoots`, or `permissionMode`.
@@ -132,7 +137,18 @@ pnpm dev
 pnpm start
 ```
 
-There is intentionally no root monorepo tooling here. This project is a standalone daemon.
+Daemon-specific commands:
+
+```bash
+pnpm typecheck:daemon
+pnpm build:daemon
+pnpm test:daemon
+pnpm dev:daemon
+pnpm start:daemon
+pnpm start:daemon:local
+```
+
+The root package is a pnpm workspace orchestrator. The daemon remains standalone from a product/API perspective; it is not a lanceDesign package.
 
 ## Validation
 

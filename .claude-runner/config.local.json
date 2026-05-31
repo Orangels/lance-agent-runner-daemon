@@ -2,8 +2,8 @@
   "server": {
     "host": "127.0.0.1",
     "port": 17890,
-    "dataDir": ".claude-runner/data",
-    "globalConcurrency": 2,
+    "dataDir": "data",
+    "globalConcurrency": 50,
     "maxQueueSize": 100,
     "logRetentionMs": 604800000,
     "maxLogBytesPerRun": 4194304,
@@ -23,14 +23,14 @@
   "profiles": [
     {
       "id": "report-docx",
-      "sandboxRoot": ".claude-runner/workspaces/report-docx",
-      "claudeConfigDir": ".claude-runner/profiles/report-docx/claude",
+      "sandboxRoot": "workspaces/report-docx",
+      "claudeConfigDir": "profiles/report-docx/claude",
       "claudeBin": "claude",
       "skillRoots": [
-        "skills"
+        "../apps/daemon/skills"
       ],
       "allowedInputRoots": [
-        ".claude-runner/uploads"
+        "uploads"
       ],
       "allowedSkillIds": ["report-gen"],
       "artifactRules": [
@@ -49,7 +49,7 @@
       ],
       "defaultArtifactRuleIds": ["report-docx", "report-any"],
       "permissionMode": "bypassPermissions",
-      "defaultModel": "sonnet",
+      "defaultModel": "opus",
       "allowedModels": ["sonnet", "opus", "haiku"],
       "eventVisibility": "normal",
       "profileConcurrency": 1,

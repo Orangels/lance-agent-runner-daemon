@@ -1,9 +1,9 @@
 {
-  "name": "lance-agent-runner-daemon",
+  "name": "lance-agent-runner",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Standalone Claude Code CLI runner daemon for workspace-based agent tasks.",
+  "description": "Standalone Claude Code CLI runner daemon and local test console.",
   "license": "UNLICENSED",
   "packageManager": "pnpm@10.33.2",
   "engines": {
@@ -11,29 +11,16 @@
     "pnpm": ">=10.33.2 <11"
   },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "start": "node dist/index.js",
-    "build": "tsc -p tsconfig.json",
-    "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
-  },
-  "dependencies": {
-    "better-sqlite3": "^12.10.0",
-    "chokidar": "^5.0.0",
-    "express": "^5.2.1",
-    "fast-glob": "^3.3.3",
-    "multer": "^2.1.1",
-    "prom-client": "^15.1.3",
-    "undici": "^8.3.0",
-    "zod": "^4.4.3"
-  },
-  "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
-    "@types/express": "^5.0.6",
-    "@types/multer": "^2.1.0",
-    "@types/node": "^20.17.10",
-    "tsx": "4.21.0",
-    "typescript": "^5.6.3",
-    "vitest": "^4.1.7"
+    "dev": "pnpm dev:daemon",
+    "dev:daemon": "pnpm --filter @lance-agent-runner/daemon dev",
+    "start": "pnpm start:daemon",
+    "build": "pnpm build:daemon",
+    "build:daemon": "pnpm --filter @lance-agent-runner/daemon build",
+    "test": "pnpm test:daemon",
+    "test:daemon": "pnpm --filter @lance-agent-runner/daemon test",
+    "typecheck": "pnpm typecheck:daemon",
+    "typecheck:daemon": "pnpm --filter @lance-agent-runner/daemon typecheck",
+    "start:daemon": "pnpm --filter @lance-agent-runner/daemon start",
+    "start:daemon:local": "pnpm --filter @lance-agent-runner/daemon start:local"
   }
 }

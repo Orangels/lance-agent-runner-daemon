@@ -5,23 +5,23 @@ This daemon reads a single JSON config file. Use `config.example.json` as the co
 Start with an explicit config path:
 
 ```bash
-pnpm dev -- --config .claude-runner/config.local.json
+pnpm dev:daemon
 ```
 
 or:
 
 ```bash
-CLAUDE_RUNNER_CONFIG=.claude-runner/config.local.json pnpm start
+pnpm start:daemon:local
 ```
 
-Relative paths are resolved from the daemon process working directory, not from the config file location. For portable deployment, start the process with `WorkingDirectory` set to the repository root. `claudeConfigDir` is also resolved to an absolute path before being passed to the Claude Code child process as `CLAUDE_CONFIG_DIR`.
+Relative filesystem paths inside the config file are resolved from the directory that contains the loaded config file. This keeps both repository-root examples and `.claude-runner/config.local.json` portable when the daemon is started through a workspace package script. The config file path itself should be passed as an absolute path, or via the provided local scripts. `claudeConfigDir` is also resolved to an absolute path before being passed to the Claude Code child process as `CLAUDE_CONFIG_DIR`.
 
 ## Example Setup
 
 ```bash
 cp config.example.json .claude-runner/config.local.json
 export CLAUDE_RUNNER_LQBOT_API_KEY="replace-with-a-secret"
-pnpm dev -- --config .claude-runner/config.local.json
+pnpm dev:daemon
 ```
 
 The repository tracks `.claude-runner/config.local.json` and empty directory placeholders so a fresh checkout has the expected local runtime layout. Runtime contents under `.claude-runner/data`, `.claude-runner/uploads`, `.claude-runner/workspaces`, and Claude login/config files under `.claude-runner/profiles/*/claude` remain ignored except for `.gitkeep` placeholders.
@@ -65,7 +65,7 @@ Daemon runtime data directory. The daemon stores SQLite, run logs, and upload te
 With the example value:
 
 ```json
-"dataDir": ".claude-runner/data"
+"dataDir": "data"
 ```
 
 the SQLite file is:
@@ -192,7 +192,7 @@ Root directory for workspaces created under this profile.
 With:
 
 ```json
-"sandboxRoot": ".claude-runner/workspaces/report-docx"
+"sandboxRoot": "workspaces/report-docx"
 ```
 
 a workspace may be created as:
@@ -218,7 +218,7 @@ CLAUDE_CONFIG_DIR=<profiles[].claudeConfigDir>
 Use a relative project-local directory for portable deployments:
 
 ```json
-"claudeConfigDir": ".claude-runner/profiles/report-docx/claude"
+"claudeConfigDir": "profiles/report-docx/claude"
 ```
 
 The daemon resolves this to an absolute path before spawning Claude Code, so the child process does not interpret it relative to the workspace `cwd`.
@@ -246,7 +246,7 @@ Directories containing daemon-managed business skills.
 The daemon scans one directory level below each root:
 
 ```text
-skills/
+apps/daemon/skills/
   report-gen/
     SKILL.md
     guides/
@@ -394,20 +394,20 @@ For portable deployments, prefer putting non-secret behavior flags here and mana
 The example config uses relative paths for project-owned directories:
 
 ```json
-"dataDir": ".claude-runner/data",
-"sandboxRoot": ".claude-runner/workspaces/report-docx",
-"claudeConfigDir": ".claude-runner/profiles/report-docx/claude",
-"skillRoots": ["skills"],
-"allowedInputRoots": [".claude-runner/uploads"]
+"dataDir": "data",
+"sandboxRoot": "workspaces/report-docx",
+"claudeConfigDir": "profiles/report-docx/claude",
+"skillRoots": ["../apps/daemon/skills"],
+"allowedInputRoots": ["uploads"]
 ```
 
-These paths are relative to the daemon process working directory.
+In `.claude-runner/config.local.json`, these paths are relative to `.claude-runner/`. If you load `config.example.json` directly from the repository root, use repository-root-relative values such as `.claude-runner/data`, `apps/daemon/skills`, and `.claude-runner/uploads`.
 
 For systemd:
 
 ```ini
 WorkingDirectory=/path/to/lance-agent-runner-daemon
-Environment=CLAUDE_RUNNER_CONFIG=.claude-runner/config.local.json
+Environment=CLAUDE_RUNNER_CONFIG=/path/to/lance-agent-runner-daemon/.claude-runner/config.local.json
 ```
 
-For Docker or process managers, set the equivalent working directory to the repository root.
+For Docker or process managers, prefer setting `CLAUDE_RUNNER_CONFIG` to an absolute config file path; path fields inside that file stay relative to the file itself.

@@ -26,7 +26,7 @@
       "sandboxRoot": ".claude-runner/workspaces/report-docx",
       "claudeConfigDir": ".claude-runner/profiles/report-docx/claude",
       "claudeBin": "claude",
-      "skillRoots": ["skills"],
+      "skillRoots": ["apps/daemon/skills"],
       "allowedInputRoots": [".claude-runner/uploads"],
       "allowedSkillIds": ["report-gen"],
       "artifactRules": [
@@ -45,7 +45,7 @@
       ],
       "defaultArtifactRuleIds": ["report-docx", "report-any"],
       "permissionMode": "bypassPermissions",
-      "defaultModel": "sonnet",
+      "defaultModel": "opus",
       "allowedModels": ["sonnet", "opus", "haiku"],
       "eventVisibility": "normal",
       "profileConcurrency": 1,
