@@ -211,6 +211,46 @@ describe('artifact service', () => {
     expect(missing.missingRequiredRuleIds).toEqual(['report-docx']);
   });
 
+  it('keeps the highest-priority role when multiple artifact rules match the same file', async () => {
+    const { config, profile, workspace, db } = setup();
+    let artifactSequence = 0;
+    const service = createArtifactService({
+      config,
+      db,
+      clock: () => 5000,
+      ids: { artifactId: () => `artifact_${++artifactSequence}` },
+    });
+    writeWorkspaceFile(profile, workspace, 'output/report.docx', 'docx');
+    writeWorkspaceFile(profile, workspace, 'output/debug.json', '{}');
+
+    const finalized = await service.finalizeRunArtifacts({
+      profile: {
+        ...profile,
+        artifactRules: [
+          { id: 'debug-all', pattern: 'output/**/*', role: 'debug', required: false },
+          { id: 'supporting-all', pattern: 'output/**/*', role: 'supporting', required: false },
+          { id: 'report-docx', pattern: 'output/**/*.docx', role: 'primary', required: true },
+        ],
+      },
+      workspace,
+      runId: 'run_1',
+      artifactRuleIds: ['debug-all', 'supporting-all', 'report-docx'],
+    });
+
+    expect(finalized.missingRequiredRuleIds).toEqual([]);
+    expect(finalized.artifacts.map((artifact) => `${artifact.relativePath}:${artifact.role}:${artifact.ruleId}`)).toEqual([
+      'output/report.docx:primary:report-docx',
+      'output/debug.json:supporting:supporting-all',
+    ]);
+    expect(
+      getArtifactForRunForClient(db, {
+        runId: 'run_1',
+        artifactId: 'artifact_1',
+        clientId: 'lqbot',
+      }),
+    ).toMatchObject({ relativePath: 'output/debug.json', role: 'supporting' });
+  });
+
   it('surfaces scan failures as ARTIFACT_SCAN_FAILED without leaking paths', async () => {
     const { config, db, profile, workspace } = setup();
     const service = createArtifactService({

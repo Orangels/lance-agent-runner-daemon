@@ -16,8 +16,14 @@ import { scanArtifacts, type ScannedArtifact } from './artifact-scanner.js';
 import { badRequest, daemonError, notFound } from './errors.js';
 import { createId } from './ids.js';
 import { isPathInsideRoot, resolveUnderRoot } from './path-safety.js';
-import type { PublicArtifact } from './run-types.js';
+import type { ArtifactRole, PublicArtifact } from './run-types.js';
 import { getWorkspaceCwd } from './workspace-service.js';
+
+const artifactRolePriority: Record<ArtifactRole, number> = {
+  debug: 0,
+  supporting: 1,
+  primary: 2,
+};
 
 export interface ArtifactService {
   resolveSelectedArtifactRules(input: {
@@ -122,10 +128,11 @@ export function createArtifactService(input: CreateArtifactServiceInput): Artifa
         }
 
         const scanned = await scanner({ workspaceCwd, rules, now: timestamp });
+        const selectedArtifacts = selectHighestPriorityArtifacts(scanned);
         const artifacts = replaceArtifactsForRun(input.db, {
           runId: finalizeInput.runId,
           workspaceId: finalizeInput.workspace.id,
-          artifacts: scanned.map((artifact) => ({
+          artifacts: selectedArtifacts.map((artifact) => ({
             id: nextArtifactId(),
             ruleId: artifact.ruleId,
             role: artifact.role,
@@ -139,7 +146,7 @@ export function createArtifactService(input: CreateArtifactServiceInput): Artifa
           now: timestamp,
         });
 
-        const matchedRuleIds = new Set(artifacts.map((artifact) => artifact.ruleId));
+        const matchedRuleIds = new Set(scanned.map((artifact) => artifact.ruleId));
         const missingRequiredRuleIds = rules
           .filter((rule) => rule.required && !matchedRuleIds.has(rule.id))
           .map((rule) => rule.id);
@@ -201,6 +208,19 @@ export function createArtifactService(input: CreateArtifactServiceInput): Artifa
       };
     },
   };
+}
+
+function selectHighestPriorityArtifacts(artifacts: ScannedArtifact[]): ScannedArtifact[] {
+  const selectedByPath = new Map<string, ScannedArtifact>();
+
+  for (const artifact of artifacts) {
+    const existing = selectedByPath.get(artifact.relativePath);
+    if (!existing || artifactRolePriority[artifact.role] > artifactRolePriority[existing.role]) {
+      selectedByPath.set(artifact.relativePath, artifact);
+    }
+  }
+
+  return [...selectedByPath.values()];
 }
 
 export function toPublicArtifact(artifact: ArtifactRecord): PublicArtifact {

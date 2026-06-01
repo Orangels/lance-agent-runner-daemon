@@ -861,7 +861,7 @@ interface PublicArtifact {
   runId: string;
   workspaceId: string;
   ruleId: string;
-  role: string;
+  role: "primary" | "supporting" | "debug";
   relativePath: string;
   fileName: string;
   mimeType: string | null;

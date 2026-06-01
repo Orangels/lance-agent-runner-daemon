@@ -25,7 +25,7 @@ export interface ScannedArtifact {
   fileName: string;
   relativePath: string;
   ruleId: string;
-  role: string;
+  role: ArtifactRuleConfig['role'];
   size: number;
   mtime: number;
   sha256: string;

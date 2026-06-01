@@ -4,6 +4,8 @@ export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancele
 
 export type EventVisibility = 'quiet' | 'normal' | 'debug';
 
+export type ArtifactRole = 'primary' | 'supporting' | 'debug';
+
 export type DaemonErrorCode =
   | 'BAD_REQUEST'
   | 'UNAUTHORIZED'
@@ -42,7 +44,7 @@ export interface HealthResponse {
 
 export interface ArtifactRule {
   id: string;
-  role: string;
+  role: ArtifactRole;
   pattern: string;
   required?: boolean;
   mimeType?: string;
@@ -162,7 +164,7 @@ export interface PublicArtifact {
   runId: string;
   workspaceId: string;
   ruleId: string;
-  role: string;
+  role: ArtifactRole;
   relativePath: string;
   fileName: string;
   mimeType: string | null;

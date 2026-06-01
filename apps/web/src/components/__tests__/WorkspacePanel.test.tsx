@@ -8,7 +8,7 @@ import type { PublicProfile } from '../../api/types.js';
 const profile: PublicProfile = {
   id: 'report-docx',
   allowedSkillIds: ['report-gen'],
-  artifactRules: [{ id: 'report-docx', role: 'report', pattern: 'output/*.docx' }],
+  artifactRules: [{ id: 'report-docx', role: 'primary', pattern: 'output/*.docx' }],
   defaultArtifactRuleIds: ['report-docx'],
   defaultModel: 'opus',
   allowedModels: ['opus', 'sonnet'],

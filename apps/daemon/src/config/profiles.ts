@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { eventVisibilityLevels, type EventVisibility } from '../core/run-types.js';
+import {
+  artifactRoles,
+  eventVisibilityLevels,
+  type ArtifactRole,
+  type EventVisibility,
+} from '../core/run-types.js';
 import { findDisallowedProfileEnvKeys } from './env.js';
 
 export const permissionModes = ['default', 'acceptEdits', 'bypassPermissions'] as const;
@@ -29,7 +34,7 @@ export interface ClientConfig {
 export interface ArtifactRuleConfig {
   id: string;
   pattern: string;
-  role: string;
+  role: ArtifactRole;
   required: boolean;
 }
 
@@ -95,7 +100,7 @@ const artifactRuleSchema = z
   .object({
     id: nonEmptyString,
     pattern: nonEmptyString,
-    role: nonEmptyString,
+    role: z.enum(artifactRoles),
     required: z.boolean().default(false),
   })
   .strict();

@@ -9,6 +9,7 @@ interface AssistantMessageProps {
 
 export function AssistantMessage({ message, onDownloadArtifact }: AssistantMessageProps) {
   const { thinkingText, visibleEvents } = organizeAssistantEvents(message.events ?? []);
+  const showWaiting = shouldShowWaitingPlaceholder(message, thinkingText, visibleEvents);
 
   return (
     <article className="msg assistant">
@@ -18,7 +19,7 @@ export function AssistantMessage({ message, onDownloadArtifact }: AssistantMessa
       </div>
       <div className="assistant-flow">
         {thinkingText ? <ThinkingBlock text={thinkingText} /> : null}
-        {message.content ? <p className="assistant-text">{message.content}</p> : <WaitingBlock status={message.runStatus} />}
+        {message.content ? <p className="assistant-text">{message.content}</p> : <WaitingBlock show={showWaiting} />}
         {visibleEvents.map((event, index) => (
           <EventBlock event={event} key={`${event.id ?? index}-${event.type}`} />
         ))}
@@ -61,11 +62,31 @@ function organizeAssistantEvents(events: DemoRunEvent[]): {
   return { thinkingText, visibleEvents };
 }
 
-function WaitingBlock({ status }: { status: DemoChatMessage['runStatus'] }) {
-  if (!status || status === 'succeeded' || status === 'failed' || status === 'canceled' || status === 'interrupted') {
+function shouldShowWaitingPlaceholder(
+  message: DemoChatMessage,
+  thinkingText: string,
+  visibleEvents: DemoRunEvent[],
+): boolean {
+  if (
+    !message.runStatus ||
+    message.runStatus === 'succeeded' ||
+    message.runStatus === 'failed' ||
+    message.runStatus === 'canceled' ||
+    message.runStatus === 'interrupted'
+  ) {
+    return false;
+  }
+  if (message.content || thinkingText || message.error || (message.artifacts ?? []).length > 0) {
+    return false;
+  }
+  return visibleEvents.every((event) => event.type === 'status' || event.type === 'assistant_message_start');
+}
+
+function WaitingBlock({ show }: { show: boolean }) {
+  if (!show) {
     return null;
   }
-  return <div className="waiting-pill">Waiting for Claude Code...</div>;
+  return <div className="waiting-pill">Waiting for Agent...</div>;
 }
 
 function ThinkingBlock({ text }: { text: string }) {

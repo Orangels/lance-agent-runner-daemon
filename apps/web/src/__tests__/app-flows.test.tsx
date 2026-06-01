@@ -6,7 +6,7 @@ import { App } from '../App.js';
 const profile = {
   id: 'report-docx',
   allowedSkillIds: ['report-gen'],
-  artifactRules: [{ id: 'report-docx', role: 'report', pattern: 'output/*.docx' }],
+  artifactRules: [{ id: 'report-docx', role: 'primary', pattern: 'output/*.docx' }],
   defaultArtifactRuleIds: ['report-docx'],
   defaultModel: 'opus',
   allowedModels: ['opus'],

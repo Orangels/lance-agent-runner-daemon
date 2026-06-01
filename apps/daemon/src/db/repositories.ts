@@ -1,5 +1,5 @@
 import path from 'node:path';
-import type { RunKind, RunStatus } from '../core/run-types.js';
+import type { ArtifactRole, RunKind, RunStatus } from '../core/run-types.js';
 import type { RunnerDatabase } from './connection.js';
 
 export interface WorkspaceRecord {
@@ -73,7 +73,7 @@ export interface ArtifactRecord {
   runId: string;
   workspaceId: string;
   ruleId: string;
-  role: string;
+  role: ArtifactRole;
   relativePath: string;
   fileName: string;
   mimeType: string | null;
@@ -753,7 +753,7 @@ export function replaceArtifactsForRun(
     artifacts: Array<{
       id: string;
       ruleId: string;
-      role: string;
+      role: ArtifactRole;
       relativePath: string;
       fileName: string;
       mimeType?: string | null;
@@ -813,7 +813,14 @@ export function listArtifactsForRun(
           FROM artifacts
           JOIN runs ON runs.id = artifacts.run_id
           WHERE artifacts.run_id = ?
-          ORDER BY artifacts.role ASC, artifacts.relative_path ASC
+          ORDER BY
+            CASE artifacts.role
+              WHEN 'primary' THEN 0
+              WHEN 'supporting' THEN 1
+              WHEN 'debug' THEN 2
+              ELSE 3
+            END,
+            artifacts.relative_path ASC
           `,
         )
         .all(input.runId)
@@ -824,7 +831,14 @@ export function listArtifactsForRun(
           FROM artifacts
           JOIN runs ON runs.id = artifacts.run_id
           WHERE artifacts.run_id = ? AND runs.client_id = ?
-          ORDER BY artifacts.role ASC, artifacts.relative_path ASC
+          ORDER BY
+            CASE artifacts.role
+              WHEN 'primary' THEN 0
+              WHEN 'supporting' THEN 1
+              WHEN 'debug' THEN 2
+              ELSE 3
+            END,
+            artifacts.relative_path ASC
           `,
         )
         .all(input.runId, input.clientId);
@@ -1226,7 +1240,7 @@ function mapArtifact(row: ArtifactRow): ArtifactRecord {
     runId: row.run_id,
     workspaceId: row.workspace_id,
     ruleId: row.rule_id,
-    role: row.role,
+    role: row.role as ArtifactRole,
     relativePath: row.relative_path,
     fileName: row.file_name,
     mimeType: row.mime_type,

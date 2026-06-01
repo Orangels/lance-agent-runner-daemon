@@ -6,7 +6,7 @@ import {
   createAssistantMessage,
   reconcileMessagesWithRunDetail,
 } from '../run-event-reducer.js';
-import type { DemoChatMessage } from '../chat-types.js';
+import type { DemoArtifact, DemoChatMessage } from '../chat-types.js';
 
 describe('applyRunEventToMessage', () => {
   it('aggregates text deltas into assistant content', () => {
@@ -31,7 +31,7 @@ describe('applyRunEventToMessage', () => {
           id: 'artifact_1',
           runId: 'run_1',
           ruleId: 'report-docx',
-          role: 'report',
+          role: 'primary',
           relativePath: 'output/report.docx',
           fileName: 'report.docx',
           mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -330,11 +330,11 @@ describe('attachArtifactsToLastAssistantMessage', () => {
   it('attaches artifacts only to the last assistant message for the run', () => {
     const first = createAssistantMessage({ id: 'assistant-1', runId: 'run_1', runMode: 'generate-sse' });
     const second = createAssistantMessage({ id: 'assistant-2', runId: 'run_1', runMode: 'generate-sse' });
-    const artifact = {
+    const artifact: DemoArtifact = {
       id: 'artifact_1',
       runId: 'run_1',
       ruleId: 'report-docx',
-      role: 'report',
+      role: 'primary',
       relativePath: 'output/report.docx',
       fileName: 'report.docx',
       mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',

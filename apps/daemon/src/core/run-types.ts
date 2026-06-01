@@ -20,6 +20,9 @@ export function isTerminalRunStatus(status: RunStatus): boolean {
 export const eventVisibilityLevels = ['quiet', 'normal', 'debug'] as const;
 export type EventVisibility = (typeof eventVisibilityLevels)[number];
 
+export const artifactRoles = ['primary', 'supporting', 'debug'] as const;
+export type ArtifactRole = (typeof artifactRoles)[number];
+
 export const daemonErrorCodes = [
   'BAD_REQUEST',
   'UNAUTHORIZED',
@@ -123,7 +126,7 @@ export interface PublicArtifact {
   runId: string;
   workspaceId: string;
   ruleId: string;
-  role: string;
+  role: ArtifactRole;
   relativePath: string;
   fileName: string;
   mimeType: string | null;

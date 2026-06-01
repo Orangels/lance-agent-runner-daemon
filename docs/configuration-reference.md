@@ -299,7 +299,9 @@ Each rule has:
 
 - `id`: artifact rule id used by `artifactRuleIds`.
 - `pattern`: glob pattern relative to workspace root.
-- `role`: business role such as `primary` or `supporting`.
+- `role`: artifact role. Allowed values are `primary`, `supporting`, or `debug`.
+  When multiple rules match the same workspace-relative file, the daemon keeps
+  only the highest-priority role for that file: `primary` > `supporting` > `debug`.
 - `required`: if true, a successful Claude exit is rewritten to failed when no artifact matches this rule.
 
 ### `profiles[].defaultArtifactRuleIds`

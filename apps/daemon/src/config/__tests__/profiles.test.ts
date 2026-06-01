@@ -184,6 +184,56 @@ describe('daemon config parsing', () => {
     ).toThrow(/CLAUDE_CONFIG_DIR/);
   });
 
+  it('accepts only primary, supporting, or debug artifact roles', () => {
+    for (const role of ['primary', 'supporting', 'debug']) {
+      expect(() =>
+        parseDaemonConfig(
+          {
+            ...validConfig,
+            profiles: [
+              {
+                ...validConfig.profiles[0],
+                artifactRules: [
+                  {
+                    id: `rule-${role}`,
+                    pattern: 'output/**/*',
+                    role,
+                    required: false,
+                  },
+                ],
+                defaultArtifactRuleIds: [`rule-${role}`],
+              },
+            ],
+          },
+          { env: { CLAUDE_RUNNER_TEST_KEY: 'secret-key' } },
+        ),
+      ).not.toThrow();
+    }
+
+    expect(() =>
+      parseDaemonConfig(
+        {
+          ...validConfig,
+          profiles: [
+            {
+              ...validConfig.profiles[0],
+              artifactRules: [
+                {
+                  id: 'preview',
+                  pattern: 'output/**/*',
+                  role: 'preview',
+                  required: false,
+                },
+              ],
+              defaultArtifactRuleIds: ['preview'],
+            },
+          ],
+        },
+        { env: { CLAUDE_RUNNER_TEST_KEY: 'secret-key' } },
+      ),
+    ).toThrow(/role/);
+  });
+
   it('rejects defaultModel when it is not included in allowedModels', () => {
     expect(() =>
       parseDaemonConfig(
