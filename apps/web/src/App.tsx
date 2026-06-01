@@ -5,6 +5,7 @@ import type {
   PublicProfile,
   RunDetailResponse,
   RunStatus,
+  RunStatusResponse,
   WorkspaceIdentity,
 } from './api/types.js';
 import { DaemonApiError, DaemonClient } from './api/daemon-client.js';
@@ -18,7 +19,7 @@ import {
   createAssistantMessage,
   reconcileMessagesWithRunDetail,
 } from './chat/run-event-reducer.js';
-import { pollRunDetail } from './chat/run-polling.js';
+import { pollRunStatus } from './chat/run-polling.js';
 import { ChatPanel } from './components/ChatPanel.js';
 import { ConnectionPanel } from './components/ConnectionPanel.js';
 import { WorkspacePanel } from './components/WorkspacePanel.js';
@@ -253,11 +254,11 @@ export function App() {
   async function runGenerateByPolling(runId: string) {
     const controller = new AbortController();
     abortRef.current = controller;
-    const result = await pollRunDetail({
+    const result = await pollRunStatus({
       runId,
       signal: controller.signal,
-      getRunDetail: (id) => client.getRunDetail(id),
-      onDetail: (detail) => reconcileDetailInState(detail),
+      getRunStatus: (id) => client.getRunStatus(id),
+      onStatus: (status) => reconcileStatusInState(status),
     });
     if (!result.ok && result.reason === 'aborted' && cancelingRunIdRef.current === runId) {
       return;
@@ -274,6 +275,28 @@ export function App() {
   function reconcileDetailInState(detail: RunDetailResponse) {
     setRunStatus(detail.run.status);
     setMessages((current) => reconcileMessagesWithRunDetail(current, detail));
+  }
+
+  function reconcileStatusInState(status: RunStatusResponse) {
+    setRunStatus(status.run.status);
+    setMessages((current) =>
+      current.map((message) =>
+        message.runId === status.run.id
+          ? {
+              ...message,
+              error:
+                status.run.errorCode || status.run.errorMessage
+                  ? {
+                      code: status.run.errorCode ?? 'RUN_FAILED',
+                      message: status.run.errorMessage ?? status.run.status,
+                    }
+                  : message.error,
+              endedAt: status.run.finishedAt ?? message.endedAt,
+              runStatus: status.run.status,
+            }
+          : message,
+      ),
+    );
   }
 
   async function fetchArtifacts(runId: string) {

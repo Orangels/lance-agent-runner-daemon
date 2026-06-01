@@ -15,6 +15,7 @@ apps/*/.vite/
 .claude-runner/workspaces/*
 !.claude-runner/workspaces/.gitkeep
 !.claude-runner/workspaces/report-docx/
+.claude-runner/workspaces/report-docx/*
 !.claude-runner/workspaces/report-docx/.gitkeep
 .claude-runner/profiles/*/claude/*
 !.claude-runner/profiles/report-docx/
@@ -39,5 +40,6 @@ pnpm-debug.log*
 # OS / editor
 .DS_Store
 Thumbs.db
+.omc/
 .idea/
 .vscode/

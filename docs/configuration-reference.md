@@ -60,7 +60,7 @@ Example:
 
 ### `server.dataDir`
 
-Daemon runtime data directory. The daemon stores SQLite, run logs, and upload temp files under this directory.
+Daemon runtime data directory. The daemon stores SQLite, service logs, run logs, and upload temp files under this directory.
 
 With the example value:
 
@@ -73,6 +73,15 @@ the SQLite file is:
 ```text
 .claude-runner/data/runner.sqlite
 ```
+
+Service-level logs are written as JSON lines:
+
+```text
+.claude-runner/data/logs/daemon.log
+.claude-runner/data/logs/daemon-error.log
+```
+
+`daemon.log` records daemon startup/shutdown, HTTP request summaries, and service events. `daemon-error.log` receives `warn` and `error` events, including local stack traces for unexpected daemon errors. These service logs are local files only; they are not exposed through the run logs API.
 
 ### `server.globalConcurrency`
 
@@ -97,6 +106,12 @@ Example:
 ### `server.maxLogBytesPerRun`
 
 Maximum bytes written to each per-run log file. The daemon writes bounded stdout, stderr, and debug event logs.
+
+Per-run logs are separate from service logs and live under:
+
+```text
+.claude-runner/data/logs/runs/<runId>/
+```
 
 ### `server.maxUploadBytesPerFile`
 

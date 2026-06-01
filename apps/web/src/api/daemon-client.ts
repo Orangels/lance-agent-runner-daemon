@@ -9,6 +9,7 @@ import type {
   ProfilesResponse,
   PublicWorkspace,
   RunDetailResponse,
+  RunStatusResponse,
   UploadWorkspaceFileResponse,
 } from './types.js';
 
@@ -69,6 +70,10 @@ export class DaemonClient {
 
   getRunDetail(runId: string): Promise<RunDetailResponse> {
     return this.requestJson(`/api/runs/${encodeURIComponent(runId)}`);
+  }
+
+  getRunStatus(runId: string): Promise<RunStatusResponse> {
+    return this.requestJson(`/api/runs/${encodeURIComponent(runId)}/status`);
   }
 
   cancelRun(runId: string): Promise<CancelRunResponse> {

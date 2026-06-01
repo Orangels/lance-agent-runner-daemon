@@ -159,6 +159,27 @@ export interface RunDetailResponse {
   messages: PublicRunMessage[];
 }
 
+export interface PublicRunStatus {
+  id: string;
+  workspaceId: string;
+  profileId: string;
+  kind: RunKind;
+  skillId: string | null;
+  status: RunStatus;
+  queuedAt: number;
+  startedAt: number | null;
+  finishedAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+  errorCode: string | null;
+  errorMessage: string | null;
+}
+
+export interface RunStatusResponse {
+  run: PublicRunStatus;
+  terminal: boolean;
+}
+
 export interface PublicArtifact {
   id: string;
   runId: string;

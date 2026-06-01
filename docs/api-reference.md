@@ -575,6 +575,50 @@ Authorization: Bearer <api-key>
 | 403 | `PROFILE_NOT_ALLOWED` | client 不能使用 run 所属 profile。 |
 | 404 | `NOT_FOUND` | run 不存在或不属于该 client。 |
 
+## GET /api/runs/:runId/status
+
+获取轻量 run 状态。用于业务端高频轮询任务是否结束，不返回 `messages`、`events`、`content` 或 `thinkingContent`。
+
+### Request
+
+```http
+GET /api/runs/run_xxx/status
+Authorization: Bearer <api-key>
+```
+
+### Response 200
+
+```json
+{
+  "run": {
+    "id": "run_xxx",
+    "workspaceId": "ws_xxx",
+    "profileId": "report-docx",
+    "kind": "generate",
+    "skillId": "report-writer",
+    "status": "running",
+    "queuedAt": 1770000000000,
+    "startedAt": 1770000001000,
+    "finishedAt": null,
+    "createdAt": 1770000000000,
+    "updatedAt": 1770000003000,
+    "errorCode": null,
+    "errorMessage": null
+  },
+  "terminal": false
+}
+```
+
+`terminal` 在 `status` 为 `succeeded`、`failed`、`canceled`、`interrupted` 时为 `true`。报告生成场景推荐先轮询该接口，`terminal: true` 后再调用 artifacts API。
+
+### Common Errors
+
+| Status | Code | Meaning |
+| --- | --- | --- |
+| 401 | `UNAUTHORIZED` | API key 缺失或错误。 |
+| 403 | `PROFILE_NOT_ALLOWED` | client 不能使用 run 所属 profile。 |
+| 404 | `NOT_FOUND` | run 不存在或不属于该 client。 |
+
 ## GET /api/runs/:runId/events
 
 订阅 run SSE 事件。只保证在线和短期断线 replay。
@@ -759,8 +803,10 @@ Headers:
 ```text
 Content-Type: <artifact.mimeType or application/octet-stream>
 Content-Length: <artifact size if known>
-Content-Disposition: attachment; filename="<fileName>"
+Content-Disposition: attachment; filename="<ascii-fallback>"; filename*=UTF-8''<utf8-percent-encoded-fileName>
 ```
+
+中文等非 ASCII 文件名通过 RFC 5987 `filename*` 返回；业务端应优先解析 `filename*`，再回退到 `filename`。
 
 ### Common Errors
 
@@ -773,6 +819,8 @@ Content-Disposition: attachment; filename="<fileName>"
 ## GET /api/runs/:runId/logs
 
 读取受控 run logs 摘要。只有 `client.canReadLogs=true` 的 client 可以调用。
+
+这些是 run 级 Claude Code CLI 诊断日志，不是 daemon 服务级日志。daemon 服务级日志写在本地 `server.dataDir/logs/daemon.log` 和 `server.dataDir/logs/daemon-error.log`，不通过 HTTP API 暴露。
 
 ### Request
 

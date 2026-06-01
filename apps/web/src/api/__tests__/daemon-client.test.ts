@@ -47,6 +47,41 @@ describe('DaemonClient', () => {
     });
   });
 
+  it('fetches lightweight run status without messages', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonResponse({
+        run: {
+          id: 'run_1',
+          workspaceId: 'ws_1',
+          profileId: 'report-docx',
+          kind: 'generate',
+          skillId: 'report-gen',
+          status: 'succeeded',
+          lastRunEventId: '4',
+          queuedAt: 1,
+          startedAt: 2,
+          finishedAt: 3,
+          createdAt: 1,
+          updatedAt: 3,
+          errorCode: null,
+          errorMessage: null,
+        },
+        terminal: true,
+      }),
+    );
+    const client = new DaemonClient({ baseUrl: 'http://daemon.test', apiKey: 'secret', fetchImpl });
+
+    await expect(client.getRunStatus('run_1')).resolves.toMatchObject({
+      run: { id: 'run_1', status: 'succeeded' },
+      terminal: true,
+    });
+
+    expect(fetchImpl).toHaveBeenCalledWith('http://daemon.test/api/runs/run_1/status', {
+      headers: { Authorization: 'Bearer secret' },
+      method: 'GET',
+    });
+  });
+
   it('serializes JSON bodies and decodes structured API errors', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonResponse(
@@ -132,6 +167,15 @@ describe('DaemonClient', () => {
 describe('artifact downloads', () => {
   it('uses content-disposition filename when present', () => {
     expect(getDownloadFileName('attachment; filename="final-report.docx"', 'artifact_1')).toBe('final-report.docx');
+  });
+
+  it('prefers UTF-8 content-disposition filenames', () => {
+    expect(
+      getDownloadFileName(
+        "attachment; filename=\"output_2025_8.docx\"; filename*=UTF-8''output_2025%E5%B9%B48%E6%9C%88_%E4%B8%B4%E9%AB%98%E5%8E%BF%E5%85%AC%E5%AE%89%E5%B1%80%E6%8A%A5%E5%91%8A.docx",
+        'artifact_1',
+      ),
+    ).toBe('output_2025年8月_临高县公安局报告.docx');
   });
 
   it('falls back to artifact id when no filename header is present', async () => {

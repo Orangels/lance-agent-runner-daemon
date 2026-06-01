@@ -224,7 +224,28 @@ POST /api/runs
 - 不传 `artifactRuleIds` 时使用 profile 的 `defaultArtifactRuleIds`。
 - run 创建后可能先排队，业务端要展示 `queued` 状态。
 
-### 5. 订阅 SSE
+### 5. 不订阅 SSE 的报告生成轮询
+
+如果业务方只需要知道“任务何时结束、报告是否生成”，推荐使用轻量状态接口，不要高频调用完整 run detail：
+
+```text
+POST /api/runs
+  -> 得到 runId
+
+循环 GET /api/runs/:runId/status
+  -> status = queued/running 继续等
+  -> terminal = true 停止轮询
+
+GET /api/runs/:runId/artifacts
+  -> 找 role=primary 的报告
+
+GET /api/runs/:runId/artifacts/:artifactId/download
+  -> 下载报告
+```
+
+`GET /api/runs/:runId/status` 不返回 `messages/events/content/thinkingContent`，适合高频 poll。`GET /api/runs/:runId` 仍保留为完整详情接口，用于历史查看、诊断或需要还原 agent 过程输出的场景。
+
+### 6. 订阅 SSE
 
 ```text
 GET /api/runs/:runId/events
@@ -266,7 +287,7 @@ data: {"type":"end","status":"succeeded"}
 
 SSE 只保证在线和短期断线 replay。长期事后查看必须使用 `GET /api/runs/:runId`。
 
-### 6. 获取最终详情
+### 7. 获取最终详情
 
 run 结束后调用：
 
@@ -291,7 +312,7 @@ GET /api/runs/:runId
 - 只需要最后一次 assistant 回复：取最后一条非空 assistant `content`。
 - 报告生成结果：以 artifacts/download 为准，assistant `content` 只作为执行说明和过程摘要。
 
-### 7. 获取 artifact 并下载
+### 8. 获取 artifact 并下载
 
 ```text
 GET /api/runs/:runId/artifacts

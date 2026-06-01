@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { pollRunDetail } from '../run-polling.js';
-import type { RunDetailResponse } from '../../api/types.js';
+import { pollRunStatus } from '../run-polling.js';
+import type { RunStatusResponse } from '../../api/types.js';
 
-function detail(status: RunDetailResponse['run']['status']): RunDetailResponse {
+function statusDetail(status: RunStatusResponse['run']['status']): RunStatusResponse {
   return {
     run: {
       id: 'run_1',
@@ -11,50 +11,51 @@ function detail(status: RunDetailResponse['run']['status']): RunDetailResponse {
       kind: 'generate',
       skillId: 'report-gen',
       status,
-      lastRunEventId: null,
       queuedAt: 1,
       startedAt: status === 'queued' ? null : 2,
       finishedAt: status === 'running' || status === 'queued' ? null : 3,
       createdAt: 1,
       updatedAt: 3,
+      errorCode: null,
+      errorMessage: null,
     },
-    messages: [],
+    terminal: status !== 'queued' && status !== 'running',
   };
 }
 
-describe('pollRunDetail', () => {
-  it('polls until terminal status and reports each detail', async () => {
-    const getRunDetail = vi.fn()
-      .mockResolvedValueOnce(detail('queued'))
-      .mockResolvedValueOnce(detail('running'))
-      .mockResolvedValueOnce(detail('succeeded'));
-    const onDetail = vi.fn();
+describe('pollRunStatus', () => {
+  it('polls lightweight status until terminal status and reports each status snapshot', async () => {
+    const getRunStatus = vi.fn()
+      .mockResolvedValueOnce(statusDetail('queued'))
+      .mockResolvedValueOnce(statusDetail('running'))
+      .mockResolvedValueOnce(statusDetail('succeeded'));
+    const onStatus = vi.fn();
     const wait = vi.fn().mockResolvedValue(undefined);
 
-    const result = await pollRunDetail({
-      getRunDetail,
+    const result = await pollRunStatus({
+      getRunStatus,
       intervalMs: 10,
-      onDetail,
+      onStatus,
       runId: 'run_1',
       wait,
     });
 
-    expect(result).toMatchObject({ ok: true, detail: detail('succeeded') });
-    expect(getRunDetail).toHaveBeenCalledTimes(3);
-    expect(onDetail).toHaveBeenCalledTimes(3);
+    expect(result).toMatchObject({ ok: true, status: statusDetail('succeeded') });
+    expect(getRunStatus).toHaveBeenCalledTimes(3);
+    expect(onStatus).toHaveBeenCalledTimes(3);
     expect(wait).toHaveBeenCalledTimes(2);
   });
 
   it('aborts cleanly before the next poll', async () => {
     const controller = new AbortController();
-    const getRunDetail = vi.fn().mockResolvedValue(detail('running'));
+    const getRunStatus = vi.fn().mockResolvedValue(statusDetail('running'));
     const wait = vi.fn().mockImplementation(() => {
       controller.abort();
       return Promise.resolve();
     });
 
-    const result = await pollRunDetail({
-      getRunDetail,
+    const result = await pollRunStatus({
+      getRunStatus,
       intervalMs: 10,
       runId: 'run_1',
       signal: controller.signal,
@@ -62,6 +63,6 @@ describe('pollRunDetail', () => {
     });
 
     expect(result).toEqual({ ok: false, reason: 'aborted' });
-    expect(getRunDetail).toHaveBeenCalledTimes(1);
+    expect(getRunStatus).toHaveBeenCalledTimes(1);
   });
 });

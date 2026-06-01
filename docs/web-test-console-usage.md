@@ -46,8 +46,9 @@ The console shows three business adapter flows:
 2. `Generate + Poll`
    - Creates the same kind of `generate` run.
    - Does not call `/events`.
-   - Polls `GET /api/runs/:runId`.
-   - Reconciles durable `run_messages`, including multiple assistant bubbles when a run has multiple Claude assistant message turns.
+   - Polls lightweight `GET /api/runs/:runId/status`.
+   - Does not render daemon messages from the poll path.
+   - Fetches artifacts after the run reaches a terminal status.
 
 3. `Revise`
    - Requires an existing workspace from an earlier run.

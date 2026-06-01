@@ -3,6 +3,7 @@ import { pathToFileURL } from 'node:url';
 import { getConfigPathFromArgs, loadDaemonConfig } from './config/config.js';
 import type { DaemonConfig } from './config/profiles.js';
 import { createArtifactService, type ArtifactService } from './core/artifact-service.js';
+import { createDaemonLogger, type DaemonLogger } from './core/daemon-logger.js';
 import { createRunLogService, type RunLogService } from './core/run-log-service.js';
 import { createRunService, type RunService } from './core/run-service.js';
 import { createUploadTempService, type UploadTempService } from './core/upload-temp-service.js';
@@ -20,12 +21,14 @@ export interface ServerContext {
   runLogService: RunLogService;
   runService: RunService;
   uploadTempService: UploadTempService;
+  daemonLogger: DaemonLogger;
   app: ReturnType<typeof createApp>;
   interruptedRuns: number;
 }
 
 interface CreateServerContextOptions {
   clock?: () => number;
+  daemonLogger?: DaemonLogger;
 }
 
 interface SignalTarget {
@@ -38,6 +41,7 @@ export function createServerContext(
   config: DaemonConfig,
   options: CreateServerContextOptions = {},
 ): ServerContext {
+  const daemonLogger = options.daemonLogger ?? createDaemonLogger({ dataDir: config.server.dataDir });
   const db = openRunnerDatabase(config.server.dataDir);
   applySchema(db);
   const now = options.clock ?? Date.now;
@@ -57,6 +61,12 @@ export function createServerContext(
     runLogService,
     artifactService,
     uploadTempService,
+    daemonLogger,
+  });
+  daemonLogger.info('daemon_context_ready', {
+    clientCount: config.clients.length,
+    interruptedRuns,
+    profileCount: config.profiles.length,
   });
 
   return {
@@ -67,23 +77,35 @@ export function createServerContext(
     runLogService,
     runService,
     uploadTempService,
+    daemonLogger,
     app,
     interruptedRuns,
   };
 }
 
 export function startServer(context: ServerContext): Server {
+  context.daemonLogger.info('daemon_starting', {
+    host: context.config.server.host,
+    port: context.config.server.port,
+  });
   const server = context.app.listen(context.config.server.port, context.config.server.host, () => {
     console.log(
       `claude runner daemon listening on ${context.config.server.host}:${context.config.server.port}`,
     );
+    context.daemonLogger.info('daemon_started', {
+      host: context.config.server.host,
+      port: context.config.server.port,
+    });
+  });
+  server.on('error', (error) => {
+    context.daemonLogger.error('daemon_server_error', { error });
   });
   installShutdownHandlers(context, server);
   return server;
 }
 
 export function installShutdownHandlers(
-  context: Pick<ServerContext, 'config' | 'db' | 'runService'>,
+  context: Pick<ServerContext, 'config' | 'db' | 'runService'> & { daemonLogger?: DaemonLogger },
   server: Pick<Server, 'close'>,
   signalTarget: SignalTarget = process,
 ): void {
@@ -91,6 +113,7 @@ export function installShutdownHandlers(
   const handleSignal = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
+    context.daemonLogger?.info('daemon_shutdown_started');
     signalTarget.off('SIGINT', handleSignal);
     signalTarget.off('SIGTERM', handleSignal);
 
@@ -99,6 +122,7 @@ export function installShutdownHandlers(
     });
     await context.runService.shutdownActive({ graceMs: getMaxCancelGraceMs(context.config) });
     context.db.close();
+    context.daemonLogger?.info('daemon_shutdown_complete');
     signalTarget.exitCode = 0;
   };
 

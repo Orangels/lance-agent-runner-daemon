@@ -125,13 +125,28 @@ describe('App daemon flows', () => {
     expect(eventsCall?.[1]).toMatchObject({ headers: { Authorization: 'Bearer secret' } });
   });
 
-  it('runs generate without SSE by polling durable run detail', async () => {
+  it('runs generate without SSE by polling lightweight status and then artifacts', async () => {
+    const artifact = {
+      id: 'artifact_1',
+      runId: 'run_2',
+      workspaceId: 'ws_1',
+      ruleId: 'report-docx',
+      role: 'primary',
+      relativePath: 'output/report.docx',
+      fileName: 'report.docx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      size: 4,
+      mtime: 3,
+      sha256: 'abc123',
+    };
     const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith('/api/profiles')) return jsonResponse({ profiles: [profile] });
       if (url.endsWith('/api/workspaces')) return jsonResponse({ workspaceId: 'ws_1', workspaceKey: 'demo/user_001/project_001' });
       if (url.endsWith('/api/runs') && init?.method === 'POST') return jsonResponse({ runId: 'run_2', status: 'queued' }, { status: 202 });
-      if (url.endsWith('/api/runs/run_2')) return jsonResponse(runDetail('run_2', 'succeeded', 'Durable report'));
-      if (url.endsWith('/api/runs/run_2/artifacts')) return jsonResponse({ artifacts: [] });
+      if (url.endsWith('/api/runs/run_2/status')) {
+        return jsonResponse({ run: runDetail('run_2', 'succeeded', 'Durable report').run, terminal: true });
+      }
+      if (url.endsWith('/api/runs/run_2/artifacts')) return jsonResponse({ artifacts: [artifact] });
       return jsonResponse({ error: { code: 'NOT_FOUND', message: url } }, { status: 404 });
     });
     vi.stubGlobal('fetch', fetchImpl);
@@ -144,8 +159,11 @@ describe('App daemon flows', () => {
     await userEvent.type(screen.getByLabelText('Prompt'), 'Generate without streaming');
     await userEvent.click(screen.getByRole('button', { name: 'Send' }));
 
-    expect(await screen.findByText('Durable report')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByText('report.docx').length).toBeGreaterThan(0));
+    expect(screen.queryByText('Durable report')).not.toBeInTheDocument();
     expect(fetchImpl.mock.calls.some(([url]) => String(url).includes('/events'))).toBe(false);
+    expect(fetchImpl.mock.calls.some(([url]) => String(url).endsWith('/api/runs/run_2'))).toBe(false);
+    expect(fetchImpl.mock.calls.some(([url]) => String(url).endsWith('/api/runs/run_2/status'))).toBe(true);
   });
 
   it('runs revise against the existing workspace and omits skillId', async () => {

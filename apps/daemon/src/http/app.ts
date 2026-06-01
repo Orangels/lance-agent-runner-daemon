@@ -8,6 +8,7 @@ import type { RunLogService } from '../core/run-log-service.js';
 import type { ArtifactService } from '../core/artifact-service.js';
 import type { UploadTempService } from '../core/upload-temp-service.js';
 import type { RunnerDatabase } from '../db/connection.js';
+import { noopDaemonLogger, type DaemonLogger } from '../core/daemon-logger.js';
 import { zodErrorToDaemonError } from './validation.js';
 import { createArtifactsRouter } from './artifacts-routes.js';
 import { createHealthRouter } from './health-routes.js';
@@ -25,11 +26,14 @@ interface CreateAppDependencies {
   runLogService?: RunLogService;
   artifactService?: ArtifactService;
   uploadTempService?: UploadTempService;
+  daemonLogger?: DaemonLogger;
 }
 
 export function createApp(dependencies: CreateAppDependencies): express.Express {
   const app = express();
+  const daemonLogger = dependencies.daemonLogger ?? noopDaemonLogger;
 
+  app.use(createRequestLogger(daemonLogger));
   app.use(express.json({ limit: '1mb' }));
   app.use('/api/health', createHealthRouter());
   app.use('/api/profiles', createProfilesRouter(dependencies.config));
@@ -73,24 +77,69 @@ export function createApp(dependencies: CreateAppDependencies): express.Express 
       workspaceService: dependencies.workspaceService,
     }),
   );
-  app.use(errorHandler);
+  app.use(createErrorHandler(daemonLogger));
 
   return app;
 }
 
-const errorHandler: ErrorRequestHandler = (error, _request, response, _next) => {
-  const daemonError =
-    error instanceof ZodError
-      ? zodErrorToDaemonError(error)
-      : error instanceof DaemonError
-        ? error
-        : isHttpClientError(error)
-          ? badRequest('Invalid request body')
-          : internalError();
+function createRequestLogger(daemonLogger: DaemonLogger): express.RequestHandler {
+  return (request, response, next) => {
+    const startedAt = Date.now();
+    response.on('finish', () => {
+      daemonLogger.info('http_request', {
+        clientId: getRequestClientId(request),
+        durationMs: Date.now() - startedAt,
+        method: request.method,
+        path: request.originalUrl,
+        statusCode: response.statusCode,
+      });
+    });
+    next();
+  };
+}
 
-  const status = isHttpClientError(error) ? error.status : daemonError.status;
-  response.status(status).json(toErrorResponse(daemonError));
-};
+function createErrorHandler(daemonLogger: DaemonLogger): ErrorRequestHandler {
+  return (error, request, response, _next) => {
+    const daemonError =
+      error instanceof ZodError
+        ? zodErrorToDaemonError(error)
+        : error instanceof DaemonError
+          ? error
+          : isHttpClientError(error)
+            ? badRequest('Invalid request body')
+            : internalError();
+
+    const status = isHttpClientError(error) ? error.status : daemonError.status;
+    daemonLogger.error('http_error', {
+      clientId: getRequestClientId(request),
+      error,
+      errorCode: daemonError.code,
+      ...errorSummary(error),
+      method: request.method,
+      path: request.originalUrl,
+      statusCode: status,
+    });
+    response.status(status).json(toErrorResponse(daemonError));
+  };
+}
+
+function getRequestClientId(request: express.Request): string | null {
+  const client = (request as { client?: { id?: unknown } }).client;
+  return typeof client?.id === 'string' ? client.id : null;
+}
+
+function errorSummary(error: unknown): Record<string, unknown> {
+  if (error instanceof Error) {
+    return {
+      errorMessage: error.message,
+      errorName: error.name,
+    };
+  }
+  return {
+    errorMessage: String(error),
+    errorName: typeof error,
+  };
+}
 
 function isHttpClientError(error: unknown): error is { status: number } {
   if (!error || typeof error !== 'object' || !('status' in error)) {

@@ -96,6 +96,7 @@ async function withApp(
   const workspaceCwd = getWorkspaceCwd(config.profiles[0]!, workspace);
   mkdirSync(path.join(workspaceCwd, 'output'), { recursive: true });
   writeFileSync(path.join(workspaceCwd, 'output', 'report.docx'), 'docx');
+  writeFileSync(path.join(workspaceCwd, 'output', 'output_2025年8月_临高县公安局报告.docx'), 'docx-zh');
   replaceArtifactsForRun(db, {
     runId: 'run_1',
     workspaceId: workspace.id,
@@ -110,6 +111,17 @@ async function withApp(
         size: 4,
         mtime: 1770000000000,
         sha256: 'abc123',
+      },
+      {
+        id: 'artifact_zh',
+        ruleId: 'report-docx',
+        role: 'primary',
+        relativePath: 'output/output_2025年8月_临高县公安局报告.docx',
+        fileName: 'output_2025年8月_临高县公安局报告.docx',
+        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        size: 7,
+        mtime: 1770000000000,
+        sha256: 'def456',
       },
     ],
     now: 5000,
@@ -144,8 +156,8 @@ describe('artifact routes', () => {
 
       expect(response.status).toBe(200);
       const body = await response.json();
-      expect(body).toEqual({
-        artifacts: [
+      expect(body.artifacts).toEqual(
+        expect.arrayContaining([
           expect.objectContaining({
             id: 'artifact_1',
             runId: 'run_1',
@@ -155,8 +167,8 @@ describe('artifact routes', () => {
             relativePath: 'output/report.docx',
             fileName: 'report.docx',
           }),
-        ],
-      });
+        ]),
+      );
       expect(JSON.stringify(body)).not.toContain(config.profiles[0]!.sandboxRoot);
     });
   });
@@ -172,6 +184,21 @@ describe('artifact routes', () => {
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       );
       expect(await response.text()).toBe('docx');
+    });
+  });
+
+  it('streams downloads with UTF-8 filenames in content-disposition', async () => {
+    await withApp(async ({ baseUrl }) => {
+      const response = await fetch(`${baseUrl}/api/runs/run_1/artifacts/artifact_zh/download`, {
+        headers: { Authorization: 'Bearer secret' },
+      });
+
+      expect(response.status).toBe(200);
+      const disposition = response.headers.get('content-disposition');
+      expect(disposition).toContain('attachment');
+      expect(disposition).toContain('filename="output_2025_8.docx"');
+      expect(disposition).toContain("filename*=UTF-8''output_2025%E5%B9%B48%E6%9C%88_%E4%B8%B4%E9%AB%98%E5%8E%BF%E5%85%AC%E5%AE%89%E5%B1%80%E6%8A%A5%E5%91%8A.docx");
+      expect(await response.text()).toBe('docx-zh');
     });
   });
 

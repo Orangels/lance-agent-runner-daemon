@@ -331,6 +331,43 @@ describe('runs routes', () => {
     });
   });
 
+  it('returns lightweight run status without durable messages', async () => {
+    await withApp(async ({ baseUrl, workspaceId }) => {
+      await fetch(`${baseUrl}/api/runs`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer secret', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          profileId: 'report-docx',
+          workspaceId,
+          kind: 'revise',
+          prompt: 'Run.',
+          artifactRuleIds: [],
+        }),
+      });
+
+      const response = await fetch(`${baseUrl}/api/runs/run_1/status`, {
+        headers: { Authorization: 'Bearer secret' },
+      });
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body).toEqual({
+        run: expect.objectContaining({
+          id: 'run_1',
+          workspaceId,
+          profileId: 'report-docx',
+          kind: 'revise',
+          skillId: null,
+          status: 'queued',
+          errorCode: null,
+          errorMessage: null,
+        }),
+        terminal: false,
+      });
+      expect(body).not.toHaveProperty('messages');
+    });
+  });
+
   it('does not expose aggregated thinking content to quiet run detail', async () => {
     await withApp(async ({ baseUrl, workspaceId, runners, startNextRun }) => {
       await fetch(`${baseUrl}/api/runs`, {

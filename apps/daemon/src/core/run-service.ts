@@ -86,6 +86,7 @@ export interface CreateRunServiceInput {
 export interface RunService {
   createRun(input: { client: ClientConfig; request: CreateRunRequest }): { runId: string; status: 'queued' };
   listRuns(input: { client: ClientConfig; query?: ListRunsQuery }): RunRecord[];
+  getRunStatus(input: { client: ClientConfig; runId: string }): RunRecord;
   getRunDetail(input: { client: ClientConfig; runId: string }): RunDetailRecord;
   getRequestedEventVisibility(runId: string): EventVisibility | undefined;
   replayRunEvents(input: { client: ClientConfig; runId: string; after?: string | null }): BufferedRunEvent[];
@@ -687,8 +688,12 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       });
     },
 
+    getRunStatus({ client, runId }) {
+      return assertRunReadable(client, runId);
+    },
+
     getRunDetail({ client, runId }) {
-      requireProfileAccess(client, assertRunReadable(client, runId).profileId);
+      assertRunReadable(client, runId);
       const detail = getRunDetail(input.db, {
         runId,
         clientId: client.id,

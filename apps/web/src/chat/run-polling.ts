@@ -1,38 +1,36 @@
-import type { RunDetailResponse, RunStatus } from '../api/types.js';
-
-const terminalStatuses = new Set<RunStatus>(['succeeded', 'failed', 'canceled', 'interrupted']);
+import type { RunStatusResponse } from '../api/types.js';
 
 type WaitForPoll = (intervalMs: number, signal?: AbortSignal) => Promise<void>;
 
-export interface PollRunDetailInput {
+export interface PollRunStatusInput {
   runId: string;
-  getRunDetail: (runId: string) => Promise<RunDetailResponse>;
-  onDetail?: (detail: RunDetailResponse) => void;
+  getRunStatus: (runId: string) => Promise<RunStatusResponse>;
+  onStatus?: (status: RunStatusResponse) => void;
   intervalMs?: number;
   signal?: AbortSignal;
   wait?: WaitForPoll;
 }
 
-export type PollRunDetailResult =
+export type PollRunStatusResult =
   | {
       ok: true;
-      detail: RunDetailResponse;
+      status: RunStatusResponse;
     }
   | {
       ok: false;
       reason: 'aborted';
     };
 
-export async function pollRunDetail(input: PollRunDetailInput): Promise<PollRunDetailResult> {
+export async function pollRunStatus(input: PollRunStatusInput): Promise<PollRunStatusResult> {
   const intervalMs = input.intervalMs ?? 1200;
   const wait = input.wait ?? waitForPoll;
 
   while (!input.signal?.aborted) {
-    const detail = await input.getRunDetail(input.runId);
-    input.onDetail?.(detail);
+    const status = await input.getRunStatus(input.runId);
+    input.onStatus?.(status);
 
-    if (terminalStatuses.has(detail.run.status)) {
-      return { ok: true, detail };
+    if (status.terminal) {
+      return { ok: true, status };
     }
 
     await wait(intervalMs, input.signal);

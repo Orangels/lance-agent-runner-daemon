@@ -3,6 +3,7 @@ import { getProfile, type DaemonConfig } from '../config/profiles.js';
 import { filterRunEvent, filterRunEvents, resolveEventVisibility } from '../core/event-visibility.js';
 import type { RunService } from '../core/run-service.js';
 import type { RunEvent } from '../core/run-events.js';
+import { isTerminalRunStatus } from '../core/run-types.js';
 import type { RunDetailRecord, RunMessageRecord, RunRecord } from '../db/repositories.js';
 import { createSseResponse } from './sse.js';
 import {
@@ -38,6 +39,16 @@ export function createRunsRouter(dependencies: CreateRunsRouterDependencies): Ro
       response.json({
         runs: dependencies.runService.listRuns({ client, query }).map(toPublicRunListItem),
       });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get('/:runId/status', auth, (request, response, next) => {
+    try {
+      const client = (request as AuthenticatedRequest).client;
+      const run = dependencies.runService.getRunStatus({ client, runId: String(request.params.runId) });
+      response.json(toPublicRunStatus(run));
     } catch (error) {
       next(error);
     }
@@ -127,6 +138,27 @@ function toPublicRunListItem(run: RunRecord): Record<string, unknown> {
     finishedAt: run.finishedAt,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
+  };
+}
+
+function toPublicRunStatus(run: RunRecord): Record<string, unknown> {
+  return {
+    run: {
+      id: run.id,
+      workspaceId: run.workspaceId,
+      profileId: run.profileId,
+      kind: run.kind,
+      skillId: run.skillId,
+      status: run.status,
+      queuedAt: run.queuedAt,
+      startedAt: run.startedAt,
+      finishedAt: run.finishedAt,
+      createdAt: run.createdAt,
+      updatedAt: run.updatedAt,
+      errorCode: run.errorCode,
+      errorMessage: run.errorMessage,
+    },
+    terminal: isTerminalRunStatus(run.status),
   };
 }
 
