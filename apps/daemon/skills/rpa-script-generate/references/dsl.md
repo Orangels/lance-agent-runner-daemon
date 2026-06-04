@@ -1,0 +1,132 @@
+# RPA 步骤 DSL 参考
+
+DSL 是自然语言生成和 Playwright codegen 加固的共同中间表示。前端展示、验证截图、审计日志、导入导出和脚本生成都围绕它工作。
+
+## 顶层结构
+
+```json
+{
+  "dsl_version": "1.0",
+  "flow_id": "case_query",
+  "meta": {
+    "title": "案件查询",
+    "source": "nl",
+    "created_at": "2026-06-05T10:00:00+08:00"
+  },
+  "params": {
+    "case_no": {
+      "type": "string",
+      "label": "案件编号",
+      "required": true,
+      "mask": true
+    }
+  },
+  "context": {
+    "base_url": "${BASE_URL}",
+    "storage_state": "secrets/storage_state.json",
+    "default_timeout_ms": 15000
+  },
+  "steps": []
+}
+```
+
+字段要求：
+
+- `dsl_version`：当前使用 `"1.0"`。
+- `flow_id`：小写字母、数字、下划线组成，用于文件名、日志和流程包 manifest。
+- `meta.source`：自然语言生成使用 `"nl"`，codegen 加固使用 `"codegen"`。
+- `params`：运行时业务参数定义，不存真实敏感值。
+- `context`：部署实例配置引用，可以使用 `${ENV}` 占位。
+- `steps`：稳定、有序的业务步骤。
+
+## Step 结构
+
+```json
+{
+  "id": "s3",
+  "name": "提交查询",
+  "action": "submit",
+  "target": {
+    "frame": ["#mainFrame"],
+    "by": "role",
+    "role": "button",
+    "name": "查询",
+    "scope": "s2_query_form"
+  },
+  "value": "${case_no}",
+  "wait": {
+    "before": { "visible": true },
+    "after": { "url_changes": true }
+  },
+  "assert": [
+    {
+      "type": "visible",
+      "target": { "by": "role", "role": "table" }
+    }
+  ],
+  "write": true,
+  "idempotency_key": "case_no",
+  "manual": null
+}
+```
+
+## Action 枚举
+
+- `navigate`：进入 URL。
+- `click`：点击按钮、菜单、链接。
+- `input`：输入文本或日期。
+- `select`：选择下拉、单选、多选。
+- `submit`：触发查询、保存、提交、导出等动作。
+- `assert`：只验证状态。
+- `wait`：等待页面、网络、下载或用户可见状态。
+- `manual`：验证码、CA、USB-Key、登录等人工介入。
+
+## Target 规则
+
+选择器优先级：
+
+```text
+role > label > placeholder > text > testid > id > css
+```
+
+说明：
+
+- 优先使用 Playwright 语义定位，如 `get_by_role`、`get_by_label`。
+- `frame` 表示 iframe 链，按外到内排列。
+- `scope` 用于限定父容器，避免同名按钮误点。
+- `xpath` 只允许作为临时降级策略，并必须进入生成或加固报告。
+- 坐标点击不能作为加固后的最终定位方式。
+
+## Wait 和 Assert
+
+每个关键步骤必须有动作前后等待或结果断言。
+
+常见等待：
+
+- `visible`
+- `enabled`
+- `url_changes`
+- `url_contains`
+- `network_idle`
+- `download`
+- `toast`
+- `table_loaded`
+
+常见断言：
+
+- `visible`
+- `hidden`
+- `text_contains`
+- `url_contains`
+- `row_count_gt`
+- `download_exists`
+
+## 写操作
+
+涉及查询提交、保存、导出、删除、审批、导入等动作时：
+
+- 设置 `write: true`。
+- 能提供幂等依据时设置 `idempotency_key`。
+- verify/dry-run 模式默认不执行不可逆写操作。
+- 审计日志必须记录 step id、action、target、参数摘要和执行结果。
+

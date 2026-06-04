@@ -194,6 +194,8 @@ Body
     mkdirSync(path.join(withGuidesDir, 'guides'));
     const withScriptDir = writeSkill(root, 'script-skill', 'Script body\n');
     mkdirSync(path.join(withScriptDir, 'scripts'));
+    const withTemplatesDir = writeSkill(root, 'templates-skill', 'Templates body\n');
+    mkdirSync(path.join(withTemplatesDir, 'templates'));
     const withSibling = writeSkill(root, 'sibling-skill', 'Sibling body\n');
     writeFileSync(path.join(withSibling, 'notes.md'), 'notes');
 
@@ -205,6 +207,7 @@ Body
       'reference-skill': true,
       'guides-skill': true,
       'script-skill': true,
+      'templates-skill': true,
       'sibling-skill': true,
     });
   });

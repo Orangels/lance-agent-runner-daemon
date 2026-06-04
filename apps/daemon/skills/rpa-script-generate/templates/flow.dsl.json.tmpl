@@ -1,0 +1,45 @@
+{
+  "dsl_version": "1.0",
+  "flow_id": "{{flow_id}}",
+  "meta": {
+    "title": "{{title}}",
+    "source": "nl",
+    "created_at": "{{created_at}}"
+  },
+  "params": {
+    "{{param_name}}": {
+      "type": "string",
+      "label": "{{param_label}}",
+      "required": true,
+      "mask": false
+    }
+  },
+  "context": {
+    "base_url": "${BASE_URL}",
+    "storage_state": "secrets/storage_state.json",
+    "default_timeout_ms": 15000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "name": "打开系统入口",
+      "action": "navigate",
+      "target": {
+        "by": "url",
+        "value": "${BASE_URL}"
+      },
+      "wait": {
+        "after": { "network_idle": true }
+      },
+      "assert": [
+        {
+          "type": "visible",
+          "target": { "by": "role", "role": "main" }
+        }
+      ],
+      "write": false,
+      "manual": null
+    }
+  ]
+}
+

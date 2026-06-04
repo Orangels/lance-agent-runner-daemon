@@ -1,0 +1,51 @@
+import argparse
+import json
+from pathlib import Path
+
+from playwright.sync_api import sync_playwright, expect
+
+
+def load_json(path: str) -> dict:
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def resolve_param(value: str, params: dict, context: dict) -> str:
+    if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
+        key = value[2:-1]
+        if key in params:
+            return params[key]
+        if key in context:
+            return context[key]
+    return value
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", default="config.json")
+    parser.add_argument("--params", default="run.params.json")
+    parser.add_argument("--mode", choices=["verify", "dry-run", "run"], default="verify")
+    args = parser.parse_args()
+
+    config = load_json(args.config)
+    params = load_json(args.params) if Path(args.params).exists() else {}
+    headless = bool(config.get("browser", {}).get("headless", args.mode == "run"))
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=headless, slow_mo=config.get("browser", {}).get("slow_mo_ms", 0))
+        context = browser.new_context(storage_state=config.get("storage_state") or None, accept_downloads=True)
+        page = context.new_page()
+        page.set_default_timeout(config.get("default_timeout_ms", 15000))
+
+        page.goto(config["base_url"])
+        expect(page.locator("body")).to_be_visible()
+
+        # Add generated flow steps here from flow.dsl.json.
+
+        context.close()
+        browser.close()
+
+
+if __name__ == "__main__":
+    main()
+
