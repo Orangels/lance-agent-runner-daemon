@@ -47,7 +47,7 @@ MVP 支持两种 RPA 脚本生产形式：
 1. 自然语言描述生成 Playwright 脚本。
 2. Playwright codegen 录制脚本后加固。
 
-两种形式最终都收敛到同一组产物：
+两种形式最终都收敛到同一组生成/加固产物：
 
 - `flow.dsl.json`
 - `flow.hardened.py`
@@ -55,9 +55,6 @@ MVP 支持两种 RPA 脚本生产形式：
 - `parameterization-report.md`
 - `hardening-report.md`
 - `flow.py`（可选，保留原始/中间脚本）
-- `trace.zip`
-- `videos/*`
-- `execution-log.jsonl`
 
 MVP 生成/加固阶段的必需 artifact 先固定为：
 
@@ -67,7 +64,15 @@ MVP 生成/加固阶段的必需 artifact 先固定为：
 - `parameterization-report.md`
 - `hardening-report.md`
 
-trace、录像、截图、下载文件和执行日志属于 verify/run 阶段产物，不要求在生成阶段一定存在。
+verify/run 阶段还会产生执行产物，但它们归属于 `rpa executionId`，由 RPA Web/executor 管理，不作为 daemon 生成/加固 artifacts：
+
+- `trace.zip`
+- `videos/*`
+- `screenshots/*`
+- `execution-log.jsonl`
+- `downloads/*`
+
+trace、录像、截图、下载文件和执行日志不要求在生成阶段存在，也不要求由 daemon artifact rules 扫描。
 
 ## 非目标
 
@@ -83,14 +88,15 @@ MVP 不做以下内容：
 
 ## MVP 已确认收敛项
 
-- 最终 MVP 包含 **Playwright codegen 上传后加固** 和 **自然语言生成** 两种脚本生产方式；实施顺序先做 codegen 上传加固闭环，再接入自然语言生成。
-- 第一条演示流程 **不做登录**，也不碰验证码、CA/USB-Key、真实写操作。
+- 最终 MVP 包含 **Playwright codegen 上传后加固** 和 **自然语言生成** 两种脚本生产方式；实现时先落地 codegen 上传加固闭环，再接入自然语言生成闭环。这个顺序只是实施切片，不缩小最终 MVP 范围。
+- 本次最终 MVP 的实施切片命名固定为：`codegen 上传加固闭环`、`自然语言生成闭环`、`流程复用与执行闭环`。后续文档和 plan 应使用这些具名切片，不使用含糊的“第一阶段/第二阶段”。
+- 首个演示流程 **不做登录**，也不碰验证码、CA/USB-Key、真实写操作。
 - DSL v0.1 先冻结 `params`、`steps`、`target`、`wait`、`assert`、`write`、`manual` 的最小字段。
 - `<question-form>` MVP 只支持 `radio`、`checkbox`、`select`、`text`、`textarea`。
 - 导出包必需包含 `flow.dsl.json`、`flow.hardened.py`、`config.example.json`、`parameterization-report.md`、`hardening-report.md`、`manifest.json`。
 - 默认不导出 `storage_state`、账号密码、token、cookie、CA/USB-Key 文件、真实业务数据、trace 和录像。
 - 浏览器执行默认优先 Playwright bundled Chromium，同时预留本机 Chrome 路径配置；国产系统兼容性需要尽早单独验证。
-- `rpa-local` profile 先配置 `allowedSkillIds` 和 artifact rules；`chrome-devtools-mcp` 配置先预留，自然语言生成阶段再正式启用。
+- `rpa-local` profile 先配置 `allowedSkillIds` 和生成/加固 artifact rules；`chrome-devtools-mcp` 通过该 profile 使用的 Claude Code `claudeConfigDir` / MCP 配置启用，不新增 daemon core 配置字段。
 
 ## 仓库放置
 
@@ -160,6 +166,8 @@ RPA 本地 B/S 应用负责产品流程。
 - 订阅 daemon SSE 或轮询 run 状态。
 - 调用本地 executor 执行 Playwright 脚本。
 - 展示脚本、加固说明、运行日志、trace、录像。
+- 为 RPA 多轮生成/修订组织业务上下文包，例如原始需求、本轮用户输入、表单答案、上一轮 draft DSL/脚本路径、探查摘要路径和当前阶段 metadata。
+- 不读取 `SKILL.md` 具体内容，也不拼接最终发给 Claude Code 的完整 prompt；`codegen 上传加固闭环` 可先用 legacy 模式只传业务 user prompt，后续 `business-context` 模式传 `currentPrompt` / `businessContext`，最终 prompt 始终由 daemon 注入 skill、side files、profile 约束后生成。
 
 ### `rpa-local-executor`
 
@@ -173,6 +181,8 @@ RPA 本地 B/S 应用负责产品流程。
 - 控制超时、取消、stdout/stderr。
 - 收集 trace、录像、下载文件、执行日志。
 - 将执行结果返回给 RPA Web。
+- 从 RPA Web per-execution 输入目录或导入流程包读取 DSL、脚本和配置模板；per-execution 输入目录由 RPA Web 通过 daemon artifact 下载 API 填充，不直接暴露 daemon workspace 路径给 executor API。
+- 将每次执行的 screenshots、trace、video、downloads、execution-log 写入 RPA Web 管理的 per-execution 输出目录，而不是写回 daemon workspace `output/`。
 
 MVP 边界确认：
 
@@ -180,7 +190,8 @@ MVP 边界确认：
 - 前端不直接调用 Python/Playwright，也不直接管理 executor 子进程。
 - `apps/rpa-local-web` 后端提供执行 API，并在内部调用 executor 模块。
 - executor 只关心一次脚本执行：输入 DSL、脚本、config、运行参数和模式，输出事件、日志、截图和 artifacts。
-- RPA Web 后端负责把 executor 的进程事件包装成前端可订阅的 SSE/HTTP API。
+- RPA Web 后端负责把 executor 的进程事件包装成前端可订阅的 SSE/HTTP API，并负责执行产物列表、下载和保留策略。
+- daemon artifact API 只暴露 Claude Code 生成/加固产物，不暴露 executionId 下的 trace、录像、截图、下载文件。
 - 后续如果需要更强隔离或更高并发，可以保持 RPA Web API 不变，把 executor 内部替换为独立服务或 worker。
 
 需要明确区分两个 ID：
@@ -202,13 +213,17 @@ rpa executionId
 ```text
 用户输入流程描述、目标系统信息、约束
   -> rpa-local-web 创建/复用 workspace
+  -> rpa-local-web 组织本轮业务上下文包
+       currentPrompt: 用户本轮输入
+       businessContext: 原始需求、历史摘要、表单答案、草稿 DSL/脚本路径、探查摘要路径、阶段 metadata
   -> rpa-local-web 调 daemon POST /api/runs
+       promptMode: business-context
        kind: generate
        skillId: rpa-script-generate
-       prompt: 用户描述 + 输出格式要求
+  -> daemon 注入 skill、side files、profile 约束并组装最终 prompt
   -> daemon 启动 Claude Code
   -> Claude Code 产出 DSL 和脚本
-  -> daemon 扫描 artifacts
+  -> daemon 扫描生成/加固 artifacts
   -> rpa-local-web 展示产物
   -> 用户点击本地验证
   -> executor 运行 flow.hardened.py --dry-run
@@ -221,21 +236,25 @@ RPA 工作流编排位置：`apps/rpa-local-web`。
 
 脚本实际执行位置：`apps/rpa-local-web` 的 executor 模块。
 
+自然语言生成中的多轮确认不是依赖 Claude Code CLI 的隐式会话续聊。每一次用户确认、补充或修订都创建新的 daemon run；RPA Web 必须把足够的业务上下文、上一轮产物路径和表单答案传给 daemon，daemon 再统一注入 skill 和 profile 约束，生成本轮最终 prompt。
+
 ### 2. Playwright codegen 录制后加固
 
 ```text
 用户通过本地 Web 启动 codegen 或上传 flow.py
-  -> rpa-local-web 将 flow.py 放入 workspace/input
+  -> rpa-local-web 通过 daemon POST /api/workspaces/:workspaceId/files 上传到 input/flow.py
   -> rpa-local-web 调 daemon POST /api/runs
        kind: generate
        skillId: playwright-rpa-harden
        prompt: 加固 input/flow.py 并输出标准产物
+  -> daemon 注入 skill、side files、profile 约束并组装最终 prompt
   -> daemon 启动 Claude Code
   -> Claude Code 加固脚本
-  -> daemon 扫描 artifacts
+  -> daemon 扫描生成/加固 artifacts
+  -> rpa-local-web 通过 daemon artifact API 下载 DSL/脚本到 per-execution 输入目录
   -> rpa-local-web 展示加固说明和脚本
   -> 用户点击本地验证
-  -> executor 运行 flow.hardened.py --dry-run
+  -> executor 运行 per-execution 输入目录中的 flow.hardened.py --dry-run
   -> rpa-local-web 展示执行结果和留痕
 ```
 
@@ -246,18 +265,30 @@ codegen 的启动方式 MVP 可先简化：
 
 MVP 建议先做方案 A，降低本地 GUI/浏览器进程管理复杂度。方案 B 作为增强。
 
+`codegen 上传加固闭环` 先只支持单文件 `flow.py`。如果 codegen 录制结果依赖多个 Python 模块、资源文件或复杂目录结构，先要求用户合并为单文件，或作为后续多文件流程包能力处理。
+
+`codegen 上传加固闭环` 可先使用 daemon 当前已支持的 legacy `generate + skillId + prompt` 请求。这里的 `prompt` 只是业务用户请求，不包含 `SKILL.md` 正文或最终系统约束；daemon 仍负责 staging skill 并组装最终 prompt。后续 `business-context` 能力落地后，codegen 修订链路也可以切换为 `promptMode: business-context`，但它不是 codegen 上传加固先行演示闭环的前置条件。
+
+### RPA Web 与 daemon 文件交换
+
+RPA Web 是 daemon 的 HTTP 客户端，不能依赖 API 返回 daemon workspace 绝对路径。
+
+- **输入方向：** `codegen 上传加固闭环` 上传 `flow.py` 优先使用 daemon 已有 `POST /api/workspaces/:workspaceId/files`，目标路径为 `input/flow.py`。如果本地单机部署已经配置共享 `allowedInputRoots`，也可以使用 `POST /api/workspaces/:workspaceId/prepare`，但共享文件系统不是产品 API contract。
+- **输出方向：** daemon 生成/加固完成后，RPA Web 通过 `GET /api/runs/:runId/artifacts` 和 artifact download API 获取 `flow.dsl.json`、`flow.hardened.py`、`config.example.json` 等产物，并复制到 RPA Web 自己管理的 flow storage 或 per-execution 输入目录。
+- **执行方向：** executor 只读取 RPA Web 准备好的 per-execution 输入目录或导入流程包，不直接读取 daemon workspace `output/` 路径。SaaS 分支未来可以保持同一 RPA Web/executor API，把 artifact 下载替换为对象存储或 worker 分发。
+
 ## 演示流程选择
 
-第一条 PoC 流程必须低风险、可重复、可解释：
+首个 PoC 流程必须低风险、可重复、可解释：
 
 - 不做登录，不依赖账号密码、验证码、CA/USB-Key 或客户真实认证环境。
 - 不做真实写操作；如页面存在提交动作，verify 阶段必须 dry-run 或使用测试页面。
 - 优先选择公开页面、内部 mock 页面或半真实只读页面。
-- 下载文件必须可控，下载目录按 run 独立创建。
+- 下载文件必须可控，下载目录按 execution 独立创建。
 - 页面步骤要能覆盖 RPA MVP 的关键能力：参数表单、点击/输入/选择、显式等待、断言、截图高亮、trace/日志、导入导出。
-- codegen 上传加固路径优先作为第一阶段演示主线；自然语言生成作为同一 MVP 的第二阶段接入。
+- codegen 上传加固路径作为先行演示主线；自然语言生成同属本次最终 MVP，按 `自然语言生成闭环` 实施切片接入。
 
-这个约束只限制第一条 MVP demo，不限制后续真实客户流程。真实流程中的登录、验证码、CA/USB-Key 和人工介入通过 DSL `manual` 字段和执行期配置逐步支持。
+这个约束只限制首个 MVP demo，不限制后续真实客户流程。真实流程中的登录、验证码、CA/USB-Key 和人工介入通过 DSL `manual` 字段和执行期配置逐步支持。
 
 ## 统一步骤 DSL / Schema 草案
 
@@ -483,18 +514,33 @@ Claude Code
   -> 产出参数候选和 parameterization-report.md
   -> 在生成脚本前使用 AskQuestion 收集/确认变量参数
   -> 无真实 AskQuestion 工具时，输出等价的 <question-form> JSON
-  -> RPA Web 渲染表单并把答案作为下一轮普通用户消息回传
-  -> 更新 flow.dsl.json.params 和 step.value 引用
-  -> 更新 flow.hardened.py
+  -> RPA Web 渲染表单并收集用户答案
+  -> RPA Web 创建新的 daemon run
+       当前 daemon 未支持 `revise + skillId` 前：使用 generate + skillId，把表单答案和上一轮产物路径写入业务 prompt
+       后续 business-context 落地后：使用 revise + skillId + business-context
+       currentPrompt: 根据用户确认继续参数化/加固
+       businessContext: formAnswers、previousDaemonRunId、draftDslPath、draftScriptPath、原始需求、阶段 metadata
+  -> daemon 注入 skill、side files、profile 约束并组装最终 prompt
+  -> Claude Code 更新 flow.dsl.json.params 和 step.value 引用
+  -> Claude Code 更新 flow.hardened.py
 ```
 
 生成/加固期确认交互采用和 lanceDesign `kami-landing` 类似的约束：skill 明确要求 Claude Code **Use AskQuestion (or equivalent)**。这里的 AskQuestion 是交互意图和流程约束，不是 daemon 专用 `userQuestion` 事件；如果当前 Claude Code CLI 环境没有真实 AskQuestion 工具，Claude Code 必须手动输出等价的 `<question-form>` 文本协议。
 
+MVP 先固定轻量版本化协议：
+
+- `<question-form>` 必须声明 `version`、`id`、`title` 和 `questions`。
+- `version` 先使用 `rpa-question-form.v0.1`。
+- `questions[].type` 只支持 `radio`、`checkbox`、`select`、`text`、`textarea`。
+- `questions[].id` 必须稳定，作为后续 `formAnswers` 的 key。
+- 当前 daemon 未支持 `business-context` 前，表单答案由 RPA Web 放入下一轮业务 prompt 的 `[form answers — id]` 摘要；后续放入 `businessContext.formAnswers`，并可在 `currentPrompt` 中附带一份可读摘要，方便日志和复盘。
+
 等价的 `<question-form>` 示例：
 
 ```html
-<question-form id="rpa-parameterization" title="确认可变参数">
+<question-form id="rpa-parameterization" title="确认可变参数" version="rpa-question-form.v0.1">
 {
+  "version": "rpa-question-form.v0.1",
   "description": "我从录制/探查中发现这些固定值，请确认哪些以后执行时需要填写。",
   "questions": [
     {
@@ -515,15 +561,16 @@ Claude Code
 职责分工：
 
 - **Claude Code / skill**：在生成 `flow.py` / `flow.hardened.py` 前，先使用 AskQuestion 收集/确认变量参数；无真实 AskQuestion 工具时，输出合法 `<question-form>` JSON，并在表单后停止本轮生成。
-- **daemon**：只透传 assistant 文本、SSE、日志和 artifacts，不理解 question form，也不挂起业务状态。
-- **RPA Web**：解析 assistant 文本中的 `<question-form>`，渲染 radio / checkbox / select / text / textarea，用户提交后生成下一轮普通消息。MVP 不支持 `direction-cards`，后续需要更强视觉选择时再加。
-- **Claude Code 下一轮**：读取 `[form answers — rpa-parameterization]`，继续更新 `parameterization-report.md`、`flow.dsl.json` 和脚本。
+- **daemon**：只透传 assistant 文本、SSE、日志和 artifacts，不理解 question form，也不挂起 RPA 业务状态；当前阶段可继续使用 `generate + skillId`，后续 `business-context` 落地后由 daemon 根据 `currentPrompt` / `businessContext` 重新组装最终 prompt。
+- **RPA Web**：解析 assistant 文本中的 `<question-form>`，渲染 radio / checkbox / select / text / textarea；用户提交后保存表单答案，并把表单答案、上一轮产物路径和阶段 metadata 传给下一轮 daemon run。MVP 不支持 `direction-cards`，后续需要更强视觉选择时再加。
+- **Claude Code 下一轮**：当前阶段读取业务 prompt 中的 `[form answers — rpa-parameterization]` 和产物路径；后续读取 daemon 注入后的业务上下文中的 `[form answers — rpa-parameterization]` / `businessContext.formAnswers`，继续更新 `parameterization-report.md`、`flow.dsl.json` 和脚本。
 
-用户提交后的消息示例：
+用户提交后的可读摘要示例：
 
 ```text
 [form answers — rpa-parameterization]
-- 查询日期是否作为运行参数？: 是，每次执行都填写 [value: param]
+version: rpa-question-form.v0.1
+- date_range: param
 ```
 
 日常执行阶段：
@@ -603,22 +650,35 @@ MVP 参数化最小闭环：
 1. 生成/加固 run 输出 `parameterization-report.md`。
 2. 前端展示候选常量，例如日期、单位、查询条件、下载类型。
 3. 用户勾选哪些变成参数，并设置 label/type/widget/default。
-4. 再跑一次 revise/generate，更新 DSL 和脚本。
+4. 当前 daemon 未支持 `revise + skillId` 前，再跑一次 `generate + skillId` 更新 DSL 和脚本；后续 `business-context` 能力落地后，改为 `revise + skillId + business-context` 表达同一流程的多轮修订。
 5. verify 模式用一组不同参数验证脚本泛化成功。
 
 ### MVP 落地策略
 
-第一版不追求完备 schema。从一条真实 PoC 流程反向定义最小 DSL，验证以下闭环：
+第一版不追求完备 schema。从一条真实 PoC 流程反向定义最小 DSL，先验证 codegen 上传加固最小闭环：
 
 ```text
-codegen flow.py 或自然语言描述
+codegen flow.py
   -> flow.dsl.json
   -> flow.hardened.py
-  -> verify 模式可视化验证
-  -> run 模式 headless 执行
-  -> 导出 .rpa.zip
-  -> 导入后重新 verify
+  -> verify + dry-run 可视化验证
+  -> 保存 executionId 下的截图、日志和可选 trace/录像
 ```
+
+同一最终 MVP 中的 `自然语言生成闭环` 继续完成：
+
+```text
+自然语言描述
+  -> chrome-devtools-mcp 探查
+  -> <question-form> 确认不确定信息和参数化候选
+  -> flow.dsl.json
+  -> flow.hardened.py
+  -> verify + dry-run 可视化验证
+```
+
+`.rpa.zip` 导入导出、headless 正式 run、trace/录像留痕属于本次最终 MVP 的 `流程复用与执行闭环`，但不阻塞 codegen 上传加固先行演示闭环。
+
+`codegen 上传加固闭环` 不以前置落地 `business-context` 为条件。它可以使用 daemon 当前已有的 legacy `generate + skillId + prompt`；自然语言多轮确认、参数化修订和更完整的跨轮上下文在 `自然语言生成闭环` 中依赖 `business-context` / `revise + skillId` 能力。
 
 MVP 先支持这些 action：`navigate`、`click`、`input`、`submit`、`assert`、`manual`。`select`、复杂表格编辑、多分支流程、多窗口流程后置。
 
@@ -665,19 +725,22 @@ CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS=1
 
 ### 与 daemon 的关系
 
-`chrome-devtools-mcp` 配置在 RPA profile 的 Claude Code MCP 环境里。
+`chrome-devtools-mcp` 不进入 daemon core，也不新增 daemon 专用 MCP 配置字段。它应配置在 RPA profile 所使用的 Claude Code `claudeConfigDir` 下，由 Claude Code 按自身 MCP 配置加载。
 
 ```text
 rpa-local-web
   -> daemon POST /api/runs
-     -> Claude Code
-        -> chrome-devtools-mcp
-           -> 本机专用 Chrome profile
-              -> 探查内网页面
+     profileId: rpa-local
+     skillId: rpa-script-generate
+     -> daemon 按 profile 启动 Claude Code
+        -> Claude Code 读取该 claudeConfigDir 下的 MCP 配置
+           -> chrome-devtools-mcp
+              -> 本机专用 Chrome profile
+                 -> 探查内网页面
         -> 输出 flow.dsl.json / flow.py / flow.hardened.py
 ```
 
-daemon 仍然不理解 RPA 业务语义。它只按 profile 启动 Claude Code，并让 Claude Code 使用该 profile 配置好的 MCP server。
+daemon 仍然不理解 RPA 业务语义，也不理解 MCP server 的业务用途。它只负责选择 profile、准备 workspace、staging skill、启动 Claude Code 和扫描生成/加固 artifacts。
 
 ### 安全约束
 
@@ -728,7 +791,7 @@ apps/daemon/skills/
 - 每步断言。
 - `dry_run`。
 - 审计日志。
-- trace/录像。
+- 脚本支持 trace/录像开关，但实际 trace/录像由 executor 在 verify/run 阶段生成和保存。
 - 参数化配置。
 - 参数化候选和高风险动作需要确认时，先用 AskQuestion；无真实 AskQuestion 工具时输出 `<question-form>`，由 RPA Web 渲染后回传答案。
 - 输出 `flow.hardened.py` 和 `hardening-report.md`。
@@ -747,8 +810,8 @@ rpa-local
 - `allowedSkillIds` 包含 `rpa-script-generate` 和 `playwright-rpa-harden`。
 - `profileConcurrency` 初期建议为 `1`。
 - `permissionMode` 由本地受控配置决定，不能由请求覆盖。
-- `artifactRules` 覆盖脚本、DSL、trace、录像、执行报告。
-- `chrome-devtools-mcp` 先预留配置入口；codegen 上传加固阶段不依赖它，自然语言生成阶段再正式启用。
+- `artifactRules` 只覆盖 Claude Code 生成/加固产物，例如脚本、DSL、配置模板和报告。
+- `chrome-devtools-mcp` 通过该 profile 使用的 Claude Code `claudeConfigDir` / MCP 配置启用；codegen 上传加固阶段不依赖它，自然语言生成阶段再正式启用。
 
 artifact rule 建议：
 
@@ -759,14 +822,23 @@ output/flow.hardened.py
 output/config.example.json
 output/parameterization-report.md
 output/hardening-report.md
-output/traces/**/*.zip
-output/videos/**/*
-output/execution-log.jsonl
 ```
 
-其中 `flow.dsl.json`、`flow.hardened.py`、`config.example.json`、`parameterization-report.md`、`hardening-report.md` 是生成/加固阶段必需产物；trace、录像和执行日志是 verify/run 阶段产物。
+其中 `flow.dsl.json`、`flow.hardened.py`、`config.example.json`、`parameterization-report.md`、`hardening-report.md` 是生成/加固阶段必需产物。
 
-daemon 只按规则扫描产物，不解释 RPA 业务语义。
+verify/run 阶段产物由 RPA Web 的 execution storage 管理，例如：
+
+```text
+executions/<executionId>/screenshots/**/*
+executions/<executionId>/trace.zip
+executions/<executionId>/videos/**/*
+executions/<executionId>/downloads/**/*
+executions/<executionId>/execution-log.jsonl
+```
+
+这些执行产物通过 RPA Web 执行 API 列出和下载，不进入 daemon artifact rules。
+
+daemon 只按规则扫描生成/加固产物，不解释 RPA 业务语义。
 
 ## 本地 B/S 运行形态
 
@@ -889,7 +961,14 @@ GET  /api/rpa/executions/:executionId/events
 POST /api/rpa/executions/:executionId/cancel
 GET  /api/rpa/executions/:executionId/logs
 GET  /api/rpa/executions/:executionId/screenshots/:fileName
+GET  /api/rpa/executions/:executionId/artifacts
 GET  /api/rpa/executions/:executionId/artifacts/:artifactId/download
+```
+
+执行状态先固定为：
+
+```text
+queued | running | succeeded | failed | canceled
 ```
 
 创建执行请求示例：
@@ -899,8 +978,12 @@ GET  /api/rpa/executions/:executionId/artifacts/:artifactId/download
   "flowId": "case_query",
   "workspaceId": "ws_123",
   "daemonRunId": "run_123",
-  "dslPath": "output/flow.dsl.json",
-  "scriptPath": "output/flow.hardened.py",
+  "inputSource": {
+    "type": "daemon-artifacts",
+    "dslArtifactId": "art_dsl_001",
+    "scriptArtifactId": "art_script_001",
+    "configArtifactId": "art_config_001"
+  },
   "mode": "verify",
   "headless": false,
   "dryRun": true,
@@ -911,6 +994,16 @@ GET  /api/rpa/executions/:executionId/artifacts/:artifactId/download
 }
 ```
 
+`daemonRunId` 只是可选关联字段，用于从 daemon 生成/加固 run 追溯到本次 execution。导入 `.rpa.zip` 后执行、本地已有流程执行、或后续从 SaaS 下发流程时，可以没有 `daemonRunId`。
+
+`inputSource.type` 先固定为三类：
+
+- `daemon-artifacts`：从 daemon run 的 artifact list/download API 获取 DSL、脚本和配置模板；`codegen 上传加固闭环` 的验证使用这一类。
+- `imported-package`：从已导入的 `.rpa.zip` 流程包读取 DSL、脚本和配置模板；导入导出阶段使用这一类。
+- `local-flow`：从 RPA Web 已保存的本地流程版本读取 DSL、脚本和配置模板；脚本确认后日常执行使用这一类。
+
+RPA Web 后端收到 `inputSource.type = daemon-artifacts` 后，应先通过 daemon artifact download API 把 DSL、脚本和配置模板复制到本次 execution 的输入目录，再把该本地输入目录交给 executor。executor API 不接受 daemon workspace 绝对路径，也不要求前端知道 daemon workspace 内部布局。
+
 响应示例：
 
 ```json
@@ -919,6 +1012,27 @@ GET  /api/rpa/executions/:executionId/artifacts/:artifactId/download
   "status": "queued"
 }
 ```
+
+执行产物列表响应示例：
+
+```json
+{
+  "executionId": "exec_123",
+  "artifacts": [
+    {
+      "artifactId": "art_trace_001",
+      "type": "trace",
+      "fileName": "trace.zip",
+      "relativePath": "trace.zip",
+      "size": 102400,
+      "createdAt": "2026-06-05T10:00:00+08:00",
+      "downloadable": true
+    }
+  ]
+}
+```
+
+执行 artifact 类型先固定为：`screenshot`、`trace`、`video`、`log`、`download`、`report`。下载接口必须只接受 RPA Web 已登记的 `artifactId`，不能让前端传任意路径。
 
 ### 前端验证事件
 
@@ -956,7 +1070,7 @@ MVP 事件类型先固定为：
 - `step.completed`
 - `step.failed`
 - `artifact.created`
-- `execution.cancelled`
+- `execution.canceled`
 - `execution.completed`
 - `execution.failed`
 
@@ -972,9 +1086,11 @@ MVP 事件类型先固定为：
 - daemon 目录隔离仍按当前设计执行。
 - 每个 workspace/run 独立目录。
 - executor 每次执行使用独立 working directory。
+- executor 从 RPA Web per-execution 输入目录或导入流程包读取 DSL、脚本和配置模板；per-execution 输入目录由 RPA Web 通过 daemon artifact download API 或导入包解压生成。
+- daemon artifact API 不暴露 executionId 下的 trace、录像、截图、下载文件和执行日志。
 - 不复用业务系统 cookie/storage，除非用户显式配置 `storage_state`。
 - `storage_state`、账号密码、token、cookie、CA/USB-Key 文件属于本地敏感配置，不进入 `.rpa.zip`，也不作为普通 artifact 暴露下载。
-- 下载目录、trace 目录、录像目录按 run 独立创建，执行结束后由本地留痕策略决定保留或清理。
+- 下载目录、trace 目录、录像目录按 execution 独立创建，执行结束后由本地留痕策略决定保留或清理。
 - 写操作默认支持 `dry_run`。
 - 敏感动作应在脚本中保留确认点或人工介入点。
 
@@ -983,12 +1099,14 @@ MVP 事件类型先固定为：
 - API 响应暴露本地绝对路径。
 - 脚本硬编码账号、密码、token、CA 凭据。
 - 在默认导出流程中夹带 `storage_state`、trace、录像或真实下载文件。
-- 不同 run 共用下载目录、trace 目录、录像目录。
+- 不同 execution 共用下载目录、trace 目录、录像目录。
 - executor 长时间挂住不退出。
 
 ## RPA 流程包导入 / 导出
 
 需要支持把 A 用户生成并验证过的通用流程导出给 B 用户使用。导入导出的单位不是单个 Python 脚本，而是 RPA 流程包。
+
+导入导出是本次最终 MVP 的流程包能力，但不是 codegen 上传加固先行演示闭环的前置条件。建议先完成 codegen -> DSL/脚本 -> verify dry-run，再实现 `.rpa.zip` 导出、导入和导入后重新 verify。
 
 推荐包格式：
 
@@ -1125,19 +1243,35 @@ SaaS executor = server worker / Browserless / container worker
 
 对策：Claude Code run 只负责生成/加固；脚本执行由 executor 管。
 
-## MVP 最小功能清单
+## MVP 功能清单
+
+本节列出的是本次最终 MVP 的目标和实施切片。实施切片用于降低实现风险，不代表裁剪最终目标。
+
+### MVP 实施切片：codegen 上传加固闭环
 
 1. 新增 `apps/rpa-local-web`。
 2. RPA Web 能配置 daemon URL 和 API key。
 3. RPA Web 能创建/复用 `rpa-local` workspace。
-4. 支持上传 `flow.py` 后提交加固 run，作为第一阶段闭环主线。
-5. 支持自然语言提交生成 run，作为同一 MVP 的第二阶段功能接入。
-6. 支持 SSE 展示 Claude Code 生成/加固过程。
-7. 支持 AskQuestion 等价协议：解析 Claude Code 输出的 `<question-form>` 并回传表单答案。
-8. 支持列出和下载 artifacts。
-9. 支持 executor 本地运行 `flow.hardened.py --dry-run`。
-10. 支持展示执行 stdout/stderr、状态、trace、录像、执行日志。
-11. 文档明确本地 B/S MVP 与 SaaS 后续分支的复用边界。
+4. 支持通过 daemon `POST /api/workspaces/:workspaceId/files` 上传 `flow.py` 到 `input/flow.py`。
+5. 使用当前 daemon 已支持的 legacy `generate + skillId + prompt` 提交 codegen 加固 run，由 daemon 注入 skill、side files 和 profile 约束。
+6. 支持 SSE 展示 Claude Code 加固过程。
+7. 支持列出和下载 daemon 生成/加固 artifacts：`flow.dsl.json`、`flow.hardened.py`、`config.example.json`、`parameterization-report.md`、`hardening-report.md`。
+8. 支持 executor 本地运行 `flow.hardened.py --dry-run`。
+9. 支持 execution 状态、SSE 事件、取消、stdout/stderr、每步截图和执行日志。
+10. 支持 RPA Web 执行 artifact 列表和下载，至少覆盖截图和执行日志；trace/录像可作为该切片的增强项。
+
+### MVP 实施切片：自然语言生成闭环
+
+1. 落地 daemon `business-context` / `revise + skillId` 能力，用于同一业务 skill 的多轮确认和修订。
+2. 支持自然语言提交生成 run，使用 `rpa-script-generate` skill 和 `chrome-devtools-mcp` 探查页面。
+3. 支持 AskQuestion 等价协议：解析 Claude Code 输出的 `<question-form>`，渲染表单，并通过下一轮 `business-context` 回传答案。
+
+### MVP 实施切片：流程复用与执行闭环
+
+1. 支持执行期参数表单：RPA Web 根据 `flow.dsl.json.params` 渲染组件并生成 `run.params.json`。
+2. 支持 `.rpa.zip` 导出、导入和导入后重新 verify。
+3. 支持 confirmed flow 的 headless run 模式、trace/录像留痕和保留策略。
+4. 文档明确本地 B/S MVP 与 SaaS 后续分支的复用边界。
 
 ## 已落地的 skill 草案
 
