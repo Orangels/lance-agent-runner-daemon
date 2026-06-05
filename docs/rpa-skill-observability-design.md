@@ -65,6 +65,8 @@ rpa executionId
 
 同一个 `daemonRunId` 可能对应多次 execution，例如首次 verify、修复后复验、正式 run。
 
+同一个 `flowId` 可能跨多个 `daemonRunId` 演进，例如首次生成、参数确认后重新生成、加固修复后再验证。RPA 复盘时应把 `flowId` 作为跨 run 的关联键，把 `daemonRunId` 作为某次 Claude Code 生成/加固任务，把 `executionId` 作为某次本地执行任务。
+
 RPA Web 创建 execution 时必须记录：
 
 - `daemonRunId`
@@ -108,17 +110,19 @@ RPA 需要在 review 时快速判断 Claude Code 产物是否符合约束。
 
 RPA 生成脚本是否可用，最终要看 executor 结果。
 
-每个 execution 应保存：
+每个 execution 应按 `collectionMode` 保存或引用：
 
 ```text
 execution.json
 execution-log.jsonl
-screenshots/*
-trace.zip
-video.webm
+screenshots/*   # optional, controlled by collectionMode
+trace.zip       # optional high-sensitive file
+video.webm      # optional high-sensitive file
 stdout.log
 stderr.log
 ```
+
+其中截图、trace、video、downloads 的落盘和导出策略以后文的 RPA 保存矩阵为准。
 
 `execution.json` 示例：
 
@@ -163,45 +167,37 @@ RPA 专属反馈字段建议：
 }
 ```
 
-RPA `category` 建议：
+RPA 专属 `category` 只追加 RPA 业务分类。通用的 `prompt`、`skill`、`artifact`、`ux` 等分类继续走通用反馈字段。
 
 ```text
-prompt | skill | dsl | selector | wait | assert | parameterization | write-risk | manual-step | artifact | executor | ux
+dsl | selector | wait | assert | parameterization | write-risk | manual-step | executor
 ```
 
 ## RPA Review Bundle 扩展目录
 
-RPA 内容放在通用 bundle 的 `extensions/rpa/` 下。
+RPA 内容放在通用 bundle 的 `extensions/rpa/` 下。通用顶层结构见 `docs/business-skill-observability-design.md`，本文件只定义 RPA 扩展子树，避免重复定义通用 bundle 结构。
 
 推荐结构：
 
 ```text
-business-skill-review-bundle.zip
-+-- manifest.json
-+-- review-summary.md
-+-- diagnostics.json
-+-- prompt-snapshot.md
-+-- skill/
-+-- logs/
-+-- artifacts/
-+-- extensions/
-    +-- rpa/
-        +-- extension-manifest.json
-        +-- rpa-summary.md
-        +-- rpa-diagnostics.json
-        +-- dsl-validation.json
-        +-- artifact-validation.json
-        +-- executions/
-            +-- exec_123/
-                +-- execution.json
-                +-- execution-log.jsonl
-                +-- screenshots/
-                +-- trace.zip
-                +-- video.webm
-        +-- feedback.jsonl
+extensions/
++-- rpa/
+    +-- extension-manifest.json
+    +-- rpa-summary.md
+    +-- rpa-diagnostics.json
+    +-- dsl-validation.json
+    +-- artifact-validation.json
+    +-- executions/
+        +-- exec_123/
+            +-- execution.json
+            +-- execution-log.jsonl
+            +-- screenshots/
+            +-- trace.zip
+            +-- video.webm
+    +-- feedback.jsonl
 ```
 
-`extension-manifest.json` 示例：
+`extension-manifest.json` 示例。`flowId` 即跨多个 `daemonRunId` 的复盘关联键：
 
 ```json
 {
@@ -231,9 +227,22 @@ business-skill-review-bundle.zip
 
 ```json
 {
+  "limits": {
+    "maxItemsPerList": 20,
+    "omitted": {
+      "fragileSelectors": 3
+    }
+  },
   "missingArtifacts": ["parameterization-report.md"],
   "schemaErrors": ["steps[2].assert is empty"],
   "fragileSelectors": ["steps[3].target.by=css"],
+  "missingWaits": ["step_002"],
+  "manualSteps": [
+    {
+      "stepId": "step_004",
+      "reason": "需要用户处理验证码或 CA/USB-Key"
+    }
+  ],
   "unconfirmedWriteSteps": ["step_005"],
   "parameterizationIssues": [
     {
@@ -263,40 +272,42 @@ business-skill-review-bundle.zip
 - 失败步骤和截图在哪里。
 - 最可能需要修改哪个 skill 指令、reference 或 template。
 
-## RPA 体积控制
+## RPA 体积控制与脱敏
 
-RPA 扩展尤其容易产生大文件：截图、trace、video、下载文件、网页内容和 tool result 都可能很大。
+RPA 扩展尤其容易产生大文件和高敏材料：截图、trace、video、下载文件、网页内容和 tool result 都可能很大，也可能包含身份证号、手机号、案件号、单位名称等屏幕级敏感信息。
 
-默认策略：
+RPA 扩展必须复用通用 `collectionMode = lite | diagnostic | review` 与权限封顶规则。`eventVisibility = quiet | normal | debug` 只影响 SSE/API 实时事件可见性，不决定 RPA 复盘材料是否落盘或导出。
 
-- normal 模式只保留 execution 最终摘要和失败步骤 id。
-- debug 模式保留失败步骤截图、execution-log、trace；每步截图可配置。
-- review 模式由用户显式导出，可选择是否包含 video、trace、downloads。
+RPA 保存矩阵建议：
+
+| 材料 | lite | diagnostic | review |
+| --- | --- | --- | --- |
+| `execution.json` 摘要 | 保存 | 保存 | 保存 |
+| `rpa-summary.md` / `rpa-diagnostics.json` | 保存摘要 | 保存摘要 | 保存摘要 |
+| `execution-log.jsonl` | 不默认保存全文 | 保存脱敏摘要或尾部片段 | 保存脱敏全文，受大小上限 |
+| 失败步骤截图 | 不默认保存 | 可配置保存本地 path/hash，不默认内联 | 用户显式确认后导出，进入 large files manifest |
+| 全步骤截图 | 不保存 | 不默认保存 | 用户显式确认后可选导出 |
+| `trace.zip` | 不保存 | 不默认保存，仅记录 path/hash | 高敏文件，用户显式确认后可选导出 |
+| `video.webm` | 不保存 | 不默认保存 | 用户显式确认后可选导出 |
+| downloads | 不保存 | 不默认保存 | 用户显式确认后可选导出 |
+
+脱敏规则：
+
 - `rpa-summary.md` 不内联 trace、video、完整 DOM、完整 tool result。
-- 大文件进入 `largeFiles` manifest，通过 path/hash 引用。
+- 大文件进入通用 `largeFiles` manifest，通过 path/hash 引用。
+- `trace.zip` 因包含 DOM 快照、网络信息和页面文本，按高敏材料处理，默认只记录 path/hash，不内联内容。
+- 截图和 video 可能包含屏幕级敏感信息，默认不进入 `lite` / `diagnostic` bundle；`review` 导出时需要用户显式确认。
+- `execution-log.jsonl`、`feedback.jsonl` 和错误信息走通用脱敏流水线，并追加 RPA 规则：按 DSL `params[].mask`、字段名和常见证件/手机号模式脱敏。
 - 默认不导出 `storage_state`、账号密码、token、cookie、CA/USB-Key 文件。
-
-建议默认保留：
-
-- 失败步骤截图。
-- `execution.json`。
-- `execution-log.jsonl`。
-- `rpa-diagnostics.json`。
-
-建议可选保留：
-
-- 全部步骤截图。
-- trace.zip。
-- video.webm。
-- downloads。
 
 ## RPA MVP 必须补齐
 
-1. RPA Web 创建 execution 时保存 `daemonRunId`。
-2. execution 失败步骤、错误、截图、trace、执行日志可进入 RPA extension bundle。
-3. DSL/artifact 校验结果可进入 `rpa-diagnostics.json`。
-4. `rpa-summary.md` 控制 token 体积，优先给 AI 复盘读取。
-5. RPA 用户反馈能关联 `daemonRunId`、`executionId`、`stepId` 和 artifact。
+1. RPA Web 创建 execution 时保存 `daemonRunId`、`flowId` 和 `executionId` 关联。
+2. RPA 扩展遵守通用 `collectionMode` 与权限封顶规则。
+3. execution 失败步骤、错误、截图、trace、执行日志按 RPA 保存矩阵记录或导出到 extension bundle。
+4. DSL/artifact 校验结果可进入 `rpa-diagnostics.json`，并对列表设置上限和 omitted 计数。
+5. `rpa-summary.md` 控制 token 体积，优先给 AI 复盘读取。
+6. RPA 用户反馈能关联 `daemonRunId`、`executionId`、`stepId` 和 artifact，并走 RPA 专属脱敏规则。
 
 ## 使用方式
 
