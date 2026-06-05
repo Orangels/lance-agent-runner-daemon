@@ -44,10 +44,11 @@ Completed so far:
 - Slice 1a `Daemon Business Context And Minimal Snapshot Guard` landed in commit `1d4b5b8`.
 - Slice 1b `Daemon-Composed Conversation Context` landed in commit `2bb593e`.
 - `RPA Workspace Package Skeleton` landed in commit `e75a5ef`.
+- `RPA DSL And Artifact Contract` landed in commit `b39829d`.
 
 Next planned slice:
 
-- `RPA DSL And Artifact Contract`.
+- `RPA Execution Backend And Local Executor`.
 
 ## Implementation Dependency Map
 
@@ -61,7 +62,7 @@ Daemon-composed conversation context (completed generic daemon capability)
 RPA workspace skeleton (completed)
   -> Gives product code a home without touching apps/web
 
-RPA DSL/artifact contract
+RPA DSL/artifact contract (completed)
   -> Codegen hardening and natural-language generation can share executor/UI/import/export
 
 RPA backend executor + minimal verification UI
@@ -223,11 +224,13 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 
 ---
 
-## Slice: RPA DSL And Artifact Contract
+## Slice: RPA DSL And Artifact Contract (Completed)
 
 **Purpose:** Freeze the MVP schema and artifact contract used by both script production modes, executor, import/export, and observability.
 
 **Execution plan:** `docs/superpowers/plans/2026-06-06-rpa-dsl-artifact-contract.md`
+
+**Status:** Completed in commit `b39829d`.
 
 **Files likely created:**
 
@@ -240,12 +243,12 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 
 **Tasks:**
 
-- [ ] Define DSL v0.1 TypeScript types for `params`, `steps`, `target`, `wait`, `assert`, `write`, and `manual`.
-- [ ] Define required generation artifacts: `flow.dsl.json`, `flow.hardened.py`, `config.example.json`, `parameterization-report.md`, `hardening-report.md`.
-- [ ] Validate DSL before execution and before `.rpa.zip` import.
-- [ ] Validate daemon artifacts after generation/hardening before copying them into RPA flow storage.
-- [ ] Add readable validation errors suitable for UI display and `rpa-diagnostics.json`.
-- [ ] Add parameter form model derived from `flow.dsl.json.params`.
+- [x] Define DSL v0.1 TypeScript types for `params`, `steps`, `target`, `wait`, `assert`, `write`, and `manual`.
+- [x] Define required generation artifacts: `flow.dsl.json`, `flow.hardened.py`, `config.example.json`, `parameterization-report.md`, `hardening-report.md`.
+- [x] Validate DSL before execution and before `.rpa.zip` import.
+- [x] Validate daemon artifacts after generation/hardening before copying them into RPA flow storage.
+- [x] Add readable validation errors suitable for UI display and `rpa-diagnostics.json`.
+- [x] Add parameter form model derived from `flow.dsl.json.params`.
 
 **Acceptance:**
 

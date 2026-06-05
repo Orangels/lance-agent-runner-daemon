@@ -8,6 +8,17 @@
 
 **Tech Stack:** TypeScript ESM, Vitest, Ajv for JSON Schema consistency tests, Node `crypto`/`fs`/`path`, existing `@lance-agent-runner/rpa-local-web` package, handwritten runtime validation helpers.
 
+**Status:** Completed in commit `b39829d`.
+
+**Verification evidence:**
+
+- `pnpm --filter @lance-agent-runner/rpa-local-web exec vitest run src/shared/dsl-schema.test.ts src/server/validators/dsl-validator.test.ts src/server/validators/artifact-validator.test.ts src/server/flow-store.test.ts`
+- `pnpm --filter @lance-agent-runner/rpa-local-web test`
+- `pnpm --filter @lance-agent-runner/rpa-local-web typecheck`
+- `pnpm typecheck`
+- `pnpm build`
+- CC implementation review: no P0/P1; P2 suggestions deferred to later executor/import hardening slices.
+
 ---
 
 ## Scope Boundary
@@ -116,7 +127,7 @@ Do not modify:
 - Create: `apps/rpa-local-web/src/shared/dsl-json-schema.ts`
 - Test: `apps/rpa-local-web/src/shared/dsl-schema.test.ts`
 
-- [ ] **Step 1: Add Ajv dev dependency for schema consistency tests**
+- [x] **Step 1: Add Ajv dev dependency for schema consistency tests**
 
 Run:
 
@@ -126,7 +137,7 @@ pnpm --filter @lance-agent-runner/rpa-local-web add -D ajv
 
 Expected: `apps/rpa-local-web/package.json` and `pnpm-lock.yaml` include `ajv`.
 
-- [ ] **Step 2: Write shared DSL type tests**
+- [x] **Step 2: Write shared DSL type tests**
 
 Create `apps/rpa-local-web/src/shared/dsl-schema.test.ts`:
 
@@ -203,7 +214,7 @@ describe('RPA DSL shared schema contract', () => {
 });
 ```
 
-- [ ] **Step 3: Run the failing shared DSL tests**
+- [x] **Step 3: Run the failing shared DSL tests**
 
 Run:
 
@@ -213,7 +224,7 @@ pnpm --filter @lance-agent-runner/rpa-local-web test -- src/shared/dsl-schema.te
 
 Expected: FAIL because `dsl-schema.ts` and `dsl-json-schema.ts` do not exist yet.
 
-- [ ] **Step 4: Add shared DSL constants and types**
+- [x] **Step 4: Add shared DSL constants and types**
 
 Create `apps/rpa-local-web/src/shared/dsl-schema.ts`:
 
@@ -394,7 +405,7 @@ export function createMinimalRpaDsl(): RpaDslDocument {
 }
 ```
 
-- [ ] **Step 5: Add JSON Schema export**
+- [x] **Step 5: Add JSON Schema export**
 
 Create `apps/rpa-local-web/src/shared/dsl-json-schema.ts`:
 
@@ -524,7 +535,7 @@ export const rpaDslJsonSchema = {
 } as const;
 ```
 
-- [ ] **Step 6: Run shared DSL tests**
+- [x] **Step 6: Run shared DSL tests**
 
 Run:
 
@@ -542,7 +553,7 @@ Expected: PASS.
 - Create: `apps/rpa-local-web/src/server/validators/dsl-validator.ts`
 - Test: `apps/rpa-local-web/src/server/validators/dsl-validator.test.ts`
 
-- [ ] **Step 1: Write failing validator tests**
+- [x] **Step 1: Write failing validator tests**
 
 Create `apps/rpa-local-web/src/server/validators/dsl-validator.test.ts`:
 
@@ -730,7 +741,7 @@ describe('RPA DSL validator', () => {
 });
 ```
 
-- [ ] **Step 2: Run failing validator tests**
+- [x] **Step 2: Run failing validator tests**
 
 Run:
 
@@ -740,7 +751,7 @@ pnpm --filter @lance-agent-runner/rpa-local-web test -- src/server/validators/ds
 
 Expected: FAIL because validator modules do not exist yet.
 
-- [ ] **Step 3: Add shared validation issue types**
+- [x] **Step 3: Add shared validation issue types**
 
 Create `apps/rpa-local-web/src/server/validators/validation-types.ts`:
 
@@ -769,7 +780,7 @@ export function warningIssue(code: string, path: string, message: string): Valid
 }
 ```
 
-- [ ] **Step 4: Implement DSL validator and form derivation**
+- [x] **Step 4: Implement DSL validator and form derivation**
 
 Create `apps/rpa-local-web/src/server/validators/dsl-validator.ts`:
 
@@ -1009,7 +1020,7 @@ function isFlowId(value: unknown): value is string {
 }
 ```
 
-- [ ] **Step 5: Run DSL validator tests**
+- [x] **Step 5: Run DSL validator tests**
 
 Run:
 
@@ -1027,7 +1038,7 @@ Expected: PASS.
 - Create: `apps/rpa-local-web/src/server/validators/artifact-validator.ts`
 - Test: `apps/rpa-local-web/src/server/validators/artifact-validator.test.ts`
 
-- [ ] **Step 1: Write failing artifact validator tests**
+- [x] **Step 1: Write failing artifact validator tests**
 
 Create `apps/rpa-local-web/src/server/validators/artifact-validator.test.ts`:
 
@@ -1130,7 +1141,7 @@ describe('RPA generation artifact validator', () => {
 });
 ```
 
-- [ ] **Step 2: Run failing artifact tests**
+- [x] **Step 2: Run failing artifact tests**
 
 Run:
 
@@ -1140,7 +1151,7 @@ pnpm --filter @lance-agent-runner/rpa-local-web test -- src/server/validators/ar
 
 Expected: FAIL because `artifacts.ts` and `artifact-validator.ts` do not exist yet.
 
-- [ ] **Step 3: Add shared artifact contract types**
+- [x] **Step 3: Add shared artifact contract types**
 
 Create `apps/rpa-local-web/src/shared/artifacts.ts`:
 
@@ -1225,7 +1236,7 @@ export const requiredArtifactRoleByName: Record<RequiredGenerationArtifactName, 
 };
 ```
 
-- [ ] **Step 4: Implement artifact validator**
+- [x] **Step 4: Implement artifact validator**
 
 Create `apps/rpa-local-web/src/server/validators/artifact-validator.ts`:
 
@@ -1310,7 +1321,7 @@ function isSafeOutputArtifactPath(relativePath: string): boolean {
 }
 ```
 
-- [ ] **Step 5: Run artifact validator tests**
+- [x] **Step 5: Run artifact validator tests**
 
 Run:
 
@@ -1327,7 +1338,7 @@ Expected: PASS.
 - Create: `apps/rpa-local-web/src/server/flow-store.ts`
 - Test: `apps/rpa-local-web/src/server/flow-store.test.ts`
 
-- [ ] **Step 1: Write failing flow-store tests**
+- [x] **Step 1: Write failing flow-store tests**
 
 Create `apps/rpa-local-web/src/server/flow-store.test.ts`:
 
@@ -1393,7 +1404,7 @@ describe('RPA flow store helpers', () => {
 });
 ```
 
-- [ ] **Step 2: Run failing flow-store tests**
+- [x] **Step 2: Run failing flow-store tests**
 
 Run:
 
@@ -1403,7 +1414,7 @@ pnpm --filter @lance-agent-runner/rpa-local-web test -- src/server/flow-store.te
 
 Expected: FAIL because `flow-store.ts` does not exist yet.
 
-- [ ] **Step 3: Implement flow-store helpers**
+- [x] **Step 3: Implement flow-store helpers**
 
 Create `apps/rpa-local-web/src/server/flow-store.ts`:
 
@@ -1503,7 +1514,7 @@ async function sha256File(filePath: string): Promise<string> {
 }
 ```
 
-- [ ] **Step 4: Run flow-store tests**
+- [x] **Step 4: Run flow-store tests**
 
 Run:
 
@@ -1521,7 +1532,7 @@ Expected: PASS.
 - Modify: `apps/daemon/skills/rpa-script-generate/references/dsl.md`
 - Modify: `apps/daemon/skills/rpa-script-generate/templates/flow.dsl.json.tmpl`
 
-- [ ] **Step 1: Update producer-facing DSL references**
+- [x] **Step 1: Update producer-facing DSL references**
 
 Change both references so they state:
 
@@ -1552,7 +1563,7 @@ In both reference files, add this rule under step/target guidance:
 - Wait keys supported by DSL v0.1 are `visible`, `enabled`, `url_changes`, `url_contains`, `network_idle`, `download`, `toast`, and `table_loaded`.
 ```
 
-- [ ] **Step 2: Update the natural-language DSL template**
+- [x] **Step 2: Update the natural-language DSL template**
 
 Modify `apps/daemon/skills/rpa-script-generate/templates/flow.dsl.json.tmpl`:
 
@@ -1600,7 +1611,7 @@ Modify `apps/daemon/skills/rpa-script-generate/templates/flow.dsl.json.tmpl`:
 }
 ```
 
-- [ ] **Step 3: Verify no old DSL version or URL target remains in RPA producer references/templates**
+- [x] **Step 3: Verify no old DSL version or URL target remains in RPA producer references/templates**
 
 Run:
 
@@ -1610,7 +1621,7 @@ rg -n '"1.0"|"by": "url"' apps/daemon/skills/playwright-rpa-harden/references/ds
 
 Expected: no matches.
 
-- [ ] **Step 4: Sync stale design-document DSL/package examples**
+- [x] **Step 4: Sync stale design-document DSL/package examples**
 
 Update `docs/rpa-local-bs-mvp-design.md` so DSL examples use:
 
@@ -1653,7 +1664,7 @@ Do not scan or edit `docs/rpa-skill-observability-design.md` in this step. Its `
 
 - Modify: `docs/superpowers/plans/2026-06-05-rpa-local-bs-mvp.md` only after implementation is complete.
 
-- [ ] **Step 1: Run focused RPA local web tests**
+- [x] **Step 1: Run focused RPA local web tests**
 
 Run:
 
@@ -1663,7 +1674,7 @@ pnpm --filter @lance-agent-runner/rpa-local-web test
 
 Expected: all RPA local web tests PASS.
 
-- [ ] **Step 2: Run typecheck and build**
+- [x] **Step 2: Run typecheck and build**
 
 Run:
 
@@ -1674,7 +1685,7 @@ pnpm --filter @lance-agent-runner/rpa-local-web build
 
 Expected: both PASS.
 
-- [ ] **Step 3: Run root verification**
+- [x] **Step 3: Run root verification**
 
 Run:
 
@@ -1685,7 +1696,7 @@ pnpm build
 
 Expected: both PASS.
 
-- [ ] **Step 4: Check daemon boundary**
+- [x] **Step 4: Check daemon boundary**
 
 Run:
 
@@ -1699,11 +1710,11 @@ Expected:
 - Diff contains `apps/rpa-local-web`, RPA skill references, and plan docs only.
 - `apps/daemon/src` search has no matches from this slice.
 
-- [ ] **Step 5: Update MVP plan progress after implementation**
+- [x] **Step 5: Update MVP plan progress after implementation**
 
 After implementation and verification, update `docs/superpowers/plans/2026-06-05-rpa-local-bs-mvp.md` by recording the actual commit hash printed by `git rev-parse --short HEAD` and marking the slice tasks complete.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 Run:
 
@@ -1716,22 +1727,22 @@ Expected: commit succeeds with no co-author trailer.
 
 ## Acceptance Checklist
 
-- [ ] `flow.dsl.json` version is consistently `rpa-dsl.v0.1`.
-- [ ] DSL TypeScript types exist and are exported from `apps/rpa-local-web/src/shared/dsl-schema.ts`.
-- [ ] JSON Schema object exists, uses the same enum/version constants, accepts `createMinimalRpaDsl()` through Ajv, and rejects legacy `"1.0"`.
-- [ ] DSL validator rejects malformed documents and produces UI-readable issues.
-- [ ] DSL validator rejects duplicate step ids, invalid step ids, invalid manual blocks, and unsupported assertion types.
-- [ ] DSL validator warns for weak but schema-allowed cases such as missing waits/assertions, XPath fallback, and write steps without idempotency/manual confirmation.
-- [ ] Parameter form model is derived from `params` and preserves `mask`.
-- [ ] Selectable parameters use `type: "select"` with `options`; `widget` is not part of DSL v0.1.
-- [ ] Wait keys are aligned between types and producer references, including `toast` and `table_loaded`.
-- [ ] Required generation artifact names are centralized.
-- [ ] Artifact validator accepts optional `flow.py` and rejects missing required files, traversal paths, backslash paths, unexpected names, empty artifacts, and invalid hashes.
-- [ ] Flow-store helpers confine artifact paths to RPA flow storage.
-- [ ] Manifest builder records schema versions, artifact checksums, generator metadata, masked param ids, and manual intervention summary.
-- [ ] RPA skill DSL references and templates target the same `rpa-dsl.v0.1` contract and do not emit `target.by = "url"`.
-- [ ] Stale design-document DSL/package `"1.0"` examples are updated or explicitly marked superseded.
-- [ ] No code under `apps/daemon/src` understands or imports RPA DSL.
+- [x] `flow.dsl.json` version is consistently `rpa-dsl.v0.1`.
+- [x] DSL TypeScript types exist and are exported from `apps/rpa-local-web/src/shared/dsl-schema.ts`.
+- [x] JSON Schema object exists, uses the same enum/version constants, accepts `createMinimalRpaDsl()` through Ajv, and rejects legacy `"1.0"`.
+- [x] DSL validator rejects malformed documents and produces UI-readable issues.
+- [x] DSL validator rejects duplicate step ids, invalid step ids, invalid manual blocks, and unsupported assertion types.
+- [x] DSL validator warns for weak but schema-allowed cases such as missing waits/assertions, XPath fallback, and write steps without idempotency/manual confirmation.
+- [x] Parameter form model is derived from `params` and preserves `mask`.
+- [x] Selectable parameters use `type: "select"` with `options`; `widget` is not part of DSL v0.1.
+- [x] Wait keys are aligned between types and producer references, including `toast` and `table_loaded`.
+- [x] Required generation artifact names are centralized.
+- [x] Artifact validator accepts optional `flow.py` and rejects missing required files, traversal paths, backslash paths, unexpected names, empty artifacts, and invalid hashes.
+- [x] Flow-store helpers confine artifact paths to RPA flow storage.
+- [x] Manifest builder records schema versions, artifact checksums, generator metadata, masked param ids, and manual intervention summary.
+- [x] RPA skill DSL references and templates target the same `rpa-dsl.v0.1` contract and do not emit `target.by = "url"`.
+- [x] Stale design-document DSL/package `"1.0"` examples are updated or explicitly marked superseded.
+- [x] No code under `apps/daemon/src` understands or imports RPA DSL.
 
 ## CC Review Prompt After Plan
 
