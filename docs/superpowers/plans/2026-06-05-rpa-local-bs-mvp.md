@@ -33,13 +33,18 @@ Use these names in follow-up plans and commits. Do not replace them with ambiguo
 
 The implementation plan review found one P1: prompt/skill/context snapshot persistence and `collectionMode` permission caps must land with the first daemon prompt-context work, not in a later review-bundle slice. This plan resolves that by making the first daemon slice include the minimal snapshot tables, hash/size fields, collection mode validation, and permission cap checks. The later daemon observability slice now only contains full review bundle export, complete log download, feedback storage, and sanitizer polish.
 
+Slice 1 review also found that `daemon-composed` requires `conversation_seq` and stable cross-run transcript ordering. Because RPA MVP uses `business-context` for codegen, natural-language generation, question-form follow-up, and verify-repair, `daemon-composed` is deferred to a separate generic daemon slice and is not part of the RPA-unblocking Slice 1a.
+
 Latest product decision: `codegen 上传加固闭环` implements RPA Web-managed Playwright codegen recording directly. RPA Web starts the codegen child process, controls the output path, validates the generated single-file `flow.py`, then automatically uploads it to daemon. Manual `flow.py` upload is not the primary MVP path.
 
 ## Implementation Dependency Map
 
 ```text
-Daemon generic context + minimal snapshot/collection guard
+Daemon business-context + minimal snapshot/collection guard
   -> RPA Web can run multi-turn skill workflows without knowing skill bodies
+
+Daemon-composed conversation context is deferred to an independent generic slice
+  -> It requires conversation_seq and stable cross-run transcript ordering, and is not required by RPA MVP
 
 RPA workspace skeleton
   -> Gives product code a home without touching apps/web
@@ -78,9 +83,9 @@ RPA Web uses `kind` to express business intent and `promptMode` to express how d
 
 ---
 
-## Slice: Daemon Generic Context And Minimal Snapshot Guard
+## Slice: Daemon Business Context And Minimal Snapshot Guard
 
-**Purpose:** Add generic daemon-native conversation and prompt composition support plus the minimal collection/snapshot security substrate required by every later business workflow.
+**Purpose:** Add the generic daemon-native `business-context` support plus the minimal collection/snapshot security substrate required by every later RPA workflow. `daemon-composed` is deliberately deferred because it needs `conversation_seq` and stable cross-run transcript ordering.
 
 **Files likely touched:**
 
@@ -106,32 +111,54 @@ RPA Web uses `kind` to express business intent and `promptMode` to express how d
 
 **Tasks:**
 
-- [ ] Extend create-run request types with `promptMode = legacy | business-context | daemon-composed`, `currentPrompt`, `businessContext`, `contextPolicy`, `conversationId`, and `collectionMode = lite | diagnostic | review`.
+- [ ] Extend create-run request types with `promptMode = legacy | business-context | daemon-composed`, `currentPrompt`, `businessContext`, `conversationId`, and `collectionMode = lite | diagnostic | review`.
 - [ ] Keep legacy behavior compatible: existing `prompt + generate + skillId` still works and stores user-visible prompt semantics in `runs.prompt`.
-- [ ] Change validation matrix so `business-context` and `daemon-composed` require `currentPrompt` and forbid raw `prompt`.
-- [ ] Allow `revise + skillId` only where the new legality matrix says it is intentional.
+- [ ] Change validation matrix so `business-context` requires `currentPrompt` and forbids raw `prompt`; `daemon-composed` is recognized but rejected as deferred until the generic daemon-composed slice.
+- [ ] Allow `revise + skillId` only for non-legacy `business-context`.
 - [ ] Add profile/client permission caps for `collectionMode`: `maxCollectionMode`, `canReadLogs`, `canReadDebugEvents`.
 - [ ] Reject disallowed collection mode requests with a structured error such as `COLLECTION_MODE_NOT_ALLOWED`; do not silently downgrade.
-- [ ] Add lightweight run fields for `prompt_mode`, `current_prompt`, `collection_mode`, `context_policy_json`, snapshot hash/size/persisted flags, and business context hash.
+- [ ] Add lightweight run fields for `prompt_mode`, `current_prompt`, `collection_mode`, snapshot hash/size/persisted flags, and business context hash.
 - [ ] Add `run_prompt_snapshots`, `run_skill_snapshots`, and `run_context_snapshots` tables in the same slice that first writes snapshot data.
-- [ ] Persist prompt snapshot hash/size for all runs; persist full prompt only when `collectionMode` permits it.
+- [ ] Persist `business_context_hash` and create-time context snapshot before queue insertion so queued-then-canceled runs remain reviewable.
+- [ ] Persist prompt snapshot hash/size when a final prompt is actually composed; persist full prompt only when `collectionMode` permits it.
 - [ ] Capture skill snapshot metadata and side files manifest during skill staging; persist full skill snapshot only when `collectionMode` permits it.
 - [ ] Store only user/assistant-visible content in conversation messages; never store final prompt in `run_messages.content`.
 - [ ] Build final prompt inside daemon by injecting skill instructions, staged side file paths, profile-owned run constraints, and business context.
+- [ ] Validate explicit `conversationId` workspace ownership before queue insertion and return a structured 4xx on mismatch.
+- [ ] Preserve the current `skill.hasSideFiles` short-circuit so skills without side files are not staged unnecessarily.
 - [ ] Add tests proving RPA-like business context does not cause daemon core to interpret DSL or Playwright.
 - [ ] Add tests for the RPA call contract: first generation uses `generate + business-context`, follow-up/question-form and verify-failure repair use `revise + business-context + skillId` with explicit business context.
+- [ ] Add tests for cross-workspace `conversationId` rejection, queued cancellation context snapshot persistence, lite-mode hash-only context snapshots, and updated create-run response ids.
 
 **Acceptance:**
 
-- `POST /api/runs` accepts legacy and new prompt modes according to the matrix.
+- `POST /api/runs` accepts legacy and `business-context` according to the matrix; `daemon-composed` is rejected as deferred.
 - Existing tests for generate/revise continue to pass after compatibility updates.
 - A test run with `promptMode: business-context` and `skillId: playwright-rpa-harden` composes a final prompt with skill content, but `run_messages` contains only the user-visible `currentPrompt`.
+- A diagnostic run canceled while still queued keeps `businessContext` hash and full context snapshot; prompt/skill snapshots remain empty because no final prompt was sent to Claude Code.
 - Snapshot tables exist before any code tries to persist prompt, skill, or context snapshots.
 - Unauthorized `diagnostic` or `review` collection mode requests fail before a run is queued.
 - `collectionMode` never controls SSE event verbosity; `eventVisibility` never controls prompt/skill/context persistence.
 - `pnpm test:daemon` and `pnpm typecheck:daemon` pass.
 
-**Suggested commit:** `Add generic context and snapshot guard`
+**Suggested commit:** `Add daemon business context snapshot guard`
+
+---
+
+## Deferred Slice: Daemon-Composed Conversation Context
+
+**Purpose:** Add generic daemon-composed continuation after RPA-unblocking work is underway. This slice is not required by RPA MVP because RPA Web passes explicit `businessContext`.
+
+**Tasks:**
+
+- [ ] Add `contextPolicy`.
+- [ ] Add `conversation_seq` to `run_messages`.
+- [ ] Allocate stable conversation-level sequence numbers for user messages, assistant placeholders, and additional assistant message segments.
+- [ ] Query conversation transcript by `conversation_seq`, not run-local `position`.
+- [ ] Implement daemon-composed prompt assembly with recent message count, per-message truncation, total-length cap, and generic warnings.
+- [ ] Add run-service integration tests proving cross-run transcript ordering is stable.
+
+**Suggested commit:** `Add daemon composed conversation context`
 
 ---
 
