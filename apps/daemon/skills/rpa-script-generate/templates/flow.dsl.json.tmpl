@@ -1,5 +1,5 @@
 {
-  "dsl_version": "1.0",
+  "dsl_version": "rpa-dsl.v0.1",
   "flow_id": "{{flow_id}}",
   "meta": {
     "title": "{{title}}",
@@ -24,10 +24,7 @@
       "id": "s1",
       "name": "打开系统入口",
       "action": "navigate",
-      "target": {
-        "by": "url",
-        "value": "${BASE_URL}"
-      },
+      "value": "${BASE_URL}",
       "wait": {
         "after": { "network_idle": true }
       },
@@ -42,4 +39,3 @@
     }
   ]
 }
-
