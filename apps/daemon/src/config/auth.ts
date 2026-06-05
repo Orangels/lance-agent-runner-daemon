@@ -1,4 +1,5 @@
 import { daemonError, unauthorized } from '../core/errors.js';
+import type { CollectionMode } from '../core/run-types.js';
 import type { ClientConfig, ProfileConfig } from './profiles.js';
 
 export type AuthHeaders = Record<string, string | string[] | undefined>;
@@ -40,6 +41,37 @@ export function requireProfileAccess(client: ClientConfig, profileId: string): v
     clientId: client.id,
     profileId,
   });
+}
+
+const collectionModeRank: Record<CollectionMode, number> = {
+  lite: 0,
+  diagnostic: 1,
+  review: 2,
+};
+
+export function requireCollectionModeAccess(input: {
+  client: ClientConfig;
+  profile: Pick<ProfileConfig, 'id' | 'maxCollectionMode'>;
+  collectionMode: CollectionMode;
+}): void {
+  if (collectionModeRank[input.collectionMode] > collectionModeRank[input.profile.maxCollectionMode]) {
+    throw daemonError('COLLECTION_MODE_NOT_ALLOWED', 'Collection mode is not allowed for profile', 403, {
+      profileId: input.profile.id,
+      collectionMode: input.collectionMode,
+      maxCollectionMode: input.profile.maxCollectionMode,
+    });
+  }
+
+  if (input.collectionMode === 'diagnostic' && !input.client.canReadLogs) {
+    throw daemonError('COLLECTION_MODE_NOT_ALLOWED', 'Diagnostic collection requires log access', 403);
+  }
+
+  if (
+    input.collectionMode === 'review' &&
+    (!input.client.canReadLogs || !input.client.canReadDebugEvents)
+  ) {
+    throw daemonError('COLLECTION_MODE_NOT_ALLOWED', 'Review collection requires log and debug access', 403);
+  }
 }
 
 export function filterProfilesForClient<T extends Pick<ProfileConfig, 'id'>>(

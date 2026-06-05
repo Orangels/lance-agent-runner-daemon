@@ -3,10 +3,14 @@ import { openInMemoryDatabase } from '../connection.js';
 import {
   createRunQueuedWithMessagesAndSnapshot,
   getActiveRunForWorkspace,
+  getConversationForWorkspace,
   getRunLogForRunForClient,
   getOrCreateDefaultConversation,
   getProfileSnapshotForRun,
+  getRunContextSnapshot,
   getRunDetail,
+  getRunPromptSnapshot,
+  getRunSkillSnapshot,
   getWorkspaceForClient,
   insertRunMessagesForRunCreate,
   insertRunQueued,
@@ -18,8 +22,11 @@ import {
   replaceArtifactsForRun,
   deleteRunLogRows,
   updateRunMessage,
+  updateRunPromptSnapshotFields,
   updateRunStatus,
   updateRunTerminal,
+  upsertRunPromptSnapshot,
+  upsertRunSkillSnapshot,
   upsertRunLogPaths,
   upsertWorkspace,
 } from '../repositories.js';
@@ -161,6 +168,33 @@ describe('conversation repository', () => {
     expect(again.id).toBe(conversation.id);
     expect(again.workspaceId).toBe(workspace.id);
   });
+
+  it('gets conversations only for their owning workspace', () => {
+    const { db, workspace } = insertWorkspaceFixture();
+    const otherWorkspace = upsertWorkspace(db, {
+      id: 'ws_other',
+      clientId: 'lqbot',
+      profileId: 'report-docx',
+      originId: 'other',
+      userId: 'user_2',
+      projectId: 'project_456',
+      now: 2000,
+    });
+    const conversation = getOrCreateDefaultConversation(db, {
+      id: 'conv_1',
+      workspaceId: workspace.id,
+      now: 3000,
+    });
+
+    expect(getConversationForWorkspace(db, {
+      conversationId: conversation.id,
+      workspaceId: workspace.id,
+    })?.id).toBe(conversation.id);
+    expect(getConversationForWorkspace(db, {
+      conversationId: conversation.id,
+      workspaceId: otherWorkspace.id,
+    })).toBeNull();
+  });
 });
 
 describe('run repository', () => {
@@ -205,6 +239,194 @@ describe('run repository', () => {
       createdAt: 5000,
     });
     expect(getProfileSnapshotForRun(db, 'run_1')?.profile).toEqual(created.profileSnapshot.profile);
+  });
+
+  it('reuses an explicit conversation when it belongs to the workspace', () => {
+    const { db, workspace } = insertWorkspaceFixture();
+    const conversation = getOrCreateDefaultConversation(db, {
+      id: 'conv_shared',
+      workspaceId: workspace.id,
+      now: 3000,
+    });
+
+    const first = createRunQueuedWithMessagesAndSnapshot(db, {
+      runId: 'run_1',
+      conversationId: conversation.id,
+      defaultConversationId: 'conv_default_1',
+      userMessageId: 'msg_user_1',
+      assistantMessageId: 'msg_assistant_1',
+      workspaceId: workspace.id,
+      profileId: workspace.profileId,
+      clientId: workspace.clientId,
+      kind: 'generate',
+      skillId: 'report-writer',
+      prompt: 'Visible request',
+      promptMode: 'business-context',
+      currentPrompt: 'Visible request',
+      collectionMode: 'diagnostic',
+      profileSnapshot: {},
+      businessContextHash: 'a'.repeat(64),
+      businessContext: { stage: 'codegen_harden' },
+      persistBusinessContext: true,
+      now: 5000,
+    });
+    const second = createRunQueuedWithMessagesAndSnapshot(db, {
+      runId: 'run_2',
+      conversationId: conversation.id,
+      defaultConversationId: 'conv_default_2',
+      userMessageId: 'msg_user_2',
+      assistantMessageId: 'msg_assistant_2',
+      workspaceId: workspace.id,
+      profileId: workspace.profileId,
+      clientId: workspace.clientId,
+      kind: 'revise',
+      skillId: 'report-writer',
+      prompt: 'Visible follow-up',
+      promptMode: 'business-context',
+      currentPrompt: 'Visible follow-up',
+      collectionMode: 'diagnostic',
+      profileSnapshot: {},
+      businessContextHash: 'b'.repeat(64),
+      businessContext: { previousRunId: 'run_1' },
+      persistBusinessContext: true,
+      now: 6000,
+    });
+
+    expect(first.conversation.id).toBe(conversation.id);
+    expect(second.conversation.id).toBe(conversation.id);
+    expect(getRunDetail(db, { runId: 'run_1', clientId: workspace.clientId })?.messages[0]).toMatchObject({
+      content: 'Visible request',
+      conversationId: conversation.id,
+    });
+  });
+
+  it('stores full business context snapshots outside lite mode', () => {
+    const { db, workspace } = insertWorkspaceFixture();
+
+    const created = createRunQueuedWithMessagesAndSnapshot(db, {
+      runId: 'run_diag',
+      defaultConversationId: 'conv_diag',
+      userMessageId: 'msg_user_diag',
+      assistantMessageId: 'msg_assistant_diag',
+      workspaceId: workspace.id,
+      profileId: workspace.profileId,
+      clientId: workspace.clientId,
+      kind: 'generate',
+      skillId: 'report-writer',
+      prompt: 'Visible request',
+      promptMode: 'business-context',
+      currentPrompt: 'Visible request',
+      collectionMode: 'diagnostic',
+      profileSnapshot: {},
+      businessContextHash: 'c'.repeat(64),
+      businessContext: { inputFiles: ['input/flow.py'] },
+      persistBusinessContext: true,
+      now: 5000,
+    });
+
+    expect(created.run.businessContextHash).toBe('c'.repeat(64));
+    expect(getRunContextSnapshot(db, created.run.id)).toMatchObject({
+      businessContext: { inputFiles: ['input/flow.py'] },
+      businessContextHash: 'c'.repeat(64),
+      persisted: true,
+    });
+  });
+
+  it('stores only business context hash in lite mode', () => {
+    const { db, workspace } = insertWorkspaceFixture();
+
+    const created = createRunQueuedWithMessagesAndSnapshot(db, {
+      runId: 'run_lite',
+      defaultConversationId: 'conv_lite',
+      userMessageId: 'msg_user_lite',
+      assistantMessageId: 'msg_assistant_lite',
+      workspaceId: workspace.id,
+      profileId: workspace.profileId,
+      clientId: workspace.clientId,
+      kind: 'generate',
+      skillId: 'report-writer',
+      prompt: 'Visible request',
+      promptMode: 'business-context',
+      currentPrompt: 'Visible request',
+      collectionMode: 'lite',
+      profileSnapshot: {},
+      businessContextHash: 'd'.repeat(64),
+      businessContext: { inputFiles: ['input/flow.py'] },
+      persistBusinessContext: false,
+      now: 5000,
+    });
+
+    expect(created.run.businessContextHash).toBe('d'.repeat(64));
+    expect(getRunContextSnapshot(db, created.run.id)).toMatchObject({
+      businessContext: null,
+      businessContextHash: 'd'.repeat(64),
+      persisted: false,
+    });
+  });
+
+  it('upserts prompt and skill snapshots', () => {
+    const { db, workspace } = insertWorkspaceFixture();
+    insertRunQueued(db, {
+      id: 'run_1',
+      workspaceId: workspace.id,
+      profileId: workspace.profileId,
+      clientId: workspace.clientId,
+      kind: 'generate',
+      skillId: 'report-writer',
+      prompt: 'Generate.',
+      now: 5000,
+    });
+
+    upsertRunPromptSnapshot(db, {
+      runId: 'run_1',
+      promptSnapshot: null,
+      promptSnapshotHash: 'e'.repeat(64),
+      charCount: 10,
+      byteCount: 10,
+      persisted: false,
+      now: 6000,
+    });
+    updateRunPromptSnapshotFields(db, {
+      runId: 'run_1',
+      promptSnapshotHash: 'e'.repeat(64),
+      charCount: 10,
+      byteCount: 10,
+      persisted: false,
+      now: 6000,
+    });
+    upsertRunSkillSnapshot(db, {
+      runId: 'run_1',
+      skillId: 'report-writer',
+      skillName: 'Report Writer',
+      skillDescription: 'Writes reports.',
+      skillBodyHash: 'f'.repeat(64),
+      skillBody: null,
+      sideFilesManifest: [{ relativePath: 'references/style.md', size: 10, sha256: 'a'.repeat(64) }],
+      persisted: false,
+      now: 6000,
+    });
+
+    expect(getRunPromptSnapshot(db, 'run_1')).toMatchObject({
+      promptSnapshot: null,
+      promptSnapshotHash: 'e'.repeat(64),
+      charCount: 10,
+      byteCount: 10,
+      persisted: false,
+    });
+    expect(getRunDetail(db, { runId: 'run_1', clientId: workspace.clientId })?.run).toMatchObject({
+      promptSnapshotHash: 'e'.repeat(64),
+      promptSnapshotCharCount: 10,
+      promptSnapshotByteCount: 10,
+      promptSnapshotPersisted: false,
+    });
+    expect(getRunSkillSnapshot(db, 'run_1')).toMatchObject({
+      skillId: 'report-writer',
+      skillName: 'Report Writer',
+      skillBodyHash: 'f'.repeat(64),
+      skillBody: null,
+      sideFilesManifest: [{ relativePath: 'references/style.md', size: 10, sha256: 'a'.repeat(64) }],
+      persisted: false,
+    });
   });
 
   it('reuses the default conversation inside the create transaction', () => {

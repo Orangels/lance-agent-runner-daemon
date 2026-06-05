@@ -19,7 +19,8 @@ describe('prompt composer', () => {
     expect(
       composeRunPrompt({
         kind: 'revise',
-        userPrompt: 'Please revise the attached document.',
+        promptMode: 'legacy',
+        currentPrompt: 'Please revise the attached document.',
       }),
     ).toBe('Please revise the attached document.');
   });
@@ -33,12 +34,20 @@ describe('prompt composer', () => {
 
     const prompt = composeRunPrompt({
       kind: 'generate',
-      userPrompt: 'Create the quarterly report.',
+      promptMode: 'legacy',
+      currentPrompt: 'Create the quarterly report.',
       skill: makeSkill(),
       stagedSkill: {
         relativeRoot: '.claude-runner-skills/report-writer',
         absoluteRoot: stagedAbsoluteRoot,
         folderName: 'report-writer',
+        sideFilesManifest: [
+          {
+            relativePath: 'references/style.md',
+            size: 12,
+            sha256: 'a'.repeat(64),
+          },
+        ],
       },
     });
 
@@ -47,30 +56,62 @@ describe('prompt composer', () => {
     expect(prompt).toContain('Writes concise reports.');
     expect(prompt).toContain('Use references/style.md and produce a clean report.');
     expect(prompt).toContain('Skill root (relative to workspace): `.claude-runner-skills/report-writer/`');
-    expect(prompt).toContain(`Skill root (absolute workspace path): \`${stagedAbsoluteRoot}\``);
+    expect(prompt).toContain('"relativePath": "references/style.md"');
+    expect(prompt).not.toContain(`Skill root (absolute workspace path): \`${stagedAbsoluteRoot}\``);
+    expect(prompt).not.toContain(stagedAbsoluteRoot);
     expect(prompt).not.toContain('/private/skills/report-writer');
-    expect(prompt).toContain('## User request');
+    expect(prompt).toContain('## Current user request');
     expect(prompt).toContain('Create the quarterly report.');
   });
 
   it('omits staged path guidance when no staged skill copy is provided', () => {
     const prompt = composeRunPrompt({
       kind: 'generate',
-      userPrompt: 'Create the report.',
+      promptMode: 'legacy',
+      currentPrompt: 'Create the report.',
       skill: makeSkill({ body: 'Write from the supplied brief.' }),
     });
 
     expect(prompt).toContain('Write from the supplied brief.');
-    expect(prompt).toContain('## User request');
+    expect(prompt).toContain('## Current user request');
     expect(prompt).toContain('Create the report.');
     expect(prompt).not.toContain('.claude-runner-skills/report-writer');
     expect(prompt).not.toContain('Skill root');
   });
 
+  it('injects skill instructions and opaque business context for business-context revise runs', () => {
+    const prompt = composeRunPrompt({
+      kind: 'revise',
+      promptMode: 'business-context',
+      currentPrompt: 'Update the RPA flow with these answers.',
+      businessContext: {
+        stage: 'question-form-answers',
+        formAnswers: {
+          unit: '公安局',
+          dateRange: ['2026-06-01', '2026-06-05'],
+        },
+      },
+      skill: makeSkill({
+        id: 'report-writer',
+        name: 'Report Writer',
+        body: 'Update the report draft from the supplied answers.',
+      }),
+    });
+
+    expect(prompt).toContain('Report Writer');
+    expect(prompt).toContain('Update the report draft from the supplied answers.');
+    expect(prompt).toContain('## Business context');
+    expect(prompt).toContain('"stage": "question-form-answers"');
+    expect(prompt).toContain('"unit": "公安局"');
+    expect(prompt).toContain('## Current user request');
+    expect(prompt).toContain('Update the RPA flow with these answers.');
+  });
+
   it('does not inject product-specific language unless authored in the skill body', () => {
     const prompt = composeRunPrompt({
       kind: 'generate',
-      userPrompt: 'Create a neutral report.',
+      promptMode: 'legacy',
+      currentPrompt: 'Create a neutral report.',
       skill: makeSkill({
         name: 'Neutral Writer',
         description: '',
@@ -82,7 +123,8 @@ describe('prompt composer', () => {
 
     const authoredPrompt = composeRunPrompt({
       kind: 'generate',
-      userPrompt: 'Create a report.',
+      promptMode: 'legacy',
+      currentPrompt: 'Create a report.',
       skill: makeSkill({
         body: 'Mention critique because this skill author explicitly requires it.',
       }),

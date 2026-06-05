@@ -82,8 +82,10 @@ NOT_FOUND
 MODEL_NOT_ALLOWED
 PROFILE_NOT_ALLOWED
 SKILL_NOT_ALLOWED
+COLLECTION_MODE_NOT_ALLOWED
 SKILL_UNAVAILABLE
 SKILL_STAGING_FAILED
+PROMPT_COMPOSITION_FAILED
 RUN_QUEUE_FULL
 WORKSPACE_RUN_ACTIVE
 RUN_NOT_CANCELABLE
@@ -148,6 +150,7 @@ Authorization: Bearer <api-key>
       "defaultModel": "sonnet",
       "allowedModels": ["sonnet"],
       "eventVisibility": "normal",
+      "maxCollectionMode": "lite",
       "permissionMode": "bypassPermissions",
       "profileConcurrency": 1,
       "runTimeoutMs": 600000,
@@ -163,12 +166,13 @@ Authorization: Bearer <api-key>
 | Field | Type | Notes |
 | --- | --- | --- |
 | `profiles[].id` | string | `POST /api/workspaces` 和 `POST /api/runs` 使用的 `profileId`。 |
-| `profiles[].allowedSkillIds` | string[] | `kind=generate` 可用的 `skillId`。 |
+| `profiles[].allowedSkillIds` | string[] | `legacy + generate` 以及 MVP `business-context` run 可用的 `skillId`。 |
 | `profiles[].artifactRules` | object[] | 可选择的 artifact rule。 |
 | `profiles[].defaultArtifactRuleIds` | string[] | `POST /api/runs` 不传 `artifactRuleIds` 时使用。 |
 | `profiles[].defaultModel` | string | 默认 Claude model。 |
 | `profiles[].allowedModels` | string[] | `POST /api/runs.model` 必须命中。 |
 | `profiles[].eventVisibility` | `quiet` / `normal` / `debug` | profile 允许的最大事件可见性。 |
+| `profiles[].maxCollectionMode` | `lite` / `diagnostic` / `review` | profile 允许的最大采集模式。 |
 | `profiles[].permissionMode` | `default` / `acceptEdits` / `bypassPermissions` | Claude Code permission mode，由 profile 控制。 |
 | `profiles[].profileConcurrency` | number | 该 profile 的并发上限。 |
 | `profiles[].runTimeoutMs` | number | 单 run 总运行超时。 |
@@ -344,7 +348,7 @@ Authorization: Bearer <api-key>
 Content-Type: application/json
 ```
 
-Generate 示例：
+Legacy generate 示例：
 
 ```json
 {
@@ -362,7 +366,7 @@ Generate 示例：
 }
 ```
 
-Revise 示例：
+Legacy revise 示例：
 
 ```json
 {
@@ -379,6 +383,30 @@ Revise 示例：
 }
 ```
 
+Business-context 示例：
+
+```json
+{
+  "profileId": "report-docx",
+  "workspaceId": "ws_xxx",
+  "conversationId": "conv_xxx",
+  "kind": "revise",
+  "promptMode": "business-context",
+  "collectionMode": "diagnostic",
+  "skillId": "report-writer",
+  "currentPrompt": "用户已回答参数问题，请继续更新产物。",
+  "businessContext": {
+    "previousRunId": "run_previous",
+    "artifactPaths": ["output/report.docx"],
+    "formAnswers": {
+      "dateRange": ["2026-06-01", "2026-06-05"]
+    },
+    "stage": "question-form-answers"
+  },
+  "artifactRuleIds": ["report-docx"]
+}
+```
+
 ### Request Fields
 
 | Field | Type | Required | Notes |
@@ -386,19 +414,36 @@ Revise 示例：
 | `profileId` | string | yes | 必须是当前 client 可访问 profile。1-128 字符。 |
 | `workspaceId` | string | yes | 必须是该 client 可访问 workspace。1-128 字符。 |
 | `kind` | `generate` / `revise` | yes | 生成或修改。 |
-| `prompt` | string | yes | 1 到 200000 字符。 |
-| `skillId` | string | generate yes, revise no | `generate` 必须传；`revise` 禁止传。1-128 字符。 |
+| `promptMode` | `legacy` / `business-context` / `daemon-composed` | no | 默认 `legacy`。Slice 1a 支持 `legacy` 和 `business-context`；`daemon-composed` 保留到 Slice 1b，当前请求会被拒绝。 |
+| `prompt` | string | legacy yes | legacy 模式本轮用户输入，1 到 200000 字符。`business-context` 模式禁止传。 |
+| `currentPrompt` | string | business-context yes | business-context 模式本轮用户输入，1 到 200000 字符。legacy 模式禁止传。 |
+| `businessContext` | object | no | 业务上下文包，daemon 不解释具体语义；仅用于最终 prompt 组装和 run 级 snapshot。legacy 模式禁止传。 |
+| `conversationId` | string | no | 复用已有 daemon conversation；如传入，必须属于同一 workspace。未传时继续使用该 workspace 的默认 conversation。 |
+| `collectionMode` | `lite` / `diagnostic` / `review` | no | 默认 `lite`。控制 prompt / skill / business context snapshot 的全文是否落盘；受 profile `maxCollectionMode` 和 client 权限封顶。 |
+| `skillId` | string | 见矩阵 | `legacy + generate` 必填；`legacy + revise` 禁止；`business-context` 在 MVP 中必填。1-128 字符。 |
 | `model` | string | no | 不传使用 profile `defaultModel`；传入时必须在 `allowedModels` 内。 |
 | `artifactRuleIds` | string[] | no | 最多 32 个；不传使用 profile `defaultArtifactRuleIds`。 |
 | `eventVisibility` | `quiet` / `normal` / `debug` | no | 只能降低到 profile 可见性，不会超过 profile/client 权限。 |
 | `metadata` | object | no | 业务自定义 JSON，daemon 不解释。 |
+
+`kind × promptMode × skillId` 约束：
+
+| kind | promptMode | Required input | `skillId` |
+| --- | --- | --- | --- |
+| `generate` | `legacy` | `prompt` | required |
+| `revise` | `legacy` | `prompt` | forbidden |
+| `generate` | `business-context` | `currentPrompt` | required |
+| `revise` | `business-context` | `currentPrompt` | required in MVP |
 
 ### Response 202
 
 ```json
 {
   "runId": "run_xxx",
-  "status": "queued"
+  "status": "queued",
+  "conversationId": "conv_xxx",
+  "userMessageId": "msg_user_xxx",
+  "assistantMessageId": "msg_assistant_xxx"
 }
 ```
 
@@ -406,12 +451,13 @@ Revise 示例：
 
 | Status | Code | Meaning |
 | --- | --- | --- |
-| 400 | `BAD_REQUEST` | schema 校验失败、`generate` 缺少 `skillId`、`revise` 携带 `skillId`、workspace profile 不匹配。 |
+| 400 | `BAD_REQUEST` | schema 校验失败、promptMode 字段组合错误、workspace profile 不匹配、conversationId 不属于同一 workspace。 |
 | 400 | `MODEL_NOT_ALLOWED` | model 不在 profile `allowedModels` 内。 |
 | 400 | `SKILL_NOT_ALLOWED` | skill 不在 profile `allowedSkillIds` 内。 |
 | 400 | `BAD_REQUEST` | artifact rule id 未知。 |
 | 401 | `UNAUTHORIZED` | API key 缺失或错误。 |
 | 403 | `PROFILE_NOT_ALLOWED` | client 不能使用该 profile。 |
+| 403 | `COLLECTION_MODE_NOT_ALLOWED` | 请求的 `collectionMode` 超过 profile/client 权限。 |
 | 404 | `NOT_FOUND` | workspace 不存在或不属于该 client。 |
 | 429 | `RUN_QUEUE_FULL` | 队列已满，未创建 run row。 |
 
@@ -898,8 +944,9 @@ revise
 
 规则：
 
-- `generate` 必须传 `skillId`。
-- `revise` 禁止传 `skillId`。
+- `legacy + generate` 必须传 `skillId`。
+- `legacy + revise` 禁止传 `skillId`。
+- MVP `business-context` run 必须传 `skillId`，包括 `revise`。
 
 ## PublicArtifact
 

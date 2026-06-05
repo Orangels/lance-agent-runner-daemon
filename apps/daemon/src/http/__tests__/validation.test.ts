@@ -155,6 +155,7 @@ describe('run create request validation', () => {
 
     expect(parsed.workspaceId).toBe('ws_123');
     expect(parsed.kind).toBe('generate');
+    expect(parsed.promptMode).toBeUndefined();
   });
 
   it('accepts a revise run with only workspaceId and prompt fields', () => {
@@ -333,6 +334,78 @@ describe('run create request validation', () => {
         prompt: 'Revise the report.',
       }),
     ).toThrow();
+  });
+
+  it('accepts a business-context generate run with opaque business context', () => {
+    const parsed = createRunRequestSchema.parse({
+      profileId: 'report-docx',
+      workspaceId: 'ws_123',
+      conversationId: 'conv_123',
+      kind: 'generate',
+      promptMode: 'business-context',
+      collectionMode: 'diagnostic',
+      skillId: 'report-writer',
+      currentPrompt: '请根据上传的业务材料生成报告',
+      businessContext: {
+        stage: 'initial-draft',
+        inputFiles: ['input/source.docx'],
+      },
+      metadata: { business: 'reporting' },
+    });
+
+    expect(parsed.promptMode).toBe('business-context');
+    expect(parsed.currentPrompt).toContain('报告');
+    expect(parsed.businessContext).toEqual({
+      stage: 'initial-draft',
+      inputFiles: ['input/source.docx'],
+    });
+  });
+
+  it('rejects invalid business-context request shapes', () => {
+    expect(() =>
+      createRunRequestSchema.parse({
+        profileId: 'report-docx',
+        workspaceId: 'ws_123',
+        kind: 'generate',
+        promptMode: 'business-context',
+        skillId: 'report-writer',
+        prompt: 'raw prompt is forbidden here',
+        currentPrompt: 'current prompt',
+      }),
+    ).toThrow();
+
+    expect(() =>
+      createRunRequestSchema.parse({
+        profileId: 'report-docx',
+        workspaceId: 'ws_123',
+        kind: 'generate',
+        promptMode: 'business-context',
+        skillId: 'report-writer',
+      }),
+    ).toThrow();
+
+    expect(() =>
+      createRunRequestSchema.parse({
+        profileId: 'report-docx',
+        workspaceId: 'ws_123',
+        kind: 'revise',
+        promptMode: 'business-context',
+        currentPrompt: '用户已回答参数问题',
+      }),
+    ).toThrow();
+  });
+
+  it('rejects daemon-composed as a deferred prompt mode', () => {
+    expect(() =>
+      createRunRequestSchema.parse({
+        profileId: 'general-agent',
+        workspaceId: 'ws_123',
+        conversationId: 'conv_123',
+        kind: 'revise',
+        promptMode: 'daemon-composed',
+        currentPrompt: '继续刚才的修改',
+      }),
+    ).toThrow(/deferred|not supported/i);
   });
 
   it('rejects unknown event visibility values', () => {

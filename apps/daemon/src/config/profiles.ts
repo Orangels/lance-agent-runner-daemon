@@ -1,8 +1,10 @@
 import { z } from 'zod';
 import {
   artifactRoles,
+  collectionModes,
   eventVisibilityLevels,
   type ArtifactRole,
+  type CollectionMode,
   type EventVisibility,
 } from '../core/run-types.js';
 import { findDisallowedProfileEnvKeys } from './env.js';
@@ -52,6 +54,7 @@ export interface ProfileConfig {
   defaultModel: string;
   allowedModels: string[];
   eventVisibility: EventVisibility;
+  maxCollectionMode: CollectionMode;
   profileConcurrency: number;
   runTimeoutMs: number;
   inactivityTimeoutMs: number;
@@ -133,6 +136,7 @@ const profileSchema = z
     defaultModel: nonEmptyString,
     allowedModels: z.array(nonEmptyString).min(1),
     eventVisibility: z.enum(eventVisibilityLevels),
+    maxCollectionMode: z.enum(collectionModes).default('lite'),
     profileConcurrency: z.number().int().min(1),
     runTimeoutMs: z.number().int().min(1),
     inactivityTimeoutMs: z.number().int().min(1),

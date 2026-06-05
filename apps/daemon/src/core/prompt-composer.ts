@@ -1,6 +1,8 @@
 import type { RunKind } from './run-types.js';
+import type { ActivePromptMode } from './run-types.js';
 import { badRequest } from './errors.js';
 import type { StagedSkill } from './skill-staging.js';
+import { stableJsonStringify } from './snapshot-service.js';
 
 export interface PromptSkill {
   id: string;
@@ -11,23 +13,27 @@ export interface PromptSkill {
 
 export interface ComposeRunPromptInput {
   kind: RunKind;
-  userPrompt: string;
+  promptMode: ActivePromptMode;
+  currentPrompt: string;
+  businessContext?: Record<string, unknown>;
   skill?: PromptSkill;
   stagedSkill?: StagedSkill;
 }
 
 export function composeRunPrompt({
   kind,
-  userPrompt,
+  promptMode,
+  currentPrompt,
+  businessContext,
   skill,
   stagedSkill,
 }: ComposeRunPromptInput): string {
-  if (kind === 'revise') {
-    return userPrompt;
+  if (promptMode === 'legacy' && kind === 'revise') {
+    return currentPrompt;
   }
 
   if (!skill) {
-    throw badRequest('kind=generate requires a resolved skill');
+    throw badRequest(`${promptMode} ${kind} requires a resolved skill`);
   }
 
   const sections = [
@@ -44,15 +50,35 @@ export function composeRunPrompt({
     sections.push(
       '',
       `> Skill root (relative to workspace): \`${stagedSkill.relativeRoot}/\``,
-      `> Skill root (absolute workspace path): \`${stagedSkill.absoluteRoot}\``,
       '>',
-      '> This skill ships side files alongside `SKILL.md`. Prefer the relative path above',
-      '> when reading those files from the workspace. If that is not reachable, use the',
-      '> absolute workspace path above.',
+      '> This skill ships side files alongside `SKILL.md`. Read them from the relative',
+      '> path above inside the current workspace.',
+    );
+
+    if (stagedSkill.sideFilesManifest.length > 0) {
+      sections.push(
+        '',
+        'Skill side files manifest:',
+        '```json',
+        stableJsonStringify(stagedSkill.sideFilesManifest, 2),
+        '```',
+      );
+    }
+  }
+
+  sections.push('', '## Skill instructions', skill.body);
+
+  if (businessContext) {
+    sections.push(
+      '',
+      '## Business context',
+      '```json',
+      stableJsonStringify(businessContext, 2),
+      '```',
     );
   }
 
-  sections.push('', '## Skill instructions', skill.body, '', '## User request', userPrompt);
+  sections.push('', '## Current user request', currentPrompt);
 
   return sections.join('\n');
 }

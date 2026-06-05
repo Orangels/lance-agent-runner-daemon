@@ -5,6 +5,7 @@ import {
   authenticateClient,
   filterProfilesForClient,
   getApiKeyFromHeaders,
+  requireCollectionModeAccess,
   requireProfileAccess,
 } from '../auth.js';
 
@@ -99,5 +100,74 @@ describe('profile authorization', () => {
       'report-docx',
       'slides-pptx',
     ]);
+  });
+});
+
+describe('collection mode authorization', () => {
+  it('allows lite collection for any authenticated client', () => {
+    expect(() =>
+      requireCollectionModeAccess({
+        client: clients[0]!,
+        profile: { id: 'report-docx', maxCollectionMode: 'lite' } as ProfileConfig,
+        collectionMode: 'lite',
+      }),
+    ).not.toThrow();
+  });
+
+  it('rejects collection modes above the profile cap', () => {
+    try {
+      requireCollectionModeAccess({
+        client: clients[0]!,
+        profile: { id: 'report-docx', maxCollectionMode: 'lite' } as ProfileConfig,
+        collectionMode: 'diagnostic',
+      });
+      throw new Error('expected collection mode failure');
+    } catch (error) {
+      expect(error).toBeInstanceOf(DaemonError);
+      expect((error as DaemonError).code).toBe('COLLECTION_MODE_NOT_ALLOWED');
+      expect((error as DaemonError).status).toBe(403);
+    }
+  });
+
+  it('requires log access for diagnostic collection', () => {
+    const clientWithoutLogs: ClientConfig = {
+      ...clients[0]!,
+      canReadLogs: false,
+      canReadDebugEvents: false,
+    };
+
+    expect(() =>
+      requireCollectionModeAccess({
+        client: clientWithoutLogs,
+        profile: { id: 'report-docx', maxCollectionMode: 'diagnostic' } as ProfileConfig,
+        collectionMode: 'diagnostic',
+      }),
+    ).toThrow(expect.objectContaining({ code: 'COLLECTION_MODE_NOT_ALLOWED', status: 403 }));
+
+    expect(() =>
+      requireCollectionModeAccess({
+        client: clients[0]!,
+        profile: { id: 'report-docx', maxCollectionMode: 'diagnostic' } as ProfileConfig,
+        collectionMode: 'diagnostic',
+      }),
+    ).not.toThrow();
+  });
+
+  it('requires log and debug access for review collection', () => {
+    expect(() =>
+      requireCollectionModeAccess({
+        client: clients[0]!,
+        profile: { id: 'report-docx', maxCollectionMode: 'review' } as ProfileConfig,
+        collectionMode: 'review',
+      }),
+    ).toThrow(expect.objectContaining({ code: 'COLLECTION_MODE_NOT_ALLOWED', status: 403 }));
+
+    expect(() =>
+      requireCollectionModeAccess({
+        client: clients[1]!,
+        profile: { id: 'report-docx', maxCollectionMode: 'review' } as ProfileConfig,
+        collectionMode: 'review',
+      }),
+    ).not.toThrow();
   });
 });

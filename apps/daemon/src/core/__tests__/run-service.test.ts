@@ -4,7 +4,14 @@ import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { parseDaemonConfig, type DaemonConfig } from '../../config/profiles.js';
 import { openInMemoryDatabase } from '../../db/connection.js';
-import { getProfileSnapshotForRun, getRunDetail, upsertWorkspace } from '../../db/repositories.js';
+import {
+  getProfileSnapshotForRun,
+  getRunContextSnapshot,
+  getRunDetail,
+  getRunPromptSnapshot,
+  getRunSkillSnapshot,
+  upsertWorkspace,
+} from '../../db/repositories.js';
 import { applySchema } from '../../db/schema.js';
 import { DaemonError } from '../errors.js';
 import {
@@ -211,7 +218,13 @@ describe('run service', () => {
       },
     });
 
-    expect(result).toEqual({ runId: 'run_1', status: 'queued' });
+    expect(result).toEqual({
+      runId: 'run_1',
+      status: 'queued',
+      conversationId: 'conv_1',
+      userMessageId: 'msg_user',
+      assistantMessageId: 'msg_assistant',
+    });
     expect(runners).toHaveLength(0);
     expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.messages).toEqual([
       expect.objectContaining({ id: 'msg_user', role: 'user', content: 'Revise the report.' }),
@@ -226,6 +239,100 @@ describe('run service', () => {
 
     await runScheduledStart(runNextTimer);
     expect(runners).toHaveLength(1);
+  });
+
+  it('rejects explicit conversation ids owned by a different workspace before inserting a run', () => {
+    const { config, db, workspace, service } = setup();
+    const otherWorkspace = upsertWorkspace(db, {
+      id: 'ws_2',
+      clientId: 'lqbot',
+      profileId: 'report-docx',
+      originId: 'lqbot',
+      userId: 'user_2',
+      projectId: 'project_123',
+      now: 1000,
+    });
+    const otherRun = service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: otherWorkspace.id,
+        kind: 'revise',
+        prompt: 'Create the other conversation.',
+        artifactRuleIds: [],
+      },
+    });
+
+    expect(() =>
+      service.createRun({
+        client: config.clients[0]!,
+        request: {
+          profileId: 'report-docx',
+          workspaceId: workspace.id,
+          conversationId: otherRun.conversationId,
+          kind: 'revise',
+          prompt: 'Try to reuse a foreign conversation.',
+          artifactRuleIds: [],
+        },
+      }),
+    ).toThrow(expect.objectContaining({ code: 'BAD_REQUEST', status: 400 }));
+    expect(getRunDetail(db, { runId: 'run_2', clientId: 'lqbot' })).toBeNull();
+  });
+
+  it('rejects collection modes above the profile cap before inserting a run', () => {
+    const { config, db, workspace, service } = setup();
+
+    expect(() =>
+      service.createRun({
+        client: config.clients[0]!,
+        request: {
+          profileId: 'report-docx',
+          workspaceId: workspace.id,
+          kind: 'revise',
+          prompt: 'Run with diagnostic capture.',
+          collectionMode: 'diagnostic',
+          artifactRuleIds: [],
+        },
+      }),
+    ).toThrow(expect.objectContaining({ code: 'COLLECTION_MODE_NOT_ALLOWED', status: 403 }));
+    expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })).toBeNull();
+  });
+
+  it('stores business context snapshots at create time even if the queued run is canceled', () => {
+    const { config, db, workspace, service } = setup({
+      configure: (config) => {
+        config.profiles[0]!.maxCollectionMode = 'diagnostic';
+      },
+    });
+
+    service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'generate',
+        promptMode: 'business-context',
+        skillId: 'report-writer',
+        currentPrompt: 'Generate from the supplied business package.',
+        businessContext: { stage: 'initial', formAnswers: { unit: 'test-unit' } },
+        collectionMode: 'diagnostic',
+        artifactRuleIds: [],
+      },
+    });
+
+    expect(service.cancelRun({ client: config.clients[0]!, runId: 'run_1' })).toEqual({ ok: true });
+    expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.run).toMatchObject({
+      status: 'canceled',
+      promptMode: 'business-context',
+      collectionMode: 'diagnostic',
+      businessContextHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+    expect(getRunContextSnapshot(db, 'run_1')).toMatchObject({
+      businessContextHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      persisted: true,
+      businessContext: expect.objectContaining({ stage: 'initial' }),
+    });
+    expect(getRunPromptSnapshot(db, 'run_1')).toBeNull();
   });
 
   it('does not grant allowed input roots to Claude --add-dir in Phase 1', () => {
@@ -278,7 +385,7 @@ describe('run service', () => {
           prompt: 'Generate a report.',
         },
       }),
-    ).toEqual({ runId: 'run_1', status: 'queued' });
+    ).toEqual(expect.objectContaining({ runId: 'run_1', status: 'queued' }));
 
     await runScheduledStart(runNextTimer);
 
@@ -340,6 +447,54 @@ describe('run service', () => {
     expect(runners[0]!.input.prompt).toContain('Use references/style.md to write the report.');
     expect(runners[0]!.input.prompt).not.toContain('Skill root');
     expect(runners[0]!.input.extraAllowedDirs).toEqual([]);
+  });
+
+  it('injects skill instructions and persists diagnostic snapshots for business-context revise runs', async () => {
+    const { root, config, db, workspace, service, runners, runNextTimer } = setup({
+      configure: (config) => {
+        config.profiles[0]!.maxCollectionMode = 'diagnostic';
+      },
+    });
+    writeSkill(root, { sideFiles: true });
+
+    service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'revise',
+        promptMode: 'business-context',
+        skillId: 'report-writer',
+        currentPrompt: 'Continue after the question-form answers.',
+        businessContext: {
+          previousRunId: 'run_previous',
+          stage: 'question-form-answers',
+          formAnswers: { unit: 'test-unit' },
+        },
+        collectionMode: 'diagnostic',
+        artifactRuleIds: [],
+      },
+    });
+
+    await runScheduledStart(runNextTimer);
+
+    await vi.waitFor(() => expect(runners).toHaveLength(1));
+    expect(runners[0]!.input.prompt).toContain('## Business context');
+    expect(runners[0]!.input.prompt).toContain('"previousRunId": "run_previous"');
+    expect(runners[0]!.input.prompt).toContain('Use references/style.md to write the report.');
+    expect(runners[0]!.input.prompt).toContain('Continue after the question-form answers.');
+    expect(getRunPromptSnapshot(db, 'run_1')).toMatchObject({
+      promptSnapshot: expect.stringContaining('## Business context'),
+      persisted: true,
+    });
+    expect(getRunSkillSnapshot(db, 'run_1')).toMatchObject({
+      skillId: 'report-writer',
+      skillBody: expect.stringContaining('Use references/style.md'),
+      sideFilesManifest: expect.arrayContaining([
+        expect.objectContaining({ relativePath: 'references/style.md' }),
+      ]),
+      persisted: true,
+    });
   });
 
   it('fails generate runs durably when skill staging fails before spawn', async () => {

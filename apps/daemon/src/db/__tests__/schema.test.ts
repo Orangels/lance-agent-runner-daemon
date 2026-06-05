@@ -35,8 +35,11 @@ describe('sqlite schema', () => {
       'artifacts',
       'conversations',
       'profile_snapshots',
+      'run_context_snapshots',
       'run_logs',
       'run_messages',
+      'run_prompt_snapshots',
+      'run_skill_snapshots',
       'runs',
       'workspaces',
     ]);
@@ -56,6 +59,25 @@ describe('sqlite schema', () => {
     applySchema(db);
 
     expect(listColumns(db, 'run_messages')).toContain('thinking_content');
+  });
+
+  it('stores prompt, collection, and snapshot metadata on runs', () => {
+    const db = openInMemoryDatabase();
+
+    applySchema(db);
+
+    expect(listColumns(db, 'runs')).toEqual(
+      expect.arrayContaining([
+        'prompt_mode',
+        'current_prompt',
+        'collection_mode',
+        'prompt_snapshot_hash',
+        'prompt_snapshot_char_count',
+        'prompt_snapshot_byte_count',
+        'prompt_snapshot_persisted',
+        'business_context_hash',
+      ]),
+    );
   });
 
   it('migrates existing run_messages tables to add thinking content', () => {
@@ -110,8 +132,11 @@ describe('sqlite schema', () => {
         'sqlite_autoindex_artifacts_1',
         'sqlite_autoindex_conversations_1',
         'sqlite_autoindex_profile_snapshots_1',
+        'sqlite_autoindex_run_context_snapshots_1',
         'sqlite_autoindex_run_logs_1',
         'sqlite_autoindex_run_messages_1',
+        'sqlite_autoindex_run_prompt_snapshots_1',
+        'sqlite_autoindex_run_skill_snapshots_1',
         'sqlite_autoindex_runs_1',
         'sqlite_autoindex_workspaces_1',
       ]),

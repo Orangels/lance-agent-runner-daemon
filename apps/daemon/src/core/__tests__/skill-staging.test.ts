@@ -51,7 +51,14 @@ describe('skill staging', () => {
       relativeRoot: `${STAGED_SKILLS_DIR}/report-writer`,
       absoluteRoot: path.join(workspaceCwd, STAGED_SKILLS_DIR, 'report-writer'),
       folderName: 'report-writer',
+      sideFilesManifest: [
+        expect.objectContaining({
+          relativePath: 'assets/template.md',
+          size: 8,
+        }),
+      ],
     });
+    expect(staged.sideFilesManifest[0]?.sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(readFileSync(path.join(staged.absoluteRoot, 'assets', 'template.md'), 'utf8')).toBe(
       'template',
     );
@@ -87,6 +94,37 @@ describe('skill staging', () => {
     expect(readFileSync(path.join(sourceSkill, 'assets', 'source-template.md'), 'utf8')).toBe(
       'source template',
     );
+  });
+
+  it('records a deterministic side files manifest without SKILL.md or absolute paths', async () => {
+    const root = makeTempRoot();
+    const workspaceCwd = path.join(root, 'workspace');
+    const sourceSkill = path.join(root, 'skills', 'report-writer');
+    mkdirSync(path.join(sourceSkill, 'references'), { recursive: true });
+    mkdirSync(path.join(sourceSkill, 'templates'), { recursive: true });
+    writeFileSync(path.join(sourceSkill, 'SKILL.md'), '# Report Writer');
+    writeFileSync(path.join(sourceSkill, 'references', 'style.md'), 'style rules');
+    writeFileSync(path.join(sourceSkill, 'templates', 'base.py'), 'print("base")');
+
+    const staged = await stageSkillIntoWorkspace({
+      workspaceCwd,
+      skill: makeSkill(sourceSkill, 'report-writer'),
+    });
+
+    expect(staged.sideFilesManifest).toEqual([
+      {
+        relativePath: 'references/style.md',
+        size: 11,
+        sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      },
+      {
+        relativePath: 'templates/base.py',
+        size: 13,
+        sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      },
+    ]);
+    expect(JSON.stringify(staged.sideFilesManifest)).not.toContain(sourceSkill);
+    expect(staged.sideFilesManifest.map((entry) => entry.relativePath)).not.toContain('SKILL.md');
   });
 
   it('replaces the stale per-skill staged copy before copying', async () => {

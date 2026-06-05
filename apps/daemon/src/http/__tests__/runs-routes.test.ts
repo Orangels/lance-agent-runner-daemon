@@ -230,7 +230,13 @@ describe('runs routes', () => {
       });
 
       expect(response.status).toBe(202);
-      expect(await response.json()).toEqual({ runId: 'run_1', status: 'queued' });
+      expect(await response.json()).toEqual({
+        runId: 'run_1',
+        status: 'queued',
+        conversationId: 'conv_1',
+        userMessageId: 'msg_user',
+        assistantMessageId: 'msg_assistant',
+      });
     });
   });
 
@@ -249,7 +255,13 @@ describe('runs routes', () => {
       });
 
       expect(response.status).toBe(202);
-      expect(await response.json()).toEqual({ runId: 'run_1', status: 'queued' });
+      expect(await response.json()).toEqual({
+        runId: 'run_1',
+        status: 'queued',
+        conversationId: 'conv_1',
+        userMessageId: 'msg_user',
+        assistantMessageId: 'msg_assistant',
+      });
       expect(runners).toHaveLength(0);
     });
   });

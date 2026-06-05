@@ -1,4 +1,4 @@
-import { requireProfileAccess } from '../config/auth.js';
+import { requireCollectionModeAccess, requireProfileAccess } from '../config/auth.js';
 import {
   getProfile,
   isModelAllowed,
@@ -9,13 +9,17 @@ import {
 import type { RunnerDatabase } from '../db/connection.js';
 import {
   createRunQueuedWithMessagesAndSnapshot,
+  getConversationForWorkspace,
   getRunDetail,
   getRunForClient,
   getWorkspaceForClient,
   listRunsForClient,
   updateAssistantMessageTerminal,
+  updateRunPromptSnapshotFields,
   updateRunStarted,
   updateRunTerminal,
+  upsertRunPromptSnapshot,
+  upsertRunSkillSnapshot,
   type RunDetailRecord,
   type RunRecord,
   type WorkspaceRecord,
@@ -33,6 +37,11 @@ import { createMessageAccumulator } from './message-accumulator.js';
 import { composeRunPrompt } from './prompt-composer.js';
 import { createSanitizedProfileSnapshot } from './profile-snapshot.js';
 import {
+  createTextSnapshot,
+  shouldPersistFullSnapshot,
+  stableJsonHash,
+} from './snapshot-service.js';
+import {
   countQueued,
   selectDispatchableCandidates,
   type QueueCandidate,
@@ -46,6 +55,8 @@ import {
 import { formatRunEventId, shouldReplayEventAfter, type RunEvent } from './run-events.js';
 import {
   isTerminalRunStatus,
+  type ActivePromptMode,
+  type CollectionMode,
   type CreateRunRequest,
   type EventVisibility,
   type ListRunsQuery,
@@ -55,8 +66,9 @@ import {
 import {
   assertSkillAllowedForProfile,
   resolveSkillForProfile,
+  type SkillRecord,
 } from './skill-registry.js';
-import { stageSkillIntoWorkspace } from './skill-staging.js';
+import { stageSkillIntoWorkspace, type StagedSkill } from './skill-staging.js';
 import { getWorkspaceCwd } from './workspace-service.js';
 
 export interface BufferedRunEvent {
@@ -84,7 +96,7 @@ export interface CreateRunServiceInput {
 }
 
 export interface RunService {
-  createRun(input: { client: ClientConfig; request: CreateRunRequest }): { runId: string; status: 'queued' };
+  createRun(input: { client: ClientConfig; request: CreateRunRequest }): CreateRunResult;
   listRuns(input: { client: ClientConfig; query?: ListRunsQuery }): RunRecord[];
   getRunStatus(input: { client: ClientConfig; runId: string }): RunRecord;
   getRunDetail(input: { client: ClientConfig; runId: string }): RunDetailRecord;
@@ -96,6 +108,14 @@ export interface RunService {
   ): { replay: BufferedRunEvent[]; terminal: boolean; unsubscribe: () => void };
   cancelRun(input: { client: ClientConfig; runId: string }): { ok: true };
   shutdownActive(input?: { graceMs?: number }): Promise<{ interrupted: number }>;
+}
+
+export interface CreateRunResult {
+  runId: string;
+  status: 'queued';
+  conversationId: string;
+  userMessageId: string;
+  assistantMessageId: string;
 }
 
 export interface RunServiceRunnerInput {
@@ -126,6 +146,9 @@ interface RunState {
   skillId: string | null;
   artifactRuleIds: string[];
   prompt: string;
+  promptMode: ActivePromptMode;
+  collectionMode: CollectionMode;
+  businessContext?: Record<string, unknown>;
   model?: string;
   requestEventVisibility?: EventVisibility;
   events: BufferedRunEvent[];
@@ -277,22 +300,24 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     emitRunEvent(state, { type: 'status', label: 'running' });
     let prompt = state.prompt;
     let extraAllowedDirs: string[] = [];
+    const persistFullSnapshots = shouldPersistFullSnapshot(state.collectionMode);
+    let resolvedSkill: SkillRecord | null | undefined;
+    let stagedSkill: StagedSkill | undefined;
 
-    if (state.kind === 'generate') {
-      const skill = await resolveGenerateSkill(state);
+    if (state.skillId) {
+      resolvedSkill = await resolveRunSkill(state);
       if (state.terminal) {
         return;
       }
-      if (!skill) {
+      if (!resolvedSkill) {
         return;
       }
 
-      let stagedSkill;
-      if (skill.hasSideFiles) {
+      if (resolvedSkill.hasSideFiles) {
         try {
           stagedSkill = await stageSkillIntoWorkspace({
             workspaceCwd: getWorkspaceCwd(state.profile, state.workspace),
-            skill,
+            skill: resolvedSkill,
           });
         } catch {
           await finishRun(
@@ -314,14 +339,67 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       if (state.terminal) {
         return;
       }
+      extraAllowedDirs = stagedSkill ? [stagedSkill.absoluteRoot] : [];
+    }
 
+    try {
       prompt = composeRunPrompt({
         kind: state.kind,
-        userPrompt: state.prompt,
-        skill,
+        promptMode: state.promptMode,
+        currentPrompt: state.prompt,
+        businessContext: state.businessContext,
+        skill: resolvedSkill ?? undefined,
         stagedSkill,
       });
-      extraAllowedDirs = stagedSkill ? [stagedSkill.absoluteRoot] : [];
+    } catch {
+      await finishRun(
+        state,
+        {
+          status: 'failed',
+          exitCode: null,
+          signal: null,
+          errorCode: 'PROMPT_COMPOSITION_FAILED',
+          errorMessage: 'Prompt composition failed.',
+          stdoutTail: '',
+          stderrTail: '',
+        },
+        { finalizeArtifacts: false },
+      );
+      return;
+    }
+
+    const promptSnapshot = createTextSnapshot(prompt);
+    upsertRunPromptSnapshot(input.db, {
+      runId: state.runId,
+      promptSnapshot: persistFullSnapshots ? prompt : null,
+      promptSnapshotHash: promptSnapshot.hash,
+      charCount: promptSnapshot.charCount,
+      byteCount: promptSnapshot.byteCount,
+      persisted: persistFullSnapshots,
+      now: startedAt,
+    });
+    updateRunPromptSnapshotFields(input.db, {
+      runId: state.runId,
+      promptSnapshotHash: promptSnapshot.hash,
+      charCount: promptSnapshot.charCount,
+      byteCount: promptSnapshot.byteCount,
+      persisted: persistFullSnapshots,
+      now: startedAt,
+    });
+
+    if (resolvedSkill) {
+      const skillBodySnapshot = createTextSnapshot(resolvedSkill.body);
+      upsertRunSkillSnapshot(input.db, {
+        runId: state.runId,
+        skillId: resolvedSkill.id,
+        skillName: resolvedSkill.name,
+        skillDescription: resolvedSkill.description ?? null,
+        skillBodyHash: skillBodySnapshot.hash,
+        skillBody: persistFullSnapshots ? resolvedSkill.body : null,
+        sideFilesManifest: stagedSkill?.sideFilesManifest ?? [],
+        persisted: persistFullSnapshots,
+        now: startedAt,
+      });
     }
 
     const capabilities = await getCapabilities(state.profile);
@@ -363,7 +441,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     );
   }
 
-  async function resolveGenerateSkill(state: RunState) {
+  async function resolveRunSkill(state: RunState) {
     if (!state.skillId) {
       await finishRun(
         state,
@@ -588,8 +666,24 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     createRun({ client, request }) {
       requireProfileAccess(client, request.profileId);
       const profile = getProfile(input.config, request.profileId);
-      if (request.kind === 'generate') {
+
+      const promptMode = request.promptMode ?? 'legacy';
+      if (promptMode === 'daemon-composed') {
+        throw badRequest('daemon-composed promptMode is deferred to Slice 1b');
+      }
+      const activePromptMode = promptMode as ActivePromptMode;
+      const collectionMode = request.collectionMode ?? 'lite';
+      requireCollectionModeAccess({ client, profile, collectionMode });
+
+      if (request.skillId) {
+        assertSkillAllowedForProfile(profile, request.skillId);
+      } else if (request.kind === 'generate') {
         assertSkillAllowedForProfile(profile, request.skillId ?? '');
+      }
+      const currentPrompt =
+        activePromptMode === 'legacy' ? request.prompt : request.currentPrompt;
+      if (!currentPrompt) {
+        throw badRequest(`${activePromptMode} promptMode requires a prompt`);
       }
 
       const selectedModel = request.model ?? profile.defaultModel;
@@ -611,6 +705,15 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       if (workspace.profileId !== profile.id) {
         throw badRequest('Workspace profile does not match requested profile');
       }
+      if (
+        request.conversationId &&
+        !getConversationForWorkspace(input.db, {
+          conversationId: request.conversationId,
+          workspaceId: workspace.id,
+        })
+      ) {
+        throw badRequest('Conversation does not belong to requested workspace');
+      }
 
       const runId = nextRunId();
       const sequence = nextSequence++;
@@ -628,9 +731,14 @@ export function createRunService(input: CreateRunServiceInput): RunService {
         throw daemonError('RUN_QUEUE_FULL', 'Run queue is full', 429);
       }
 
+      const businessContextHash =
+        request.businessContext === undefined ? null : stableJsonHash(request.businessContext);
+      const persistBusinessContext =
+        request.businessContext !== undefined && shouldPersistFullSnapshot(collectionMode);
       const created = createRunQueuedWithMessagesAndSnapshot(input.db, {
         runId,
-        conversationId: nextConversationId(),
+        conversationId: request.conversationId,
+        defaultConversationId: nextConversationId(),
         userMessageId: nextUserMessageId(),
         assistantMessageId,
         workspaceId: workspace.id,
@@ -638,7 +746,13 @@ export function createRunService(input: CreateRunServiceInput): RunService {
         clientId: client.id,
         kind: request.kind,
         skillId: request.skillId,
-        prompt: request.prompt,
+        prompt: currentPrompt,
+        promptMode: activePromptMode,
+        currentPrompt,
+        collectionMode,
+        businessContext: request.businessContext,
+        businessContextHash,
+        persistBusinessContext,
         artifactRuleIds: selectedArtifactRuleIds,
         metadata: request.metadata,
         profileSnapshot: createSanitizedProfileSnapshot(profile, {
@@ -655,7 +769,10 @@ export function createRunService(input: CreateRunServiceInput): RunService {
         kind: request.kind,
         skillId: request.skillId ?? null,
         artifactRuleIds: selectedArtifactRuleIds,
-        prompt: request.prompt,
+        prompt: currentPrompt,
+        promptMode: activePromptMode,
+        collectionMode,
+        businessContext: request.businessContext,
         model: request.model,
         requestEventVisibility: request.eventVisibility,
         events: [],
@@ -677,7 +794,13 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       emitRunEvent(state, { type: 'status', label: 'queued' });
       scheduleDispatch();
 
-      return { runId: created.run.id, status: 'queued' };
+      return {
+        runId: created.run.id,
+        status: 'queued',
+        conversationId: created.conversation.id,
+        userMessageId: created.messages.find((message) => message.role === 'user')!.id,
+        assistantMessageId: assistantMessageId,
+      };
     },
 
     listRuns({ client, query = {} }) {

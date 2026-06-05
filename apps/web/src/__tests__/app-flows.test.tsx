@@ -11,6 +11,7 @@ const profile = {
   defaultModel: 'opus',
   allowedModels: ['opus'],
   eventVisibility: 'normal',
+  maxCollectionMode: 'lite',
   permissionMode: 'bypassPermissions',
   profileConcurrency: 1,
   runTimeoutMs: null,

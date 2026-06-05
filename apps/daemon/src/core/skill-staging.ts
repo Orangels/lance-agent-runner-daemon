@@ -1,4 +1,5 @@
-import { cp, lstat, rm, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { cp, lstat, readdir, readFile, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { daemonError } from './errors.js';
 import { assertSafePathSegment } from './path-safety.js';
@@ -22,6 +23,13 @@ export interface StagedSkill {
   relativeRoot: string;
   absoluteRoot: string;
   folderName: string;
+  sideFilesManifest: StagedSkillSideFile[];
+}
+
+export interface StagedSkillSideFile {
+  relativePath: string;
+  size: number;
+  sha256: string;
 }
 
 export async function stageSkillIntoWorkspace({
@@ -69,5 +77,39 @@ export async function stageSkillIntoWorkspace({
     relativeRoot: `${STAGED_SKILLS_DIR}/${folderName}`,
     absoluteRoot,
     folderName,
+    sideFilesManifest: await collectSideFilesManifest(absoluteRoot),
   };
+}
+
+async function collectSideFilesManifest(root: string): Promise<StagedSkillSideFile[]> {
+  const entries = await collectFiles(root, root);
+  return entries.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+}
+
+async function collectFiles(root: string, currentDir: string): Promise<StagedSkillSideFile[]> {
+  const dirents = await readdir(currentDir, { withFileTypes: true });
+  const results: StagedSkillSideFile[] = [];
+
+  for (const dirent of dirents) {
+    const absolutePath = path.join(currentDir, dirent.name);
+    const relativePath = path.relative(root, absolutePath).split(path.sep).join('/');
+
+    if (dirent.isDirectory()) {
+      results.push(...(await collectFiles(root, absolutePath)));
+      continue;
+    }
+
+    if (!dirent.isFile() || relativePath === 'SKILL.md') {
+      continue;
+    }
+
+    const content = await readFile(absolutePath);
+    results.push({
+      relativePath,
+      size: content.byteLength,
+      sha256: createHash('sha256').update(content).digest('hex'),
+    });
+  }
+
+  return results;
 }

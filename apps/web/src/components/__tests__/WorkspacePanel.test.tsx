@@ -13,6 +13,7 @@ const profile: PublicProfile = {
   defaultModel: 'opus',
   allowedModels: ['opus', 'sonnet'],
   eventVisibility: 'normal',
+  maxCollectionMode: 'lite',
   permissionMode: 'bypassPermissions',
   profileConcurrency: 1,
   runTimeoutMs: null,

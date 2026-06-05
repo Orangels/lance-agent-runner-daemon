@@ -70,6 +70,26 @@ describe('daemon config parsing', () => {
     expect(config.server.uploadTempRetentionMs).toBe(24 * 60 * 60 * 1000);
     expect(config.clients[0]?.apiKey).toBe('secret-key');
     expect(config.profiles[0]?.id).toBe('report-docx');
+    expect(config.profiles[0]?.maxCollectionMode).toBe('lite');
+  });
+
+  it('accepts explicit max collection modes', () => {
+    for (const maxCollectionMode of ['diagnostic', 'review'] as const) {
+      const config = parseDaemonConfig(
+        {
+          ...validConfig,
+          profiles: [
+            {
+              ...validConfig.profiles[0],
+              maxCollectionMode,
+            },
+          ],
+        },
+        { env: { CLAUDE_RUNNER_TEST_KEY: 'secret-key' } },
+      );
+
+      expect(config.profiles[0]?.maxCollectionMode).toBe(maxCollectionMode);
+    }
   });
 
   it('accepts explicit log retention and per-run log byte caps', () => {

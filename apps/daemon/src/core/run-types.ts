@@ -20,6 +20,15 @@ export function isTerminalRunStatus(status: RunStatus): boolean {
 export const eventVisibilityLevels = ['quiet', 'normal', 'debug'] as const;
 export type EventVisibility = (typeof eventVisibilityLevels)[number];
 
+export const promptModes = ['legacy', 'business-context', 'daemon-composed'] as const;
+export type PromptMode = (typeof promptModes)[number];
+
+export const activePromptModes = ['legacy', 'business-context'] as const;
+export type ActivePromptMode = (typeof activePromptModes)[number];
+
+export const collectionModes = ['lite', 'diagnostic', 'review'] as const;
+export type CollectionMode = (typeof collectionModes)[number];
+
 export const artifactRoles = ['primary', 'supporting', 'debug'] as const;
 export type ArtifactRole = (typeof artifactRoles)[number];
 
@@ -33,6 +42,7 @@ export const daemonErrorCodes = [
   'SKILL_NOT_ALLOWED',
   'SKILL_UNAVAILABLE',
   'SKILL_STAGING_FAILED',
+  'PROMPT_COMPOSITION_FAILED',
   'RUN_QUEUE_FULL',
   'WORKSPACE_RUN_ACTIVE',
   'RUN_NOT_CANCELABLE',
@@ -43,6 +53,7 @@ export const daemonErrorCodes = [
   'RUN_INTERRUPTED_BY_DAEMON_RESTART',
   'CLAUDE_AUTH_FAILED',
   'CLAUDE_CLI_FAILED',
+  'COLLECTION_MODE_NOT_ALLOWED',
   'INTERNAL_ERROR',
   'PATH_NOT_ALLOWED',
   'INVALID_PATH_SEGMENT',
@@ -104,7 +115,12 @@ export interface CreateRunRequest {
   profileId: string;
   workspaceId: string;
   kind: RunKind;
-  prompt: string;
+  prompt?: string;
+  currentPrompt?: string;
+  conversationId?: string;
+  promptMode?: PromptMode;
+  collectionMode?: CollectionMode;
+  businessContext?: Record<string, unknown>;
   skillId?: string;
   model?: string;
   artifactRuleIds?: string[];

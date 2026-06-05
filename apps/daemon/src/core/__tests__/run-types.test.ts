@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   daemonErrorCodes,
+  collectionModes,
   eventVisibilityLevels,
   isTerminalRunStatus,
+  promptModes,
   runMessageFlushPolicy,
   runStatuses,
   workspaceDirectoryNames,
@@ -34,6 +36,11 @@ describe('run contract constants', () => {
     expect(eventVisibilityLevels).toEqual(['quiet', 'normal', 'debug']);
   });
 
+  it('defines prompt and collection modes exactly', () => {
+    expect(promptModes).toEqual(['legacy', 'business-context', 'daemon-composed']);
+    expect(collectionModes).toEqual(['lite', 'diagnostic', 'review']);
+  });
+
   it('defines the workspace directory skeleton exactly', () => {
     expect(workspaceDirectoryNames).toEqual([
       'input',
@@ -63,6 +70,7 @@ describe('run contract constants', () => {
       'SKILL_NOT_ALLOWED',
       'SKILL_UNAVAILABLE',
       'SKILL_STAGING_FAILED',
+      'PROMPT_COMPOSITION_FAILED',
       'RUN_QUEUE_FULL',
       'WORKSPACE_RUN_ACTIVE',
       'RUN_NOT_CANCELABLE',
@@ -73,6 +81,7 @@ describe('run contract constants', () => {
       'RUN_INTERRUPTED_BY_DAEMON_RESTART',
       'CLAUDE_AUTH_FAILED',
       'CLAUDE_CLI_FAILED',
+      'COLLECTION_MODE_NOT_ALLOWED',
       'INTERNAL_ERROR',
       'PATH_NOT_ALLOWED',
       'INVALID_PATH_SEGMENT',

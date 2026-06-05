@@ -1,8 +1,12 @@
 export type RunKind = 'generate' | 'revise';
 
+export type PromptMode = 'legacy' | 'business-context' | 'daemon-composed';
+
 export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled' | 'interrupted';
 
 export type EventVisibility = 'quiet' | 'normal' | 'debug';
+
+export type CollectionMode = 'lite' | 'diagnostic' | 'review';
 
 export type ArtifactRole = 'primary' | 'supporting' | 'debug';
 
@@ -14,8 +18,10 @@ export type DaemonErrorCode =
   | 'MODEL_NOT_ALLOWED'
   | 'PROFILE_NOT_ALLOWED'
   | 'SKILL_NOT_ALLOWED'
+  | 'COLLECTION_MODE_NOT_ALLOWED'
   | 'SKILL_UNAVAILABLE'
   | 'SKILL_STAGING_FAILED'
+  | 'PROMPT_COMPOSITION_FAILED'
   | 'RUN_QUEUE_FULL'
   | 'WORKSPACE_RUN_ACTIVE'
   | 'RUN_NOT_CANCELABLE'
@@ -58,6 +64,7 @@ export interface PublicProfile {
   defaultModel: string | null;
   allowedModels: string[];
   eventVisibility: EventVisibility;
+  maxCollectionMode: CollectionMode;
   permissionMode: string;
   profileConcurrency: number;
   runTimeoutMs: number | null;
@@ -101,7 +108,12 @@ export interface CreateRunRequest {
   profileId: string;
   workspaceId: string;
   kind: RunKind;
-  prompt: string;
+  prompt?: string;
+  currentPrompt?: string;
+  conversationId?: string;
+  promptMode?: PromptMode;
+  collectionMode?: CollectionMode;
+  businessContext?: Record<string, unknown>;
   skillId?: string;
   model?: string;
   artifactRuleIds?: string[];
@@ -133,6 +145,9 @@ export interface PublicRun {
 export interface CreateRunResponse {
   runId: string;
   status: 'queued';
+  conversationId: string;
+  userMessageId: string;
+  assistantMessageId: string;
 }
 
 export interface CancelRunResponse {
