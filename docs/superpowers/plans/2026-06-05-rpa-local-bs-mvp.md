@@ -33,20 +33,32 @@ Use these names in follow-up plans and commits. Do not replace them with ambiguo
 
 The implementation plan review found one P1: prompt/skill/context snapshot persistence and `collectionMode` permission caps must land with the first daemon prompt-context work, not in a later review-bundle slice. This plan resolves that by making the first daemon slice include the minimal snapshot tables, hash/size fields, collection mode validation, and permission cap checks. The later daemon observability slice now only contains full review bundle export, complete log download, feedback storage, and sanitizer polish.
 
-Slice 1 review also found that `daemon-composed` requires `conversation_seq` and stable cross-run transcript ordering. Because RPA MVP uses `business-context` for codegen, natural-language generation, question-form follow-up, and verify-repair, `daemon-composed` is deferred to a separate generic daemon slice and is not part of the RPA-unblocking Slice 1a.
+Slice 1 review also found that `daemon-composed` requires `conversation_seq` and stable cross-run transcript ordering. Because RPA MVP uses `business-context` for codegen, natural-language generation, question-form follow-up, and verify-repair, `daemon-composed` was split into a separate generic daemon slice instead of the RPA-unblocking Slice 1a. That separate Slice 1b is now completed.
 
 Latest product decision: `codegen 上传加固闭环` implements RPA Web-managed Playwright codegen recording directly. RPA Web starts the codegen child process, controls the output path, validates the generated single-file `flow.py`, then automatically uploads it to daemon. Manual `flow.py` upload is not the primary MVP path.
+
+## Current Implementation Progress
+
+Completed so far:
+
+- Slice 1a `Daemon Business Context And Minimal Snapshot Guard` landed in commit `1d4b5b8`.
+- Slice 1b `Daemon-Composed Conversation Context` landed in commit `2bb593e`.
+- `RPA Workspace Package Skeleton` landed in commit `e75a5ef`.
+
+Next planned slice:
+
+- `RPA DSL And Artifact Contract`.
 
 ## Implementation Dependency Map
 
 ```text
-Daemon business-context + minimal snapshot/collection guard
+Daemon business-context + minimal snapshot/collection guard (completed)
   -> RPA Web can run multi-turn skill workflows without knowing skill bodies
 
-Daemon-composed conversation context is deferred to an independent generic slice
-  -> It requires conversation_seq and stable cross-run transcript ordering, and is not required by RPA MVP
+Daemon-composed conversation context (completed generic daemon capability)
+  -> It is available for non-RPA generic continuation, but RPA MVP still uses explicit business-context
 
-RPA workspace skeleton
+RPA workspace skeleton (completed)
   -> Gives product code a home without touching apps/web
 
 RPA DSL/artifact contract
@@ -83,9 +95,13 @@ RPA Web uses `kind` to express business intent and `promptMode` to express how d
 
 ---
 
-## Slice: Daemon Business Context And Minimal Snapshot Guard
+## Slice: Daemon Business Context And Minimal Snapshot Guard (Completed)
 
 **Purpose:** Add the generic daemon-native `business-context` support plus the minimal collection/snapshot security substrate required by every later RPA workflow. `daemon-composed` is deliberately deferred because it needs `conversation_seq` and stable cross-run transcript ordering.
+
+**Status:** Completed in commit `1d4b5b8`.
+
+Note: this slice originally left `daemon-composed` deferred. `daemon-composed` was then activated by the follow-up Slice 1b in commit `2bb593e`.
 
 **Files likely touched:**
 
@@ -111,24 +127,24 @@ RPA Web uses `kind` to express business intent and `promptMode` to express how d
 
 **Tasks:**
 
-- [ ] Extend create-run request types with `promptMode = legacy | business-context | daemon-composed`, `currentPrompt`, `businessContext`, `conversationId`, and `collectionMode = lite | diagnostic | review`.
-- [ ] Keep legacy behavior compatible: existing `prompt + generate + skillId` still works and stores user-visible prompt semantics in `runs.prompt`.
-- [ ] Change validation matrix so `business-context` requires `currentPrompt` and forbids raw `prompt`; `daemon-composed` is recognized but rejected as deferred until the generic daemon-composed slice.
-- [ ] Allow `revise + skillId` only for non-legacy `business-context`.
-- [ ] Add profile/client permission caps for `collectionMode`: `maxCollectionMode`, `canReadLogs`, `canReadDebugEvents`.
-- [ ] Reject disallowed collection mode requests with a structured error such as `COLLECTION_MODE_NOT_ALLOWED`; do not silently downgrade.
-- [ ] Add lightweight run fields for `prompt_mode`, `current_prompt`, `collection_mode`, snapshot hash/size/persisted flags, and business context hash.
-- [ ] Add `run_prompt_snapshots`, `run_skill_snapshots`, and `run_context_snapshots` tables in the same slice that first writes snapshot data.
-- [ ] Persist `business_context_hash` and create-time context snapshot before queue insertion so queued-then-canceled runs remain reviewable.
-- [ ] Persist prompt snapshot hash/size when a final prompt is actually composed; persist full prompt only when `collectionMode` permits it.
-- [ ] Capture skill snapshot metadata and side files manifest during skill staging; persist full skill snapshot only when `collectionMode` permits it.
-- [ ] Store only user/assistant-visible content in conversation messages; never store final prompt in `run_messages.content`.
-- [ ] Build final prompt inside daemon by injecting skill instructions, staged side file paths, profile-owned run constraints, and business context.
-- [ ] Validate explicit `conversationId` workspace ownership before queue insertion and return a structured 4xx on mismatch.
-- [ ] Preserve the current `skill.hasSideFiles` short-circuit so skills without side files are not staged unnecessarily.
-- [ ] Add tests proving RPA-like business context does not cause daemon core to interpret DSL or Playwright.
-- [ ] Add tests for the RPA call contract: first generation uses `generate + business-context`, follow-up/question-form and verify-failure repair use `revise + business-context + skillId` with explicit business context.
-- [ ] Add tests for cross-workspace `conversationId` rejection, queued cancellation context snapshot persistence, lite-mode hash-only context snapshots, and updated create-run response ids.
+- [x] Extend create-run request types with `promptMode = legacy | business-context | daemon-composed`, `currentPrompt`, `businessContext`, `conversationId`, and `collectionMode = lite | diagnostic | review`.
+- [x] Keep legacy behavior compatible: existing `prompt + generate + skillId` still works and stores user-visible prompt semantics in `runs.prompt`.
+- [x] Change validation matrix so `business-context` requires `currentPrompt` and forbids raw `prompt`; `daemon-composed` is recognized but rejected as deferred until the generic daemon-composed slice.
+- [x] Allow `revise + skillId` only for non-legacy `business-context`.
+- [x] Add profile/client permission caps for `collectionMode`: `maxCollectionMode`, `canReadLogs`, `canReadDebugEvents`.
+- [x] Reject disallowed collection mode requests with a structured error such as `COLLECTION_MODE_NOT_ALLOWED`; do not silently downgrade.
+- [x] Add lightweight run fields for `prompt_mode`, `current_prompt`, `collection_mode`, snapshot hash/size/persisted flags, and business context hash.
+- [x] Add `run_prompt_snapshots`, `run_skill_snapshots`, and `run_context_snapshots` tables in the same slice that first writes snapshot data.
+- [x] Persist `business_context_hash` and create-time context snapshot before queue insertion so queued-then-canceled runs remain reviewable.
+- [x] Persist prompt snapshot hash/size when a final prompt is actually composed; persist full prompt only when `collectionMode` permits it.
+- [x] Capture skill snapshot metadata and side files manifest during skill staging; persist full skill snapshot only when `collectionMode` permits it.
+- [x] Store only user/assistant-visible content in conversation messages; never store final prompt in `run_messages.content`.
+- [x] Build final prompt inside daemon by injecting skill instructions, staged side file paths, profile-owned run constraints, and business context.
+- [x] Validate explicit `conversationId` workspace ownership before queue insertion and return a structured 4xx on mismatch.
+- [x] Preserve the current `skill.hasSideFiles` short-circuit so skills without side files are not staged unnecessarily.
+- [x] Add tests proving RPA-like business context does not cause daemon core to interpret DSL or Playwright.
+- [x] Add tests for the RPA call contract: first generation uses `generate + business-context`, follow-up/question-form and verify-failure repair use `revise + business-context + skillId` with explicit business context.
+- [x] Add tests for cross-workspace `conversationId` rejection, queued cancellation context snapshot persistence, lite-mode hash-only context snapshots, and updated create-run response ids.
 
 **Acceptance:**
 
@@ -145,9 +161,11 @@ RPA Web uses `kind` to express business intent and `promptMode` to express how d
 
 ---
 
-## Deferred Slice: Daemon-Composed Conversation Context
+## Slice: Daemon-Composed Conversation Context (Completed)
 
 **Purpose:** Add generic daemon-composed continuation after RPA-unblocking work is underway. This slice is not required by RPA MVP because RPA Web passes explicit `businessContext`.
+
+**Status:** Completed in commit `2bb593e`.
 
 **Tasks:**
 
@@ -162,9 +180,11 @@ RPA Web uses `kind` to express business intent and `promptMode` to express how d
 
 ---
 
-## Slice: RPA Workspace Package Skeleton
+## Slice: RPA Workspace Package Skeleton (Completed)
 
 **Purpose:** Add `apps/rpa-local-web` as the local B/S RPA application without modifying `apps/web` into a product-specific UI.
+
+**Status:** Completed in commit `e75a5ef`.
 
 **Execution plan:** `docs/superpowers/plans/2026-06-05-rpa-local-web-skeleton.md`
 
@@ -178,18 +198,19 @@ RPA Web uses `kind` to express business intent and `promptMode` to express how d
 - Create: `apps/rpa-local-web/src/styles.css`
 - Create: `apps/rpa-local-web/src/server/index.ts`
 - Create: `apps/rpa-local-web/src/server/daemon-client.ts`
-- Create: `apps/rpa-local-web/src/shared/types.ts`
+- Create: `apps/rpa-local-web/src/shared/daemon-types.ts`
+- Create: `apps/rpa-local-web/src/shared/rpa-api-types.ts`
 - Modify: `package.json`
 - Docs: `docs/rpa-local-bs-mvp-design.md` if command names change.
 
 **Tasks:**
 
-- [ ] Create the new workspace package named `@lance-agent-runner/rpa-local-web`.
-- [ ] Add root scripts: `dev:rpa-local-web`, `build:rpa-local-web`, `test:rpa-local-web`, `typecheck:rpa-local-web`.
-- [ ] Implement a minimal backend server that serves the Vite app and exposes a local API namespace such as `/api/rpa/*`.
-- [ ] Implement a typed daemon client for workspace creation, file upload, run creation, run cancellation, SSE subscription, artifact listing, and artifact download.
-- [ ] Build an initial UI shell with tabs/sections for codegen hardening, natural-language generation, flows, executions, and settings.
-- [ ] Keep UI dense and operational; do not create a marketing landing page.
+- [x] Create the new workspace package named `@lance-agent-runner/rpa-local-web`.
+- [x] Add root scripts: `dev:rpa-local-web`, `build:rpa-local-web`, `test:rpa-local-web`, `typecheck:rpa-local-web`.
+- [x] Implement a minimal backend server that serves the Vite app and exposes a local API namespace such as `/api/rpa/*`.
+- [x] Implement a typed daemon client for workspace creation, file upload, run creation, run cancellation, SSE subscription, artifact listing, and artifact download.
+- [x] Build an initial UI shell with tabs/sections for codegen hardening, natural-language generation, flows, executions, and settings.
+- [x] Keep UI dense and operational; do not create a marketing landing page.
 
 **Acceptance:**
 
@@ -205,6 +226,8 @@ RPA Web uses `kind` to express business intent and `promptMode` to express how d
 ## Slice: RPA DSL And Artifact Contract
 
 **Purpose:** Freeze the MVP schema and artifact contract used by both script production modes, executor, import/export, and observability.
+
+**Execution plan:** `docs/superpowers/plans/2026-06-06-rpa-dsl-artifact-contract.md`
 
 **Files likely created:**
 

@@ -8,6 +8,8 @@
 
 **Tech Stack:** TypeScript ESM, React 19, Vite, Express 5, Vitest, Testing Library, Node built-in `fetch` / Web Streams APIs.
 
+**Status:** Completed in commit `e75a5ef`.
+
 ---
 
 ## Scope Boundary
@@ -1712,15 +1714,21 @@ Expected: commit succeeds with no co-author trailer.
 
 ## Acceptance Checklist
 
-- [ ] New package `@lance-agent-runner/rpa-local-web` exists under `apps/rpa-local-web`.
-- [ ] Root scripts include `dev:rpa-local-web`, `build:rpa-local-web`, `test:rpa-local-web`, `typecheck:rpa-local-web`.
-- [ ] Root `pnpm typecheck` includes the RPA package.
-- [ ] Root `pnpm build` includes the RPA package.
-- [ ] Backend exposes `/api/rpa/health`, `/api/rpa/config`, and `/api/rpa/daemon/health`.
-- [ ] Backend does not expose daemon API key to the browser.
-- [ ] Server-side daemon client supports workspace creation, file upload, run creation, run cancel, run artifact list, artifact download, and SSE subscription.
-- [ ] UI shell has sections for codegen hardening, natural-language generation, flows, executions, and settings.
-- [ ] No RPA product logic is added to `apps/daemon/src`.
+- [x] New package `@lance-agent-runner/rpa-local-web` exists under `apps/rpa-local-web`.
+- [x] Root scripts include `dev:rpa-local-web`, `build:rpa-local-web`, `test:rpa-local-web`, `typecheck:rpa-local-web`.
+- [x] Root `pnpm typecheck` includes the RPA package.
+- [x] Root `pnpm build` includes the RPA package.
+- [x] Backend exposes `/api/rpa/health`, `/api/rpa/config`, and `/api/rpa/daemon/health`.
+- [x] Backend does not expose daemon API key to the browser.
+- [x] Server-side daemon client supports workspace creation, file upload, run creation, run cancel, run artifact list, artifact download, and SSE subscription.
+- [x] UI shell has sections for codegen hardening, natural-language generation, flows, executions, and settings.
+- [x] No RPA product logic is added to `apps/daemon/src`.
+
+Completion evidence:
+
+- Commit: `e75a5ef Add RPA local web workspace skeleton`.
+- Verification before commit: `pnpm typecheck`, `pnpm build`, and `pnpm test`.
+- CC review result: no P0/P1 after the `getDaemonHealth` diagnostic response fix.
 
 ## CC Review Prompt After Implementation
 
