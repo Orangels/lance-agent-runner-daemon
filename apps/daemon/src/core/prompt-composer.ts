@@ -11,11 +11,18 @@ export interface PromptSkill {
   body: string;
 }
 
+export interface ConversationPromptMessage {
+  role: string;
+  content: string;
+}
+
 export interface ComposeRunPromptInput {
   kind: RunKind;
   promptMode: ActivePromptMode;
   currentPrompt: string;
   businessContext?: Record<string, unknown>;
+  conversationMessages?: ConversationPromptMessage[];
+  contextWarnings?: string[];
   skill?: PromptSkill;
   stagedSkill?: StagedSkill;
 }
@@ -25,6 +32,8 @@ export function composeRunPrompt({
   promptMode,
   currentPrompt,
   businessContext,
+  conversationMessages = [],
+  contextWarnings = [],
   skill,
   stagedSkill,
 }: ComposeRunPromptInput): string {
@@ -32,41 +41,55 @@ export function composeRunPrompt({
     return currentPrompt;
   }
 
-  if (!skill) {
+  if (!skill && !(promptMode === 'daemon-composed' && kind === 'revise')) {
     throw badRequest(`${promptMode} ${kind} requires a resolved skill`);
   }
 
-  const sections = [
-    '## Skill',
-    `Name: ${skill.name}`,
-    `ID: ${skill.id}`,
-  ];
+  const sections: string[] = [];
 
-  if (skill.description && skill.description.trim().length > 0) {
-    sections.push(`Description: ${skill.description}`);
-  }
+  if (skill) {
+    sections.push('## Skill', `Name: ${skill.name}`, `ID: ${skill.id}`);
 
-  if (stagedSkill) {
-    sections.push(
-      '',
-      `> Skill root (relative to workspace): \`${stagedSkill.relativeRoot}/\``,
-      '>',
-      '> This skill ships side files alongside `SKILL.md`. Read them from the relative',
-      '> path above inside the current workspace.',
-    );
+    if (skill.description && skill.description.trim().length > 0) {
+      sections.push(`Description: ${skill.description}`);
+    }
 
-    if (stagedSkill.sideFilesManifest.length > 0) {
+    if (stagedSkill) {
       sections.push(
         '',
-        'Skill side files manifest:',
-        '```json',
-        stableJsonStringify(stagedSkill.sideFilesManifest, 2),
-        '```',
+        `> Skill root (relative to workspace): \`${stagedSkill.relativeRoot}/\``,
+        '>',
+        '> This skill ships side files alongside `SKILL.md`. Read them from the relative',
+        '> path above inside the current workspace.',
       );
+
+      if (stagedSkill.sideFilesManifest.length > 0) {
+        sections.push(
+          '',
+          'Skill side files manifest:',
+          '```json',
+          stableJsonStringify(stagedSkill.sideFilesManifest, 2),
+          '```',
+        );
+      }
     }
+
+    sections.push('', '## Skill instructions', skill.body);
   }
 
-  sections.push('', '## Skill instructions', skill.body);
+  if (promptMode === 'daemon-composed') {
+    sections.push(
+      '',
+      '## Conversation context',
+      '```json',
+      stableJsonStringify(conversationMessages, 2),
+      '```',
+    );
+
+    if (contextWarnings.length > 0) {
+      sections.push('', '## Context warnings', ...contextWarnings.map((warning) => `- ${warning}`));
+    }
+  }
 
   if (businessContext) {
     sections.push(

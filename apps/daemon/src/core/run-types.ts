@@ -23,7 +23,7 @@ export type EventVisibility = (typeof eventVisibilityLevels)[number];
 export const promptModes = ['legacy', 'business-context', 'daemon-composed'] as const;
 export type PromptMode = (typeof promptModes)[number];
 
-export const activePromptModes = ['legacy', 'business-context'] as const;
+export const activePromptModes = ['legacy', 'business-context', 'daemon-composed'] as const;
 export type ActivePromptMode = (typeof activePromptModes)[number];
 
 export const collectionModes = ['lite', 'diagnostic', 'review'] as const;
@@ -121,11 +121,19 @@ export interface CreateRunRequest {
   promptMode?: PromptMode;
   collectionMode?: CollectionMode;
   businessContext?: Record<string, unknown>;
+  contextPolicy?: ContextPolicy;
   skillId?: string;
   model?: string;
   artifactRuleIds?: string[];
   eventVisibility?: EventVisibility;
   metadata?: Record<string, unknown>;
+}
+
+export interface ContextPolicy {
+  recentMessages?: number;
+  maxMessageChars?: number;
+  maxTotalChars?: number;
+  includeRunWarnings?: boolean;
 }
 
 export interface ListRunsQuery {

@@ -414,13 +414,14 @@ Business-context 示例：
 | `profileId` | string | yes | 必须是当前 client 可访问 profile。1-128 字符。 |
 | `workspaceId` | string | yes | 必须是该 client 可访问 workspace。1-128 字符。 |
 | `kind` | `generate` / `revise` | yes | 生成或修改。 |
-| `promptMode` | `legacy` / `business-context` / `daemon-composed` | no | 默认 `legacy`。Slice 1a 支持 `legacy` 和 `business-context`；`daemon-composed` 保留到 Slice 1b，当前请求会被拒绝。 |
-| `prompt` | string | legacy yes | legacy 模式本轮用户输入，1 到 200000 字符。`business-context` 模式禁止传。 |
-| `currentPrompt` | string | business-context yes | business-context 模式本轮用户输入，1 到 200000 字符。legacy 模式禁止传。 |
-| `businessContext` | object | no | 业务上下文包，daemon 不解释具体语义；仅用于最终 prompt 组装和 run 级 snapshot。legacy 模式禁止传。 |
+| `promptMode` | `legacy` / `business-context` / `daemon-composed` | no | 默认 `legacy`。`business-context` 由业务端传入 opaque 上下文包；`daemon-composed` 由 daemon 读取同一 conversation 的可见历史消息后组装最终 prompt。 |
+| `prompt` | string | legacy yes | legacy 模式本轮用户输入，1 到 200000 字符。`business-context` 和 `daemon-composed` 模式禁止传。 |
+| `currentPrompt` | string | business-context / daemon-composed yes | business-context / daemon-composed 模式本轮用户输入，1 到 200000 字符。legacy 模式禁止传。 |
+| `businessContext` | object | no | 业务上下文包，daemon 不解释具体语义；仅用于最终 prompt 组装和 run 级 snapshot。legacy / daemon-composed 模式禁止传。 |
+| `contextPolicy` | object | no | 仅 `daemon-composed` 可传；控制 daemon 读取历史消息的 `recentMessages`、`maxMessageChars`、`maxTotalChars` 和是否输出通用 context warnings。 |
 | `conversationId` | string | no | 复用已有 daemon conversation；如传入，必须属于同一 workspace。未传时继续使用该 workspace 的默认 conversation。 |
 | `collectionMode` | `lite` / `diagnostic` / `review` | no | 默认 `lite`。控制 prompt / skill / business context snapshot 的全文是否落盘；受 profile `maxCollectionMode` 和 client 权限封顶。 |
-| `skillId` | string | 见矩阵 | `legacy + generate` 必填；`legacy + revise` 禁止；`business-context` 在 MVP 中必填。1-128 字符。 |
+| `skillId` | string | 见矩阵 | `legacy + generate` 必填；`legacy + revise` 禁止；`business-context` 必填；`daemon-composed + generate` 必填；`daemon-composed + revise` 可选。1-128 字符。 |
 | `model` | string | no | 不传使用 profile `defaultModel`；传入时必须在 `allowedModels` 内。 |
 | `artifactRuleIds` | string[] | no | 最多 32 个；不传使用 profile `defaultArtifactRuleIds`。 |
 | `eventVisibility` | `quiet` / `normal` / `debug` | no | 只能降低到 profile 可见性，不会超过 profile/client 权限。 |
@@ -433,7 +434,15 @@ Business-context 示例：
 | `generate` | `legacy` | `prompt` | required |
 | `revise` | `legacy` | `prompt` | forbidden |
 | `generate` | `business-context` | `currentPrompt` | required |
-| `revise` | `business-context` | `currentPrompt` | required in MVP |
+| `revise` | `business-context` | `currentPrompt` | required |
+| `generate` | `daemon-composed` | `currentPrompt` | required |
+| `revise` | `daemon-composed` | `currentPrompt` | optional |
+
+`daemon-composed` 只读取 `conversation / run_messages` 中用户可见的 `role + content`，不读取
+prompt snapshot、skill snapshot、debug events、thinking content 或 tool/raw events。历史消息使用
+conversation 级 `conversation_seq` 排序；`contextPolicy` 默认值为
+`recentMessages = 20`、`maxMessageChars = 4000`、`maxTotalChars = 20000`、
+`includeRunWarnings = true`。
 
 ### Response 202
 

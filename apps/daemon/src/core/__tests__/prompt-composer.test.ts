@@ -107,6 +107,28 @@ describe('prompt composer', () => {
     expect(prompt).toContain('Update the RPA flow with these answers.');
   });
 
+  it('composes daemon-composed prompts from conversation context without requiring a skill', () => {
+    const prompt = composeRunPrompt({
+      kind: 'revise',
+      promptMode: 'daemon-composed',
+      currentPrompt: 'Continue with the next edit.',
+      conversationMessages: [
+        { role: 'user', content: 'Please draft a report.' },
+        { role: 'assistant', content: 'Draft created.' },
+      ],
+      contextWarnings: ['1 older message omitted by policy.'],
+    });
+
+    expect(prompt).toContain('## Conversation context');
+    expect(prompt).toContain('"role": "user"');
+    expect(prompt).toContain('Please draft a report.');
+    expect(prompt).toContain('Draft created.');
+    expect(prompt).toContain('1 older message omitted by policy.');
+    expect(prompt).toContain('## Current user request');
+    expect(prompt).toContain('Continue with the next edit.');
+    expect(prompt).not.toContain('## Skill instructions');
+  });
+
   it('does not inject product-specific language unless authored in the skill body', () => {
     const prompt = composeRunPrompt({
       kind: 'generate',

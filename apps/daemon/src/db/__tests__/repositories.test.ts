@@ -12,7 +12,9 @@ import {
   getRunPromptSnapshot,
   getRunSkillSnapshot,
   getWorkspaceForClient,
+  listConversationMessagesForPrompt,
   insertRunMessagesForRunCreate,
+  insertAssistantRunMessage,
   insertRunQueued,
   getArtifactForRunForClient,
   listRunLogsFinishedBefore,
@@ -298,6 +300,84 @@ describe('run repository', () => {
       content: 'Visible request',
       conversationId: conversation.id,
     });
+  });
+
+  it('allocates stable conversation sequence across runs and assistant message segments', () => {
+    const { db, workspace } = insertWorkspaceFixture();
+    const conversation = getOrCreateDefaultConversation(db, {
+      id: 'conv_shared',
+      workspaceId: workspace.id,
+      now: 3000,
+    });
+
+    const first = createRunQueuedWithMessagesAndSnapshot(db, {
+      runId: 'run_1',
+      conversationId: conversation.id,
+      defaultConversationId: 'conv_default_1',
+      userMessageId: 'msg_user_1',
+      assistantMessageId: 'msg_assistant_1',
+      workspaceId: workspace.id,
+      profileId: workspace.profileId,
+      clientId: workspace.clientId,
+      kind: 'revise',
+      prompt: 'First request.',
+      profileSnapshot: { profileId: workspace.profileId },
+      now: 5000,
+    });
+    updateRunMessage(db, {
+      messageId: 'msg_assistant_1',
+      content: 'First answer.',
+      now: 5100,
+    });
+    insertAssistantRunMessage(db, {
+      id: 'msg_assistant_1b',
+      workspaceId: workspace.id,
+      conversationId: first.conversation.id,
+      runId: 'run_1',
+      position: 2,
+      runStatus: 'running',
+      now: 5200,
+    });
+    updateRunMessage(db, {
+      messageId: 'msg_assistant_1b',
+      content: 'Second assistant segment.',
+      now: 5300,
+    });
+
+    createRunQueuedWithMessagesAndSnapshot(db, {
+      runId: 'run_2',
+      conversationId: first.conversation.id,
+      defaultConversationId: 'conv_default_2',
+      userMessageId: 'msg_user_2',
+      assistantMessageId: 'msg_assistant_2',
+      workspaceId: workspace.id,
+      profileId: workspace.profileId,
+      clientId: workspace.clientId,
+      kind: 'revise',
+      prompt: 'Second request.',
+      profileSnapshot: { profileId: workspace.profileId },
+      now: 6000,
+    });
+
+    expect(getRunDetail(db, { runId: 'run_1', clientId: workspace.clientId })?.messages).toEqual([
+      expect.objectContaining({ id: 'msg_user_1', conversationSeq: 1 }),
+      expect.objectContaining({ id: 'msg_assistant_1', conversationSeq: 2 }),
+      expect.objectContaining({ id: 'msg_assistant_1b', conversationSeq: 3 }),
+    ]);
+    expect(getRunDetail(db, { runId: 'run_2', clientId: workspace.clientId })?.messages).toEqual([
+      expect.objectContaining({ id: 'msg_user_2', conversationSeq: 4 }),
+      expect.objectContaining({ id: 'msg_assistant_2', conversationSeq: 5 }),
+    ]);
+    expect(listConversationMessagesForPrompt(db, {
+      workspaceId: workspace.id,
+      conversationId: first.conversation.id,
+      excludeRunId: 'run_2',
+      limit: 10,
+    }).map((message) => [message.id, message.role, message.content])).toEqual([
+      ['msg_user_1', 'user', 'First request.'],
+      ['msg_assistant_1', 'assistant', 'First answer.'],
+      ['msg_assistant_1b', 'assistant', 'Second assistant segment.'],
+    ]);
   });
 
   it('stores full business context snapshots outside lite mode', () => {

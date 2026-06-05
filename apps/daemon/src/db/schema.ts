@@ -45,6 +45,7 @@ export function applySchema(db: RunnerDatabase): void {
       prompt TEXT NOT NULL,
       prompt_mode TEXT NOT NULL DEFAULT 'legacy',
       current_prompt TEXT,
+      context_policy_json TEXT,
       collection_mode TEXT NOT NULL DEFAULT 'lite',
       prompt_snapshot_hash TEXT,
       prompt_snapshot_char_count INTEGER,
@@ -89,6 +90,7 @@ export function applySchema(db: RunnerDatabase): void {
       started_at INTEGER,
       ended_at INTEGER,
       position INTEGER NOT NULL,
+      conversation_seq INTEGER,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -174,6 +176,7 @@ export function applySchema(db: RunnerDatabase): void {
   `);
 
   ensureRunMessagesThinkingContentColumn(db);
+  ensureRunMessagesConversationSeqColumn(db);
   ensureRunColumns(db);
 }
 
@@ -181,9 +184,18 @@ function ensureRunMessagesThinkingContentColumn(db: RunnerDatabase): void {
   ensureColumn(db, 'run_messages', 'thinking_content', "TEXT NOT NULL DEFAULT ''");
 }
 
+function ensureRunMessagesConversationSeqColumn(db: RunnerDatabase): void {
+  ensureColumn(db, 'run_messages', 'conversation_seq', 'INTEGER');
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_run_messages_conversation_seq
+      ON run_messages(conversation_id, conversation_seq)
+  `);
+}
+
 function ensureRunColumns(db: RunnerDatabase): void {
   ensureColumn(db, 'runs', 'prompt_mode', "TEXT NOT NULL DEFAULT 'legacy'");
   ensureColumn(db, 'runs', 'current_prompt', 'TEXT');
+  ensureColumn(db, 'runs', 'context_policy_json', 'TEXT');
   ensureColumn(db, 'runs', 'collection_mode', "TEXT NOT NULL DEFAULT 'lite'");
   ensureColumn(db, 'runs', 'prompt_snapshot_hash', 'TEXT');
   ensureColumn(db, 'runs', 'prompt_snapshot_char_count', 'INTEGER');

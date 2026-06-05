@@ -2,6 +2,7 @@ import path from 'node:path';
 import type {
   ArtifactRole,
   CollectionMode,
+  ContextPolicy,
   PromptMode,
   RunKind,
   RunStatus,
@@ -41,6 +42,7 @@ export interface RunRecord {
   prompt: string;
   promptMode: PromptMode;
   currentPrompt: string | null;
+  contextPolicy: ContextPolicy | null;
   collectionMode: CollectionMode;
   promptSnapshotHash: string | null;
   promptSnapshotCharCount: number | null;
@@ -78,6 +80,7 @@ export interface RunMessageRecord {
   startedAt: number | null;
   endedAt: number | null;
   position: number;
+  conversationSeq: number | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -192,6 +195,7 @@ interface RunRow {
   prompt: string;
   prompt_mode: PromptMode;
   current_prompt: string | null;
+  context_policy_json: string | null;
   collection_mode: CollectionMode;
   prompt_snapshot_hash: string | null;
   prompt_snapshot_char_count: number | null;
@@ -229,6 +233,7 @@ interface RunMessageRow {
   started_at: number | null;
   ended_at: number | null;
   position: number;
+  conversation_seq: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -402,6 +407,50 @@ export function getConversationForWorkspace(
   return row ? mapConversation(row) : null;
 }
 
+function nextConversationSeq(db: RunnerDatabase, conversationId: string): number {
+  const row = db
+    .prepare('SELECT COALESCE(MAX(conversation_seq), 0) AS maxSeq FROM run_messages WHERE conversation_id = ?')
+    .get(conversationId) as { maxSeq: number };
+  return row.maxSeq + 1;
+}
+
+export function listConversationMessagesForPrompt(
+  db: RunnerDatabase,
+  input: {
+    workspaceId: string;
+    conversationId: string;
+    excludeRunId?: string;
+    limit: number;
+  },
+): RunMessageRecord[] {
+  if (input.limit <= 0) return [];
+
+  const rows = db
+    .prepare(
+      `
+      SELECT * FROM (
+        SELECT *
+        FROM run_messages
+        WHERE workspace_id = ?
+          AND conversation_id = ?
+          AND content <> ''
+          AND (? IS NULL OR run_id <> ?)
+        ORDER BY conversation_seq DESC, created_at DESC, id DESC
+        LIMIT ?
+      )
+      ORDER BY conversation_seq ASC, created_at ASC, id ASC
+      `,
+    )
+    .all(
+      input.workspaceId,
+      input.conversationId,
+      input.excludeRunId ?? null,
+      input.excludeRunId ?? null,
+      input.limit,
+    ) as RunMessageRow[];
+  return rows.map(mapRunMessage);
+}
+
 export function insertRunQueued(
   db: RunnerDatabase,
   input: {
@@ -414,6 +463,7 @@ export function insertRunQueued(
     prompt: string;
     promptMode?: PromptMode;
     currentPrompt?: string | null;
+    contextPolicy?: ContextPolicy | null;
     collectionMode?: CollectionMode;
     promptSnapshotHash?: string | null;
     promptSnapshotCharCount?: number | null;
@@ -429,11 +479,11 @@ export function insertRunQueued(
     `
     INSERT INTO runs (
       id, workspace_id, profile_id, client_id, kind, skill_id, status, prompt,
-      prompt_mode, current_prompt, collection_mode, prompt_snapshot_hash,
+      prompt_mode, current_prompt, context_policy_json, collection_mode, prompt_snapshot_hash,
       prompt_snapshot_char_count, prompt_snapshot_byte_count, prompt_snapshot_persisted,
       business_context_hash, artifact_rule_ids_json, queued_at, metadata_json, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
   ).run(
     input.id,
@@ -446,6 +496,7 @@ export function insertRunQueued(
     input.prompt,
     input.promptMode ?? 'legacy',
     input.currentPrompt ?? input.prompt,
+    stringifyNullable(input.contextPolicy),
     input.collectionMode ?? 'lite',
     input.promptSnapshotHash ?? null,
     input.promptSnapshotCharCount ?? null,
@@ -478,6 +529,7 @@ export function createRunQueuedWithMessagesAndSnapshot(
     prompt: string;
     promptMode?: PromptMode;
     currentPrompt?: string | null;
+    contextPolicy?: ContextPolicy | null;
     collectionMode?: CollectionMode;
     businessContext?: unknown;
     businessContextHash?: string | null;
@@ -515,6 +567,7 @@ export function createRunQueuedWithMessagesAndSnapshot(
       prompt: input.prompt,
       promptMode: input.promptMode,
       currentPrompt: input.currentPrompt,
+      contextPolicy: input.contextPolicy,
       collectionMode: input.collectionMode,
       businessContextHash: input.businessContextHash,
       artifactRuleIds: input.artifactRuleIds,
@@ -763,13 +816,15 @@ export function insertRunMessagesForRunCreate(
     now: number;
   },
 ): RunMessageRecord[] {
+  const userConversationSeq = nextConversationSeq(db, input.conversationId);
+  const assistantConversationSeq = userConversationSeq + 1;
   const insert = db.prepare(
     `
     INSERT INTO run_messages (
       id, workspace_id, conversation_id, run_id, role, content, thinking_content,
-      run_status, position, created_at, updated_at
+      run_status, position, conversation_seq, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
   );
 
@@ -783,6 +838,7 @@ export function insertRunMessagesForRunCreate(
     '',
     null,
     0,
+    userConversationSeq,
     input.now,
     input.now,
   );
@@ -796,6 +852,7 @@ export function insertRunMessagesForRunCreate(
     '',
     'queued',
     1,
+    assistantConversationSeq,
     input.now,
     input.now,
   );
@@ -816,13 +873,14 @@ export function insertAssistantRunMessage(
     now: number;
   },
 ): RunMessageRecord {
+  const conversationSeq = nextConversationSeq(db, input.conversationId);
   db.prepare(
     `
     INSERT INTO run_messages (
       id, workspace_id, conversation_id, run_id, role, content, thinking_content,
-      run_status, started_at, position, created_at, updated_at
+      run_status, started_at, position, conversation_seq, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, 'assistant', '', '', ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, 'assistant', '', '', ?, ?, ?, ?, ?, ?)
     `,
   ).run(
     input.id,
@@ -832,6 +890,7 @@ export function insertAssistantRunMessage(
     input.runStatus,
     input.startedAt ?? null,
     input.position,
+    conversationSeq,
     input.now,
     input.now,
   );
@@ -1504,6 +1563,7 @@ function mapRun(row: RunRow): RunRecord {
     prompt: row.prompt,
     promptMode: row.prompt_mode,
     currentPrompt: row.current_prompt,
+    contextPolicy: parseNullable(row.context_policy_json) as ContextPolicy | null,
     collectionMode: row.collection_mode,
     promptSnapshotHash: row.prompt_snapshot_hash,
     promptSnapshotCharCount: row.prompt_snapshot_char_count,
@@ -1543,6 +1603,7 @@ function mapRunMessage(row: RunMessageRow): RunMessageRecord {
     startedAt: row.started_at,
     endedAt: row.ended_at,
     position: row.position,
+    conversationSeq: row.conversation_seq,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

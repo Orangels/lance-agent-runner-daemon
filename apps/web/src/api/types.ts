@@ -104,6 +104,13 @@ export interface UploadWorkspaceFileResponse extends PublicWorkspace {
   file: UploadedWorkspaceFile;
 }
 
+export interface ContextPolicy {
+  recentMessages?: number;
+  maxMessageChars?: number;
+  maxTotalChars?: number;
+  includeRunWarnings?: boolean;
+}
+
 export interface CreateRunRequest {
   profileId: string;
   workspaceId: string;
@@ -114,6 +121,7 @@ export interface CreateRunRequest {
   promptMode?: PromptMode;
   collectionMode?: CollectionMode;
   businessContext?: Record<string, unknown>;
+  contextPolicy?: ContextPolicy;
   skillId?: string;
   model?: string;
   artifactRuleIds?: string[];

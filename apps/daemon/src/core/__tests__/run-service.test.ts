@@ -497,6 +497,64 @@ describe('run service', () => {
     });
   });
 
+  it('composes daemon-composed revise prompts from prior conversation messages in stable order', async () => {
+    const { config, db, workspace, service, runners, runNextTimer } = setup();
+
+    const first = service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'revise',
+        prompt: 'Summarize the first document.',
+        artifactRuleIds: [],
+      },
+    });
+    await runScheduledStart(runNextTimer);
+    runners[0]!.input.onEvent({ type: 'text_delta', delta: 'First summary.' });
+    runners[0]!.complete({
+      status: 'succeeded',
+      exitCode: 0,
+      signal: null,
+      stdoutTail: '',
+      stderrTail: '',
+    });
+    await flushAsync();
+
+    service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        conversationId: first.conversationId,
+        kind: 'revise',
+        promptMode: 'daemon-composed',
+        currentPrompt: 'Continue from that summary.',
+        contextPolicy: {
+          recentMessages: 4,
+          maxMessageChars: 1000,
+          maxTotalChars: 4000,
+        },
+        artifactRuleIds: [],
+      },
+    });
+    await runScheduledStart(runNextTimer);
+
+    expect(runners).toHaveLength(2);
+    expect(runners[1]!.input.prompt).toContain('## Conversation context');
+    expect(runners[1]!.input.prompt).toContain('"role": "user"');
+    expect(runners[1]!.input.prompt).toContain('Summarize the first document.');
+    expect(runners[1]!.input.prompt).toContain('First summary.');
+    expect(runners[1]!.input.prompt).toContain('## Current user request');
+    expect(runners[1]!.input.prompt).toContain('Continue from that summary.');
+    expect(runners[1]!.input.prompt).not.toContain('queued');
+    expect(getRunDetail(db, { runId: 'run_2', clientId: 'lqbot' })?.messages[0]).toMatchObject({
+      content: 'Continue from that summary.',
+      conversationId: first.conversationId,
+      conversationSeq: 3,
+    });
+  });
+
   it('fails generate runs durably when skill staging fails before spawn', async () => {
     const { root, config, db, workspace, workspaceCwd, service, runners, runNextTimer } = setup();
     writeSkill(root, { sideFiles: true });

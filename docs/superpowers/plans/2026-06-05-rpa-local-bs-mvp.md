@@ -151,12 +151,12 @@ RPA Web uses `kind` to express business intent and `promptMode` to express how d
 
 **Tasks:**
 
-- [ ] Add `contextPolicy`.
-- [ ] Add `conversation_seq` to `run_messages`.
-- [ ] Allocate stable conversation-level sequence numbers for user messages, assistant placeholders, and additional assistant message segments.
-- [ ] Query conversation transcript by `conversation_seq`, not run-local `position`.
-- [ ] Implement daemon-composed prompt assembly with recent message count, per-message truncation, total-length cap, and generic warnings.
-- [ ] Add run-service integration tests proving cross-run transcript ordering is stable.
+- [x] Add `contextPolicy`.
+- [x] Add `conversation_seq` to `run_messages`.
+- [x] Allocate stable conversation-level sequence numbers for user messages, assistant placeholders, and additional assistant message segments.
+- [x] Query conversation transcript by `conversation_seq`, not run-local `position`.
+- [x] Implement daemon-composed prompt assembly with recent message count, per-message truncation, total-length cap, and generic warnings.
+- [x] Add run-service integration tests proving cross-run transcript ordering is stable.
 
 **Suggested commit:** `Add daemon composed conversation context`
 

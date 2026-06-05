@@ -70,6 +70,7 @@ describe('sqlite schema', () => {
       expect.arrayContaining([
         'prompt_mode',
         'current_prompt',
+        'context_policy_json',
         'collection_mode',
         'prompt_snapshot_hash',
         'prompt_snapshot_char_count',
@@ -78,6 +79,14 @@ describe('sqlite schema', () => {
         'business_context_hash',
       ]),
     );
+  });
+
+  it('stores conversation-level sequence on run messages', () => {
+    const db = openInMemoryDatabase();
+
+    applySchema(db);
+
+    expect(listColumns(db, 'run_messages')).toContain('conversation_seq');
   });
 
   it('migrates existing run_messages tables to add thinking content', () => {
@@ -124,6 +133,7 @@ describe('sqlite schema', () => {
         'idx_artifacts_run',
         'idx_conversations_workspace',
         'idx_run_messages_conversation',
+        'idx_run_messages_conversation_seq',
         'idx_run_messages_run',
         'idx_runs_status_created',
         'idx_runs_workspace_created',

@@ -395,7 +395,32 @@ describe('run create request validation', () => {
     ).toThrow();
   });
 
-  it('rejects daemon-composed as a deferred prompt mode', () => {
+  it('accepts daemon-composed revise runs with a context policy and no skill', () => {
+    const parsed = createRunRequestSchema.parse({
+      profileId: 'general-agent',
+      workspaceId: 'ws_123',
+      conversationId: 'conv_123',
+      kind: 'revise',
+      promptMode: 'daemon-composed',
+      currentPrompt: '继续刚才的修改',
+      contextPolicy: {
+        recentMessages: 8,
+        maxMessageChars: 500,
+        maxTotalChars: 4000,
+        includeRunWarnings: true,
+      },
+    });
+
+    expect(parsed.promptMode).toBe('daemon-composed');
+    expect(parsed.contextPolicy).toEqual({
+      recentMessages: 8,
+      maxMessageChars: 500,
+      maxTotalChars: 4000,
+      includeRunWarnings: true,
+    });
+  });
+
+  it('rejects invalid daemon-composed request shapes', () => {
     expect(() =>
       createRunRequestSchema.parse({
         profileId: 'general-agent',
@@ -403,9 +428,40 @@ describe('run create request validation', () => {
         conversationId: 'conv_123',
         kind: 'revise',
         promptMode: 'daemon-composed',
+        prompt: 'legacy prompt is forbidden here',
         currentPrompt: '继续刚才的修改',
       }),
-    ).toThrow(/deferred|not supported/i);
+    ).toThrow();
+
+    expect(() =>
+      createRunRequestSchema.parse({
+        profileId: 'general-agent',
+        workspaceId: 'ws_123',
+        kind: 'revise',
+        promptMode: 'daemon-composed',
+        businessContext: { hidden: true },
+        currentPrompt: '继续刚才的修改',
+      }),
+    ).toThrow();
+
+    expect(() =>
+      createRunRequestSchema.parse({
+        profileId: 'general-agent',
+        workspaceId: 'ws_123',
+        kind: 'revise',
+        promptMode: 'daemon-composed',
+      }),
+    ).toThrow();
+
+    expect(() =>
+      createRunRequestSchema.parse({
+        profileId: 'general-agent',
+        workspaceId: 'ws_123',
+        kind: 'generate',
+        promptMode: 'daemon-composed',
+        currentPrompt: '生成新的产物',
+      }),
+    ).toThrow();
   });
 
   it('rejects unknown event visibility values', () => {

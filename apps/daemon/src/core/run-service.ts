@@ -13,6 +13,7 @@ import {
   getRunDetail,
   getRunForClient,
   getWorkspaceForClient,
+  listConversationMessagesForPrompt,
   listRunsForClient,
   updateAssistantMessageTerminal,
   updateRunPromptSnapshotFields,
@@ -31,6 +32,10 @@ import {
   type ClaudeCapabilities,
 } from './claude-capabilities.js';
 import { startClaudeCliRun, type ClaudeCliRunHandle, type ClaudeCliRunResult } from './cli-runner.js';
+import {
+  buildConversationPromptContext,
+  normalizeContextPolicy,
+} from './conversation-context.js';
 import { badRequest, daemonError, notFound } from './errors.js';
 import { createId } from './ids.js';
 import { createMessageAccumulator } from './message-accumulator.js';
@@ -57,6 +62,7 @@ import {
   isTerminalRunStatus,
   type ActivePromptMode,
   type CollectionMode,
+  type ContextPolicy,
   type CreateRunRequest,
   type EventVisibility,
   type ListRunsQuery,
@@ -147,6 +153,7 @@ interface RunState {
   artifactRuleIds: string[];
   prompt: string;
   promptMode: ActivePromptMode;
+  contextPolicy?: ContextPolicy;
   collectionMode: CollectionMode;
   businessContext?: Record<string, unknown>;
   model?: string;
@@ -342,12 +349,27 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       extraAllowedDirs = stagedSkill ? [stagedSkill.absoluteRoot] : [];
     }
 
+    const conversationContext =
+      state.promptMode === 'daemon-composed'
+        ? buildConversationPromptContext(
+            listConversationMessagesForPrompt(input.db, {
+              workspaceId: state.workspace.id,
+              conversationId: state.conversationId,
+              excludeRunId: state.runId,
+              limit: normalizeContextPolicy(state.contextPolicy).recentMessages,
+            }).map((message) => ({ role: message.role, content: message.content })),
+            state.contextPolicy,
+          )
+        : null;
+
     try {
       prompt = composeRunPrompt({
         kind: state.kind,
         promptMode: state.promptMode,
         currentPrompt: state.prompt,
         businessContext: state.businessContext,
+        conversationMessages: conversationContext?.messages,
+        contextWarnings: conversationContext?.warnings,
         skill: resolvedSkill ?? undefined,
         stagedSkill,
       });
@@ -668,16 +690,17 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       const profile = getProfile(input.config, request.profileId);
 
       const promptMode = request.promptMode ?? 'legacy';
-      if (promptMode === 'daemon-composed') {
-        throw badRequest('daemon-composed promptMode is deferred to Slice 1b');
-      }
       const activePromptMode = promptMode as ActivePromptMode;
+      assertPromptModeRequestShape(request, activePromptMode);
       const collectionMode = request.collectionMode ?? 'lite';
       requireCollectionModeAccess({ client, profile, collectionMode });
 
       if (request.skillId) {
         assertSkillAllowedForProfile(profile, request.skillId);
-      } else if (request.kind === 'generate') {
+      } else if (
+        request.kind === 'generate' ||
+        activePromptMode === 'business-context'
+      ) {
         assertSkillAllowedForProfile(profile, request.skillId ?? '');
       }
       const currentPrompt =
@@ -749,6 +772,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
         prompt: currentPrompt,
         promptMode: activePromptMode,
         currentPrompt,
+        contextPolicy: request.contextPolicy,
         collectionMode,
         businessContext: request.businessContext,
         businessContextHash,
@@ -771,6 +795,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
         artifactRuleIds: selectedArtifactRuleIds,
         prompt: currentPrompt,
         promptMode: activePromptMode,
+        contextPolicy: request.contextPolicy,
         collectionMode,
         businessContext: request.businessContext,
         model: request.model,
@@ -933,6 +958,62 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       return { interrupted };
     },
   };
+}
+
+function assertPromptModeRequestShape(
+  request: CreateRunRequest,
+  promptMode: ActivePromptMode,
+): void {
+  if (promptMode === 'legacy') {
+    if (!request.prompt) {
+      throw badRequest('legacy promptMode requires prompt');
+    }
+    if (request.currentPrompt) {
+      throw badRequest('legacy promptMode forbids currentPrompt');
+    }
+    if (request.businessContext !== undefined) {
+      throw badRequest('legacy promptMode forbids businessContext');
+    }
+    if (request.contextPolicy !== undefined) {
+      throw badRequest('legacy promptMode forbids contextPolicy');
+    }
+    if (request.kind === 'generate' && !request.skillId) {
+      throw badRequest('legacy generate requires skillId');
+    }
+    if (request.kind === 'revise' && request.skillId) {
+      throw badRequest('legacy revise forbids skillId');
+    }
+    return;
+  }
+
+  if (promptMode === 'business-context') {
+    if (request.prompt) {
+      throw badRequest('business-context forbids prompt');
+    }
+    if (!request.currentPrompt) {
+      throw badRequest('business-context requires currentPrompt');
+    }
+    if (!request.skillId) {
+      throw badRequest('business-context requires skillId');
+    }
+    if (request.contextPolicy !== undefined) {
+      throw badRequest('business-context forbids contextPolicy');
+    }
+    return;
+  }
+
+  if (request.prompt) {
+    throw badRequest('daemon-composed forbids prompt');
+  }
+  if (!request.currentPrompt) {
+    throw badRequest('daemon-composed requires currentPrompt');
+  }
+  if (request.businessContext !== undefined) {
+    throw badRequest('daemon-composed forbids businessContext');
+  }
+  if (request.kind === 'generate' && !request.skillId) {
+    throw badRequest('daemon-composed generate requires skillId');
+  }
 }
 
 function defaultRunnerFactory(input: RunServiceRunnerInput): ClaudeCliRunHandle {
