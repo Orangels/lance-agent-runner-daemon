@@ -166,6 +166,8 @@ RPA Web uses `kind` to express business intent and `promptMode` to express how d
 
 **Purpose:** Add `apps/rpa-local-web` as the local B/S RPA application without modifying `apps/web` into a product-specific UI.
 
+**Execution plan:** `docs/superpowers/plans/2026-06-05-rpa-local-web-skeleton.md`
+
 **Files likely created:**
 
 - Create: `apps/rpa-local-web/package.json`
