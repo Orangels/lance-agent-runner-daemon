@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the local B/S RPA MVP that supports both Playwright codegen upload hardening and natural-language script generation, then verifies and reuses generated RPA flows locally.
+**Goal:** Build the local B/S RPA MVP that supports RPA Web-managed Playwright codegen recording hardening and natural-language script generation, then verifies and reuses generated RPA flows locally.
 
 **Architecture:** Keep `apps/daemon` as a generic Claude Code runner. Put RPA product workflow, executor, DSL validation, execution storage, import/export, and UI in `apps/rpa-local-web`. The daemon injects skills and profile constraints, persists generic conversations/snapshots/observability, and never understands RPA DSL or Playwright.
 
@@ -14,7 +14,7 @@
 
 The MVP final target includes all three named implementation slices below. The order is execution sequencing only; it does not reduce scope.
 
-- `codegen 上传加固闭环`: upload or provide a single-file `flow.py`, run `playwright-rpa-harden`, produce required artifacts, verify locally.
+- `codegen 上传加固闭环`: RPA Web starts Playwright codegen, writes a single-file `flow.py` into RPA Web flow input storage, automatically uploads it to daemon workspace, runs `playwright-rpa-harden`, produces required artifacts, and verifies locally.
 - `自然语言生成闭环`: collect natural-language requirements, ask confirmation questions, use `rpa-script-generate`, produce required artifacts, verify locally.
 - `流程复用与执行闭环`: render runtime params from DSL, run verify/run, import/export `.rpa.zip`, collect execution artifacts and review material.
 
@@ -33,6 +33,8 @@ Use these names in follow-up plans and commits. Do not replace them with ambiguo
 
 The implementation plan review found one P1: prompt/skill/context snapshot persistence and `collectionMode` permission caps must land with the first daemon prompt-context work, not in a later review-bundle slice. This plan resolves that by making the first daemon slice include the minimal snapshot tables, hash/size fields, collection mode validation, and permission cap checks. The later daemon observability slice now only contains full review bundle export, complete log download, feedback storage, and sanitizer polish.
 
+Latest product decision: `codegen 上传加固闭环` implements RPA Web-managed Playwright codegen recording directly. RPA Web starts the codegen child process, controls the output path, validates the generated single-file `flow.py`, then automatically uploads it to daemon. Manual `flow.py` upload is not the primary MVP path.
+
 ## Implementation Dependency Map
 
 ```text
@@ -49,7 +51,7 @@ RPA backend executor + minimal verification UI
   -> Generated scripts can be verified without adding RPA semantics to daemon core
 
 Codegen 上传加固闭环
-  -> Fastest complete demonstration and template validation path
+  -> Fastest complete demonstration path, using RPA Web-managed Playwright codegen recording and automatic daemon upload
 
 Generic review bundle + RPA observability extension
   -> Lets us improve both skills from real Claude Code logs and executor results
@@ -60,6 +62,19 @@ Generic review bundle + RPA observability extension
 流程复用与执行闭环
   -> Proves generated flows can be configured, exported, imported, and run again locally
 ```
+
+## Daemon Run Call Contract For RPA Workflows
+
+RPA Web uses `kind` to express business intent and `promptMode` to express how daemon receives context. RPA Web owns workflow state and business context packaging; daemon owns final prompt composition, skill injection, side files staging, run execution, and generic persistence.
+
+| Scenario | kind | promptMode | skillId | businessContext essentials |
+| --- | --- | --- | --- | --- |
+| First natural-language generation | `generate` | `business-context` | `rpa-script-generate` | Original requirement, target URL, business constraints, stage metadata |
+| First codegen hardening | `generate` | `business-context` | `playwright-rpa-harden` | codegen session id, `inputFiles: ["input/flow.py"]`, recording source, stage metadata |
+| Continue same flow after `<question-form>` answers | `revise` | `business-context` | original `skillId` | `previousRunId`, artifact paths, `formAnswers`, stage metadata |
+| Fix after verify failure | `revise` | `business-context` | `playwright-rpa-harden` or `rpa-script-generate` | execution failure, failed step, screenshot/log/trace paths, current DSL/script/config paths |
+
+`revise` means “modify existing flow/artifacts”; it does not mean daemon guesses hidden context. Every revise run must receive explicit business context from RPA Web. Legacy `generate + skillId + prompt` remains compatibility-only and is not the RPA MVP main path.
 
 ---
 
@@ -104,6 +119,7 @@ Generic review bundle + RPA observability extension
 - [ ] Store only user/assistant-visible content in conversation messages; never store final prompt in `run_messages.content`.
 - [ ] Build final prompt inside daemon by injecting skill instructions, staged side file paths, profile-owned run constraints, and business context.
 - [ ] Add tests proving RPA-like business context does not cause daemon core to interpret DSL or Playwright.
+- [ ] Add tests for the RPA call contract: first generation uses `generate + business-context`, follow-up/question-form and verify-failure repair use `revise + business-context + skillId` with explicit business context.
 
 **Acceptance:**
 
@@ -260,38 +276,51 @@ Generic review bundle + RPA observability extension
 
 ## Slice: Codegen 上传加固闭环
 
-**Purpose:** Deliver the fastest end-to-end script production path: single-file `flow.py` upload, hardening skill run, artifact validation, and local verify.
+**Purpose:** Deliver the fastest end-to-end script production path: RPA Web starts Playwright codegen, records user actions into a single-file `flow.py`, uploads that file to daemon, runs the hardening skill, validates artifacts, and verifies locally.
 
 **Files likely touched:**
 
+- Create: `apps/rpa-local-web/src/server/codegen/codegen-types.ts`
+- Create: `apps/rpa-local-web/src/server/codegen/codegen-session-store.ts`
+- Create: `apps/rpa-local-web/src/server/codegen/playwright-codegen-runner.ts`
+- Create: `apps/rpa-local-web/src/server/routes/codegen.ts`
 - Modify/Create RPA Web server workflow files under `apps/rpa-local-web/src/server/workflows/`
 - Modify/Create RPA Web UI components under `apps/rpa-local-web/src/components/`
 - Reuse: `apps/daemon/skills/playwright-rpa-harden/`
-- Tests: workflow and UI tests.
+- Tests: codegen runner/session store, workflow, and UI tests.
 
 **Tasks:**
 
-- [ ] Add UI for uploading a single-file Playwright codegen `flow.py`.
-- [ ] Upload `flow.py` to daemon workspace as `input/flow.py` using daemon file upload API.
-- [ ] Create daemon run with `kind: generate`, `skillId: playwright-rpa-harden`, and `promptMode: business-context`; legacy `generate + skillId + prompt` remains a compatibility fallback, not the final multi-turn workflow.
+- [ ] Add UI for target URL, flow name, start recording, cancel recording, and recording status.
+- [ ] Implement RPA Web backend codegen sessions with states: `idle | starting | recording | completed | cancelled | failed`.
+- [ ] Start Playwright codegen from the RPA Web backend, not daemon core, using a command shaped like `playwright codegen --target python -o <flowInputDir>/flow.py <targetUrl>`.
+- [ ] Store codegen output in an RPA Web-owned flow input directory; do not write directly into daemon workspace and do not expose daemon absolute paths.
+- [ ] Treat the codegen session as completed when the Playwright codegen child process exits successfully.
+- [ ] Support cancel by terminating the codegen child process and marking the session `cancelled`.
+- [ ] On successful exit, verify `<flowInputDir>/flow.py` exists, is non-empty, and is the only supported codegen script input for MVP.
+- [ ] Automatically upload the generated `flow.py` to daemon workspace as `input/flow.py` using daemon file upload API.
+- [ ] Create daemon run with `kind: generate`, `skillId: playwright-rpa-harden`, and `promptMode: business-context`, using business context that includes codegen session id, `inputFiles: ["input/flow.py"]`, recording source, and stage metadata; legacy `generate + skillId + prompt` remains a compatibility fallback, not the final multi-turn workflow.
 - [ ] Subscribe to daemon SSE and show user-visible assistant output and artifact progress.
 - [ ] If Claude Code outputs `<question-form>`, persist the form id/version/questions, render it, and submit answers into a follow-up run.
-- [ ] For follow-up runs, RPA Web must pass form answers, previous daemon run id, previous artifact paths, and stage metadata through `businessContext`; it must not rely on daemon implicit history or read SKILL.md.
+- [ ] For follow-up runs, create `kind: revise`, `skillId: playwright-rpa-harden`, `promptMode: business-context`; RPA Web must pass form answers, previous daemon run id, previous artifact paths, and stage metadata through `businessContext`; it must not rely on daemon implicit history or read SKILL.md.
 - [ ] Download required artifacts from daemon artifact API into RPA Web flow storage.
 - [ ] Validate artifacts and DSL.
 - [ ] Render `parameterization-report.md`, `hardening-report.md`, DSL steps, and generated script preview.
 - [ ] Start verify using the local executor and display steps/logs/screenshots through the minimal runtime verification UI.
+- [ ] If verify fails and the user chooses Claude Code repair, create `kind: revise`, `skillId: playwright-rpa-harden`, `promptMode: business-context`, with execution failure, failed step id, screenshot/log/trace paths, and current DSL/script/config paths.
 - [ ] Use a temporary local mock page if the final demo target page is not chosen yet.
 
 **Acceptance:**
 
-- User can upload `flow.py` and receive all five required artifacts.
+- User can start Playwright codegen from RPA Web, record actions in a headed browser, close/finish recording, and receive all five required hardened artifacts without manually uploading `flow.py`.
+- RPA Web knows the generated `flow.py` path because it created the flow input directory and passed `-o <flowInputDir>/flow.py` to Playwright codegen.
+- Cancelling a codegen session terminates the child process and does not create a daemon hardening run.
 - Question-form follow-up runs carry enough business context to continue parameterization/hardening without RPA Web composing the final prompt.
 - Verify uses RPA Web-owned copies of artifacts, not daemon workspace paths.
 - Codegen path supports only single-file `flow.py`; multi-file codegen package is explicitly rejected with a clear message.
 - A local mock page can be used to complete the codegen demo before the final demo page is chosen.
 
-**Suggested commit:** `Implement codegen upload hardening loop`
+**Suggested commit:** `Implement RPA Web managed codegen hardening loop`
 
 ---
 
@@ -379,8 +408,8 @@ Generic review bundle + RPA observability extension
 **Tasks:**
 
 - [ ] Add UI for natural-language target description, target URL, business constraints, and safety notes.
-- [ ] Create the first daemon run with `kind: generate`, `skillId: rpa-script-generate`, and `promptMode: business-context`.
-- [ ] Create confirmation/revision runs with `kind: revise`, `skillId: rpa-script-generate`, and `promptMode: business-context` where the legality matrix permits it.
+- [ ] Create the first daemon run with `kind: generate`, `skillId: rpa-script-generate`, and `promptMode: business-context`, using business context that includes original requirement, target URL, business constraints, and stage metadata.
+- [ ] Create confirmation/revision runs with `kind: revise`, `skillId: rpa-script-generate`, and `promptMode: business-context` where the legality matrix permits it; include `previousRunId`, artifact paths, `formAnswers`, and stage metadata.
 - [ ] Pass business context package: original requirement, current prompt, form answers, previous run/artifact paths, exploration notes path, and stage metadata.
 - [ ] Parse `<question-form version="rpa-question-form.v0.1">` from assistant output.
 - [ ] Render `radio`, `checkbox`, `select`, `text`, and `textarea` only.
@@ -388,6 +417,7 @@ Generic review bundle + RPA observability extension
 - [ ] Ensure chrome-devtools-mcp is profile-provided through Claude Code config, not daemon core.
 - [ ] Download and validate the same required artifacts as codegen.
 - [ ] Reuse the same verify/executor path.
+- [ ] If verify fails and the user chooses Claude Code repair, create `kind: revise`, `skillId: rpa-script-generate`, `promptMode: business-context`, with execution failure, failed step id, screenshot/log/trace paths, and current DSL/script/config paths.
 
 **Acceptance:**
 
@@ -477,7 +507,7 @@ Run CC review after these checkpoints, not after every tiny commit:
 
 - After daemon generic context plus minimal snapshot/collection guard is implemented.
 - After RPA Web backend/executor APIs and minimal verification UI are implemented.
-- After `codegen 上传加固闭环` works end to end.
+- After `codegen 上传加固闭环` works end to end with RPA Web-managed Playwright codegen recording.
 - After generic review bundle plus RPA observability extension is implemented.
 - After `自然语言生成闭环` works end to end.
 - Before final MVP demo hardening.
@@ -513,7 +543,7 @@ pnpm test
 - Exact browser binary strategy on the first国产系统 test machine.
 - Whether trace/video are enabled for the demo by default or only in review export.
 - Exact `.rpa.zip` manifest version once import/export code starts.
-- Whether multi-file codegen packages are worth adding after single-file `flow.py` succeeds.
+- Whether multi-file codegen packages or manual `flow.py` upload fallback are worth adding after RPA Web-managed single-file codegen succeeds.
 
 ## Plan Review Prompt For CC
 
@@ -528,11 +558,13 @@ pnpm test
 - 把 Runtime Verification UI 提到 codegen 闭环之前。
 - 给 codegen question-form follow-up 明确使用 businessContext 携带表单答案、上轮 run id 和 artifact 路径。
 - 给 RPA Web daemon client 补充 cancelRun 任务。
+- 根据最新产品决定，把 codegen 主路径改为 RPA Web 后端启动 Playwright codegen，指定输出 `flow.py`，录制结束后自动上传给 daemon；手动上传不作为 MVP 主路径。
 
 请只确认：
 1. 上述 P1 是否已解决。
-2. 是否新增 P0/P1。
-3. 是否可以进入实现。
+2. codegen 方式 B 的计划修改是否保持 daemon/RPA Web 边界清楚。
+3. 是否新增 P0/P1。
+4. 是否可以进入实现。
 
 不要重新 review 设计文档，也不要展开 P2 大方案。
 ```

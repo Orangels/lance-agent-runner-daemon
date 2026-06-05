@@ -167,7 +167,7 @@ RPA 本地 B/S 应用负责产品流程。
 - 调用本地 executor 执行 Playwright 脚本。
 - 展示脚本、加固说明、运行日志、trace、录像。
 - 为 RPA 多轮生成/修订组织业务上下文包，例如原始需求、本轮用户输入、表单答案、上一轮 draft DSL/脚本路径、探查摘要路径和当前阶段 metadata。
-- 不读取 `SKILL.md` 具体内容，也不拼接最终发给 Claude Code 的完整 prompt；`codegen 上传加固闭环` 可先用 legacy 模式只传业务 user prompt，后续 `business-context` 模式传 `currentPrompt` / `businessContext`，最终 prompt 始终由 daemon 注入 skill、side files、profile 约束后生成。
+- 不读取 `SKILL.md` 具体内容，也不拼接最终发给 Claude Code 的完整 prompt；`codegen 上传加固闭环` 和 `自然语言生成闭环` 都以 `business-context` 作为主路径传 `currentPrompt` / `businessContext`，最终 prompt 始终由 daemon 注入 skill、side files、profile 约束后生成。
 
 ### `rpa-local-executor`
 
@@ -206,6 +206,21 @@ rpa executionId
 
 同一个 RPA flow 可能先有一次 daemon run 生成脚本，然后有多次 execution 用于 verify、修复后复验和正式 run。
 
+## Daemon Run 调用约定
+
+`kind = generate | revise` 表达本次 run 的业务意图，`promptMode` 表达上下文来源。RPA Web 维护业务流程状态和跨轮上下文包，daemon 负责注入 skill、side files 和 profile 约束并组装最终 prompt。
+
+| 场景 | kind | promptMode | skillId | businessContext 要点 |
+| --- | --- | --- | --- | --- |
+| 首次自然语言生成 | `generate` | `business-context` | `rpa-script-generate` | 原始需求、目标 URL、业务约束、当前阶段 metadata |
+| 首次 codegen 上传加固 | `generate` | `business-context` | `playwright-rpa-harden` | codegen session、`inputFiles: ["input/flow.py"]`、录制来源、当前阶段 metadata |
+| 用户回答 `<question-form>` 后继续更新同一 flow | `revise` | `business-context` | 原 skillId | `previousRunId`、上一轮 artifact paths、`formAnswers`、阶段 metadata |
+| verify 失败后让 Claude Code 修复 | `revise` | `business-context` | `playwright-rpa-harden` 或 `rpa-script-generate` | execution failure、失败 step、截图/log/trace 路径、当前 DSL/script/config 路径 |
+
+`revise` 不表示 daemon 自动推断历史，也不依赖 Claude Code CLI 的隐式续聊。每次 `revise` 都必须由 RPA Web 明确传入本轮需要的业务上下文和产物引用；daemon 只按通用规则保存对话、注入 skill、生成最终 prompt 并执行 run。
+
+legacy `generate + skillId + prompt` 只保留为兼容旧客户端的路径，不作为 RPA MVP 主路径。
+
 ## 两种脚本生产流程
 
 ### 1. 自然语言生成
@@ -241,12 +256,18 @@ RPA 工作流编排位置：`apps/rpa-local-web`。
 ### 2. Playwright codegen 录制后加固
 
 ```text
-用户通过本地 Web 启动 codegen 或上传 flow.py
-  -> rpa-local-web 通过 daemon POST /api/workspaces/:workspaceId/files 上传到 input/flow.py
+用户在 RPA Web 输入目标 URL 并点击开始录制
+  -> rpa-local-web 后端启动 Playwright codegen
+       playwright codegen --target python -o <flowInputDir>/flow.py <targetUrl>
+  -> 用户在 headed browser 中录制操作
+  -> 用户关闭/结束 codegen，子进程退出
+  -> rpa-local-web 校验 <flowInputDir>/flow.py 存在且非空
+  -> rpa-local-web 通过 daemon POST /api/workspaces/:workspaceId/files 自动上传到 input/flow.py
   -> rpa-local-web 调 daemon POST /api/runs
        kind: generate
+       promptMode: business-context
        skillId: playwright-rpa-harden
-       prompt: 加固 input/flow.py 并输出标准产物
+       businessContext: codegen session、inputFiles、录制来源、阶段 metadata
   -> daemon 注入 skill、side files、profile 约束并组装最终 prompt
   -> daemon 启动 Claude Code
   -> Claude Code 加固脚本
@@ -258,22 +279,15 @@ RPA 工作流编排位置：`apps/rpa-local-web`。
   -> rpa-local-web 展示执行结果和留痕
 ```
 
-codegen 的启动方式 MVP 可先简化：
+MVP 直接实现 RPA Web 后端启动和管理 Playwright codegen。RPA Web 指定 `-o <flowInputDir>/flow.py`，所以它知道录制脚本的本地位置；录制结束后由 RPA Web 自动上传给 daemon。用户手动上传 `flow.py` 只作为后续 fallback 评估，不作为 MVP 主路径。
 
-- 方案 A：用户在本地手动运行 codegen 后上传 `flow.py`。
-- 方案 B：`rpa-local-web` BFF 提供“启动 codegen”按钮，内部调用 `playwright codegen`。
-
-MVP 建议先做方案 A，降低本地 GUI/浏览器进程管理复杂度。方案 B 作为增强。
-
-`codegen 上传加固闭环` 先只支持单文件 `flow.py`。如果 codegen 录制结果依赖多个 Python 模块、资源文件或复杂目录结构，先要求用户合并为单文件，或作为后续多文件流程包能力处理。
-
-`codegen 上传加固闭环` 可先使用 daemon 当前已支持的 legacy `generate + skillId + prompt` 请求。这里的 `prompt` 只是业务用户请求，不包含 `SKILL.md` 正文或最终系统约束；daemon 仍负责 staging skill 并组装最终 prompt。后续 `business-context` 能力落地后，codegen 修订链路也可以切换为 `promptMode: business-context`，但它不是 codegen 上传加固先行演示闭环的前置条件。
+`codegen 上传加固闭环` 先只支持单文件 `flow.py`。如果 codegen 录制结果依赖多个 Python 模块、资源文件或复杂目录结构，先明确拒绝并提示不支持，后续再按多文件流程包能力处理。
 
 ### RPA Web 与 daemon 文件交换
 
 RPA Web 是 daemon 的 HTTP 客户端，不能依赖 API 返回 daemon workspace 绝对路径。
 
-- **输入方向：** `codegen 上传加固闭环` 上传 `flow.py` 优先使用 daemon 已有 `POST /api/workspaces/:workspaceId/files`，目标路径为 `input/flow.py`。如果本地单机部署已经配置共享 `allowedInputRoots`，也可以使用 `POST /api/workspaces/:workspaceId/prepare`，但共享文件系统不是产品 API contract。
+- **输入方向：** `codegen 上传加固闭环` 由 RPA Web 后端启动 Playwright codegen 并生成本地 `<flowInputDir>/flow.py`，随后使用 daemon `POST /api/workspaces/:workspaceId/files` 自动上传到 `input/flow.py`。不要依赖共享文件系统作为产品 API contract。
 - **输出方向：** daemon 生成/加固完成后，RPA Web 通过 `GET /api/runs/:runId/artifacts` 和 artifact download API 获取 `flow.dsl.json`、`flow.hardened.py`、`config.example.json` 等产物，并复制到 RPA Web 自己管理的 flow storage 或 per-execution 输入目录。
 - **执行方向：** executor 只读取 RPA Web 准备好的 per-execution 输入目录或导入流程包，不直接读取 daemon workspace `output/` 路径。SaaS 分支未来可以保持同一 RPA Web/executor API，把 artifact 下载替换为对象存储或 worker 分发。
 
@@ -286,7 +300,7 @@ RPA Web 是 daemon 的 HTTP 客户端，不能依赖 API 返回 daemon workspace
 - 优先选择公开页面、内部 mock 页面或半真实只读页面。
 - 下载文件必须可控，下载目录按 execution 独立创建。
 - 页面步骤要能覆盖 RPA MVP 的关键能力：参数表单、点击/输入/选择、显式等待、断言、截图高亮、trace/日志、导入导出。
-- codegen 上传加固路径作为先行演示主线；自然语言生成同属本次最终 MVP，按 `自然语言生成闭环` 实施切片接入。
+- codegen 上传加固路径作为先行演示主线；录制由 RPA Web 后端启动 Playwright codegen 并自动上传 `flow.py` 给 daemon。自然语言生成同属本次最终 MVP，按 `自然语言生成闭环` 实施切片接入。
 
 这个约束只限制首个 MVP demo，不限制后续真实客户流程。真实流程中的登录、验证码、CA/USB-Key 和人工介入通过 DSL `manual` 字段和执行期配置逐步支持。
 
@@ -516,8 +530,9 @@ Claude Code
   -> 无真实 AskQuestion 工具时，输出等价的 <question-form> JSON
   -> RPA Web 渲染表单并收集用户答案
   -> RPA Web 创建新的 daemon run
-       当前 daemon 未支持 `revise + skillId` 前：使用 generate + skillId，把表单答案和上一轮产物路径写入业务 prompt
-       后续 business-context 落地后：使用 revise + skillId + business-context
+       kind: revise
+       promptMode: business-context
+       skillId: 原 skillId
        currentPrompt: 根据用户确认继续参数化/加固
        businessContext: formAnswers、previousDaemonRunId、draftDslPath、draftScriptPath、原始需求、阶段 metadata
   -> daemon 注入 skill、side files、profile 约束并组装最终 prompt
@@ -533,7 +548,7 @@ MVP 先固定轻量版本化协议：
 - `version` 先使用 `rpa-question-form.v0.1`。
 - `questions[].type` 只支持 `radio`、`checkbox`、`select`、`text`、`textarea`。
 - `questions[].id` 必须稳定，作为后续 `formAnswers` 的 key。
-- 当前 daemon 未支持 `business-context` 前，表单答案由 RPA Web 放入下一轮业务 prompt 的 `[form answers — id]` 摘要；后续放入 `businessContext.formAnswers`，并可在 `currentPrompt` 中附带一份可读摘要，方便日志和复盘。
+- 表单答案由 RPA Web 放入下一轮 run 的 `businessContext.formAnswers`，并可在 `currentPrompt` 中附带一份可读摘要，方便日志和复盘。
 
 等价的 `<question-form>` 示例：
 
@@ -561,9 +576,9 @@ MVP 先固定轻量版本化协议：
 职责分工：
 
 - **Claude Code / skill**：在生成 `flow.py` / `flow.hardened.py` 前，先使用 AskQuestion 收集/确认变量参数；无真实 AskQuestion 工具时，输出合法 `<question-form>` JSON，并在表单后停止本轮生成。
-- **daemon**：只透传 assistant 文本、SSE、日志和 artifacts，不理解 question form，也不挂起 RPA 业务状态；当前阶段可继续使用 `generate + skillId`，后续 `business-context` 落地后由 daemon 根据 `currentPrompt` / `businessContext` 重新组装最终 prompt。
+- **daemon**：只透传 assistant 文本、SSE、日志和 artifacts，不理解 question form，也不挂起 RPA 业务状态；daemon 根据 `currentPrompt` / `businessContext` 注入 skill、side files 和 profile 约束后组装最终 prompt。
 - **RPA Web**：解析 assistant 文本中的 `<question-form>`，渲染 radio / checkbox / select / text / textarea；用户提交后保存表单答案，并把表单答案、上一轮产物路径和阶段 metadata 传给下一轮 daemon run。MVP 不支持 `direction-cards`，后续需要更强视觉选择时再加。
-- **Claude Code 下一轮**：当前阶段读取业务 prompt 中的 `[form answers — rpa-parameterization]` 和产物路径；后续读取 daemon 注入后的业务上下文中的 `[form answers — rpa-parameterization]` / `businessContext.formAnswers`，继续更新 `parameterization-report.md`、`flow.dsl.json` 和脚本。
+- **Claude Code 下一轮**：读取 daemon 注入后的业务上下文中的 `[form answers — rpa-parameterization]` / `businessContext.formAnswers`、上一轮 artifact paths 和阶段 metadata，继续更新 `parameterization-report.md`、`flow.dsl.json` 和脚本。
 
 用户提交后的可读摘要示例：
 
@@ -650,7 +665,7 @@ MVP 参数化最小闭环：
 1. 生成/加固 run 输出 `parameterization-report.md`。
 2. 前端展示候选常量，例如日期、单位、查询条件、下载类型。
 3. 用户勾选哪些变成参数，并设置 label/type/widget/default。
-4. 当前 daemon 未支持 `revise + skillId` 前，再跑一次 `generate + skillId` 更新 DSL 和脚本；后续 `business-context` 能力落地后，改为 `revise + skillId + business-context` 表达同一流程的多轮修订。
+4. 用户确认后再跑一次 `revise + skillId + business-context`，由 RPA Web 传入表单答案、上一轮 run id、上一轮 artifact paths 和阶段 metadata，更新 DSL 和脚本。
 5. verify 模式用一组不同参数验证脚本泛化成功。
 
 ### MVP 落地策略
@@ -678,7 +693,7 @@ codegen flow.py
 
 `.rpa.zip` 导入导出、headless 正式 run、trace/录像留痕属于本次最终 MVP 的 `流程复用与执行闭环`，但不阻塞 codegen 上传加固先行演示闭环。
 
-`codegen 上传加固闭环` 不以前置落地 `business-context` 为条件。它可以使用 daemon 当前已有的 legacy `generate + skillId + prompt`；自然语言多轮确认、参数化修订和更完整的跨轮上下文在 `自然语言生成闭环` 中依赖 `business-context` / `revise + skillId` 能力。
+`codegen 上传加固闭环` 和 `自然语言生成闭环` 都使用 `business-context` 作为主路径。daemon 的 legacy `generate + skillId + prompt` 只作为旧客户端兼容能力，不作为 RPA MVP 闭环的实现路径。
 
 MVP 先支持这些 action：`navigate`、`click`、`input`、`submit`、`assert`、`manual`。`select`、复杂表格编辑、多分支流程、多窗口流程后置。
 
@@ -1235,7 +1250,7 @@ SaaS executor = server worker / Browserless / container worker
 
 风险：从 Web 后端启动 headed codegen 涉及窗口、权限、显示环境。
 
-对策：MVP 先支持上传录制脚本；自动启动 codegen 后置。
+对策：MVP 直接实现 RPA Web 后端启动 Playwright codegen；录制状态、取消、子进程退出和 `flow.py` 校验要给出可读错误。手动上传 `flow.py` 只作为后续 fallback 评估。
 
 ### 执行和生成混淆
 
@@ -1252,19 +1267,20 @@ SaaS executor = server worker / Browserless / container worker
 1. 新增 `apps/rpa-local-web`。
 2. RPA Web 能配置 daemon URL 和 API key。
 3. RPA Web 能创建/复用 `rpa-local` workspace。
-4. 支持通过 daemon `POST /api/workspaces/:workspaceId/files` 上传 `flow.py` 到 `input/flow.py`。
-5. 使用当前 daemon 已支持的 legacy `generate + skillId + prompt` 提交 codegen 加固 run，由 daemon 注入 skill、side files 和 profile 约束。
-6. 支持 SSE 展示 Claude Code 加固过程。
-7. 支持列出和下载 daemon 生成/加固 artifacts：`flow.dsl.json`、`flow.hardened.py`、`config.example.json`、`parameterization-report.md`、`hardening-report.md`。
-8. 支持 executor 本地运行 `flow.hardened.py --dry-run`。
-9. 支持 execution 状态、SSE 事件、取消、stdout/stderr、每步截图和执行日志。
-10. 支持 RPA Web 执行 artifact 列表和下载，至少覆盖截图和执行日志；trace/录像可作为该切片的增强项。
+4. RPA Web 后端启动 Playwright codegen，指定 `-o <flowInputDir>/flow.py`，录制结束后校验 `flow.py` 存在且非空。
+5. RPA Web 通过 daemon `POST /api/workspaces/:workspaceId/files` 自动上传 `flow.py` 到 `input/flow.py`。
+6. 使用 `generate + business-context + playwright-rpa-harden` 提交 codegen 加固 run，由 daemon 注入 skill、side files 和 profile 约束。
+7. 支持 SSE 展示 Claude Code 加固过程。
+8. 支持列出和下载 daemon 生成/加固 artifacts：`flow.dsl.json`、`flow.hardened.py`、`config.example.json`、`parameterization-report.md`、`hardening-report.md`。
+9. 支持 executor 本地运行 `flow.hardened.py --dry-run`。
+10. 支持 execution 状态、SSE 事件、取消、stdout/stderr、每步截图和执行日志。
+11. 支持 RPA Web 执行 artifact 列表和下载，至少覆盖截图和执行日志；trace/录像可作为该切片的增强项。
 
 ### MVP 实施切片：自然语言生成闭环
 
-1. 落地 daemon `business-context` / `revise + skillId` 能力，用于同一业务 skill 的多轮确认和修订。
-2. 支持自然语言提交生成 run，使用 `rpa-script-generate` skill 和 `chrome-devtools-mcp` 探查页面。
-3. 支持 AskQuestion 等价协议：解析 Claude Code 输出的 `<question-form>`，渲染表单，并通过下一轮 `business-context` 回传答案。
+1. 复用已落地的 daemon `business-context` / `revise + skillId` 能力，用于同一业务 skill 的多轮确认和修订。
+2. 支持自然语言提交生成 run，使用 `generate + business-context + rpa-script-generate` 和 `chrome-devtools-mcp` 探查页面。
+3. 支持 AskQuestion 等价协议：解析 Claude Code 输出的 `<question-form>`，渲染表单，并通过下一轮 `revise + business-context + rpa-script-generate` 回传答案。
 
 ### MVP 实施切片：流程复用与执行闭环
 
