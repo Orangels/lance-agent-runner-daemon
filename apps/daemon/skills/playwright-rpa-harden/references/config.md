@@ -2,6 +2,8 @@
 
 加固脚本从配置文件和运行参数中读取实例信息。
 
+`output/` 只用于 daemon 生成/加固产物，例如 DSL、脚本和报告。脚本执行时产生的审计日志、截图、trace、下载文件必须写入 `runtime/`，由 RPA Web / executor 按 executionId 管理。
+
 ## config.example.json
 
 ```json
@@ -14,12 +16,12 @@
     "slow_mo_ms": 80
   },
   "audit": {
-    "jsonl_path": "output/audit.jsonl",
-    "screenshots_dir": "output/screenshots",
-    "trace_dir": "output/trace"
+    "jsonl_path": "runtime/audit.jsonl",
+    "screenshots_dir": "runtime/screenshots",
+    "trace_dir": "runtime/trace"
   },
   "downloads": {
-    "dir": "output/downloads"
+    "dir": "runtime/downloads"
   }
 }
 ```

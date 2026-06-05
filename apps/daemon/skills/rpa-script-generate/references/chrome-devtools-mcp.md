@@ -33,6 +33,6 @@
 
 - 请用户提供 Playwright codegen 脚本、页面截图、HTML 片段或录屏。
 - 生成的 DSL 标记为未验证草稿。
-- 在 `generation-notes.md` 中列出缺失探查证据。
+- 在 `hardening-report.md` 中列出缺失探查证据。
 - 不要凭空编造选择器或页面分支。
 

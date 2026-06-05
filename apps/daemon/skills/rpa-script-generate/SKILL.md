@@ -28,15 +28,17 @@ argument-hint: "[目标系统URL] [业务流程描述]"
 - `flow.hardened.py`：带参数、等待、断言、dry-run、审计钩子的加固草稿。
 - `config.example.json`：部署实例配置示例，不包含真实密钥和 cookie。
 - `parameterization-report.md`：固定值泛化建议和用户确认结果。
-- `generation-notes.md`：探查记录、人工介入点、风险清单、后续加固建议。
+- `hardening-report.md`：探查记录、人工介入点、风险清单、后续加固建议。
 
 不得输出真实密码、cookie、storage_state、CA/USB-Key 文件、真实业务数据样本。
+
+`output/` 只放 daemon 生成/加固 artifacts。脚本运行时产生的审计日志、截图、trace、下载文件属于 executor executionId 产物，默认写入 `runtime/`，不要写入 `output/`。
 
 ## AskQuestion 约束
 
 在生成 `flow.py` / `flow.hardened.py` 前，必须像 `kami-landing` 一样使用 AskQuestion 收集和确认变量参数、页面分支、字段含义、写操作风险和人工介入点。
 
-如果当前 Claude Code 环境提供真实 AskQuestion 工具，优先使用该工具。若没有真实 AskQuestion 工具，则输出等价的 `<question-form>` JSON，并在 `</question-form>` 后停止本轮，等待用户提交答案。不要在表单未回答前生成最终脚本，除非用户明确说“跳过问题”或“直接生成”。
+如果当前 Claude Code 环境提供真实 AskQuestion 工具，优先使用该工具。若没有真实 AskQuestion 工具，则输出等价的 `<question-form>` JSON，并在 `</question-form>` 后停止本轮，等待用户提交答案。等价表单必须声明 `version="rpa-question-form.v0.1"`，JSON 内也必须包含 `"version": "rpa-question-form.v0.1"`，且 `questions[].id` 必须稳定。不要在表单未回答前生成最终脚本，除非用户明确说“跳过问题”或“直接生成”。
 
 ## 执行步骤
 
@@ -96,7 +98,7 @@ notes/
 - URL 查询参数、下拉框选项、默认筛选条件。
 - 运行环境配置，如 base URL、下载目录、超时时间。
 
-先生成 `parameterization-report.md`，再使用 AskQuestion 或等价 `<question-form id="rpa-parameterization">` 让用户确认哪些固定值需要变成参数。用户确认后再更新 `flow.dsl.json` 和脚本。
+先生成 `parameterization-report.md`，再使用 AskQuestion 或等价 `<question-form id="rpa-parameterization" version="rpa-question-form.v0.1">` 让用户确认哪些固定值需要变成参数。用户确认后再更新 `flow.dsl.json` 和脚本。
 
 ### 6. 生成 DSL
 
@@ -107,7 +109,7 @@ notes/
 - `meta.source` 固定为 `nl`。
 - `params` 只放参数定义和默认值策略，不放真实敏感值。
 - `steps[].target.by` 优先级为 `role > label > placeholder > text > testid > id > css`。
-- `xpath` 只能作为临时降级策略，并在 `generation-notes.md` 中说明风险。
+- `xpath` 只能作为临时降级策略，并在 `hardening-report.md` 中说明风险。
 - 写操作必须标注 `write: true`，并尽量提供 `idempotency_key`。
 
 ### 7. 生成脚本
@@ -133,7 +135,7 @@ notes/
 - 每个关键业务结果有 `assert`。
 - 参数引用都能在 `params`、`context` 或 `config` 中找到。
 - 写操作有 `write: true`、dry-run 行为和审计记录。
-- `generation-notes.md` 列出未验证风险和人工介入点。
+- `hardening-report.md` 列出未验证风险和人工介入点。
 
 ## 重要约束
 

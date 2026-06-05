@@ -16,6 +16,10 @@ def ensure_dir(path: str) -> None:
     Path(path).mkdir(parents=True, exist_ok=True)
 
 
+def is_dry_run(mode: str) -> bool:
+    return mode in {"verify", "dry-run"}
+
+
 def audit(config: dict[str, Any], event: dict[str, Any]) -> None:
     audit_path = Path(config["audit"]["jsonl_path"])
     ensure_dir(str(audit_path.parent))
@@ -34,7 +38,7 @@ def screenshot(page: Page, config: dict[str, Any], step_id: str) -> str:
 
 def run_flow(page: Page, config: dict[str, Any], params: dict[str, Any], mode: str) -> None:
     flow_id = config.get("flow_id", "{{flow_id}}")
-    dry_run = mode in {"verify", "dry-run"}
+    dry_run = is_dry_run(mode)
 
     step_id = "s1"
     audit(config, {
@@ -61,6 +65,36 @@ def run_flow(page: Page, config: dict[str, Any], params: dict[str, Any], mode: s
         "status": "ok",
         "screenshot": shot
     })
+
+
+    # Generated hardened steps should follow this pattern:
+    #
+    # step_id = "s2"
+    # step_name = "点击查询"
+    # action = "click"
+    # write = False
+    # audit(config, {
+    #     "flow_id": flow_id, "step_id": step_id, "step_name": step_name,
+    #     "mode": mode, "action": action, "write": write,
+    #     "dry_run": dry_run, "status": "start"
+    # })
+    # locator = page.get_by_role("button", name="查询")
+    # if write and dry_run:
+    #     audit(config, {
+    #         "flow_id": flow_id, "step_id": step_id, "step_name": step_name,
+    #         "mode": mode, "action": action, "write": write,
+    #         "dry_run": dry_run, "status": "skipped",
+    #         "reason": "dry-run write guard"
+    #     })
+    # else:
+    #     locator.click()
+    #     expect(page.get_by_text("查询结果")).to_be_visible()
+    #     shot = screenshot(page, config, step_id)
+    #     audit(config, {
+    #         "flow_id": flow_id, "step_id": step_id, "step_name": step_name,
+    #         "mode": mode, "action": action, "write": write,
+    #         "dry_run": dry_run, "status": "ok", "screenshot": shot
+    #     })
 
     # Generated verified steps are inserted here from flow.dsl.json.
 

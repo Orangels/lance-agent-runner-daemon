@@ -2,6 +2,8 @@
 
 加固脚本应写 JSONL 审计日志，每行记录一个步骤事件。日志不存真实密钥、cookie、完整身份证号、完整手机号等敏感值。
 
+审计日志、截图和 trace 是执行期产物，路径应来自 `config.example.json` 的 `runtime/` 配置，不写入 daemon 扫描的 `output/` 目录。
+
 ## 建议字段
 
 ```json
@@ -19,8 +21,8 @@
   "dry_run": true,
   "status": "ok",
   "error": null,
-  "screenshot": "output/screenshots/s3.png",
-  "trace": "output/trace/trace.zip"
+  "screenshot": "runtime/screenshots/s3.png",
+  "trace": "runtime/trace/trace.zip"
 }
 ```
 

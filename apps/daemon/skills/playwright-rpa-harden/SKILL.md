@@ -33,11 +33,13 @@ argument-hint: "[input/flow.py 或 input/flow.dsl.json]"
 
 不得输出真实密码、cookie、storage_state、CA/USB-Key 文件、真实业务数据样本。
 
+`output/` 只放 daemon 生成/加固 artifacts。脚本运行时产生的审计日志、截图、trace、下载文件属于 executor executionId 产物，默认写入 `runtime/`，不要写入 `output/`。
+
 ## AskQuestion 约束
 
 在生成 `flow.hardened.py` 前，必须像 `kami-landing` 一样使用 AskQuestion 收集和确认参数化候选、写操作风险、人工介入点和无法加固的页面语义。
 
-如果当前 Claude Code 环境提供真实 AskQuestion 工具，优先使用该工具。若没有真实 AskQuestion 工具，则输出等价的 `<question-form>` JSON，并在 `</question-form>` 后停止本轮，等待用户提交答案。不要在关键问题未回答前输出最终加固脚本，除非用户明确说“跳过问题”或“直接生成”。
+如果当前 Claude Code 环境提供真实 AskQuestion 工具，优先使用该工具。若没有真实 AskQuestion 工具，则输出等价的 `<question-form>` JSON，并在 `</question-form>` 后停止本轮，等待用户提交答案。等价表单必须声明 `version="rpa-question-form.v0.1"`，JSON 内也必须包含 `"version": "rpa-question-form.v0.1"`，且 `questions[].id` 必须稳定。不要在关键问题未回答前输出最终加固脚本，除非用户明确说“跳过问题”或“直接生成”。
 
 ## 执行步骤
 
@@ -67,7 +69,7 @@ argument-hint: "[input/flow.py 或 input/flow.dsl.json]"
 - 导出目录、文件名、下载路径。
 - base URL、超时时间、headless、trace、录像等环境配置。
 
-用户未确认前，先在 `parameterization-report.md` 中标记为 `proposed`，并使用 AskQuestion 或等价 `<question-form id="rpa-parameterization">` 收集确认。已确认参数写入 DSL `params`，脚本从 `run.params.json` 读取。
+用户未确认前，先在 `parameterization-report.md` 中标记为 `proposed`，并使用 AskQuestion 或等价 `<question-form id="rpa-parameterization" version="rpa-question-form.v0.1">` 收集确认。已确认参数写入 DSL `params`，脚本从 `run.params.json` 读取。
 
 ### 4. 加固选择器
 

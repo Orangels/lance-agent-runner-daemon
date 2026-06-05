@@ -28,8 +28,9 @@
 等价 `<question-form>` 格式：
 
 ```html
-<question-form id="rpa-confirmation" title="确认 RPA 流程细节">
+<question-form id="rpa-confirmation" title="确认 RPA 流程细节" version="rpa-question-form.v0.1">
 {
+  "version": "rpa-question-form.v0.1",
   "description": "以下信息会影响生成的 DSL 和脚本，请确认。",
   "questions": [
     {
@@ -47,7 +48,7 @@
 </question-form>
 ```
 
-如果使用 `<question-form>`，输出 `</question-form>` 后停止本轮生成，等待用户提交。用户答案会作为下一轮普通消息回传，格式类似：
+如果使用 `<question-form>`，标签属性和 JSON 内容都必须声明 `version` 为 `rpa-question-form.v0.1`。输出 `</question-form>` 后停止本轮生成，等待用户提交。用户答案会作为下一轮普通消息回传，格式类似：
 
 ```text
 [form answers — rpa-confirmation]
