@@ -9,6 +9,8 @@ import type {
 
 const allowedQuestionTypes = new Set<RpaQuestionType>(['text', 'textarea', 'radio', 'checkbox', 'select']);
 const choiceQuestionTypes = new Set<RpaChoiceQuestion['type']>(['radio', 'checkbox', 'select']);
+const questionFormBlockPattern =
+  /(?:^|\r?\n)[ \t]*<question-form\b([^>]*)>[ \t]*(?:\r?\n)?([\s\S]*?)(?:\r?\n)?[ \t]*<\/question-form>[ \t]*(?=\r?\n|$)/;
 
 export class QuestionFormParseError extends Error {
   readonly code = 'QUESTION_FORM_INVALID';
@@ -20,7 +22,7 @@ export class QuestionFormParseError extends Error {
 }
 
 export function parseQuestionFormFromTranscript(transcript: string): RpaQuestionForm | null {
-  const match = transcript.match(/<question-form\b([^>]*)>([\s\S]*?)<\/question-form>/);
+  const match = questionFormBlockPattern.exec(transcript);
   if (!match) return null;
 
   const attrs = match[1] ?? '';

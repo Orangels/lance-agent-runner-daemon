@@ -21,6 +21,21 @@ after`);
     expect(parseQuestionFormFromTranscript('plain daemon transcript')).toBeNull();
   });
 
+  it('ignores inline mentions of question-form tags before the real block', () => {
+    const form = parseQuestionFormFromTranscript(`I will ask with \`<question-form>\`.
+
+Need to confirm the workflow details.
+
+<question-form id="rpa-confirmation" version="rpa-question-form.v0.1">
+{"version":"rpa-question-form.v0.1","questions":[{"id":"city","type":"text","label":"城市"}]}
+</question-form>`);
+
+    expect(form).toMatchObject({
+      formId: 'rpa-confirmation',
+      questions: [{ id: 'city', type: 'text', label: '城市' }],
+    });
+  });
+
   it('accepts every MVP-supported question type used by RPA skills', () => {
     const form = parseQuestionFormFromTranscript(`<question-form id="all" version="rpa-question-form.v0.1">
 {"version":"rpa-question-form.v0.1","questions":[
