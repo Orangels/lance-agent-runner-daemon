@@ -99,7 +99,7 @@ No product source changes are required unless the demo run exposes a product def
 **Files:**
 - Create: `docs/rpa-local-web-demo-runbook.md`
 
-- [ ] **Step 1: Create the runbook with startup commands**
+- [x] **Step 1: Create the runbook with startup commands**
 
 Create `docs/rpa-local-web-demo-runbook.md` with:
 
@@ -225,7 +225,7 @@ For either generated flow:
 Use `docs/rpa-local-web-demo-results-template.md` to record the final run.
 ```
 
-- [ ] **Step 2: Review runbook for unsupported promises**
+- [x] **Step 2: Review runbook for unsupported promises**
 
 Check that the runbook does not claim:
 
@@ -244,7 +244,7 @@ Expected: the runbook consistently describes these as live smoke demos.
 - Create: `apps/rpa-local-web/demo/prompts/google-images-codegen-handoff.md`
 - Create: `apps/rpa-local-web/demo/prompts/weather-natural-language-request.md`
 
-- [ ] **Step 1: Create demo prompt directory**
+- [x] **Step 1: Create demo prompt directory**
 
 Run:
 
@@ -252,7 +252,7 @@ Run:
 mkdir -p apps/rpa-local-web/demo/prompts
 ```
 
-- [ ] **Step 2: Add Google codegen handoff fixture**
+- [x] **Step 2: Add Google codegen handoff fixture**
 
 Create `apps/rpa-local-web/demo/prompts/google-images-codegen-handoff.md`:
 
@@ -305,7 +305,7 @@ Do not use OS right-click Save As during recording. The hardened script should r
 - Example file: `sunset-mountain.jpg`
 ```
 
-- [ ] **Step 3: Add weather natural-language fixture**
+- [x] **Step 3: Add weather natural-language fixture**
 
 Create `apps/rpa-local-web/demo/prompts/weather-natural-language-request.md`:
 
@@ -389,7 +389,7 @@ If the script writes `weather-summary.json`, use this shape:
 ```
 ```
 
-- [ ] **Step 4: Run markdown smoke check**
+- [x] **Step 4: Run markdown smoke check**
 
 Run:
 
@@ -406,7 +406,7 @@ Expected: no output.
 **Files:**
 - Create: `apps/rpa-local-web/public/demo/mock-rpa-target.html`
 
-- [ ] **Step 1: Create static demo fixture directory**
+- [x] **Step 1: Create static demo fixture directory**
 
 Run:
 
@@ -414,7 +414,7 @@ Run:
 mkdir -p apps/rpa-local-web/public/demo
 ```
 
-- [ ] **Step 2: Create the mock page**
+- [x] **Step 2: Create the mock page**
 
 Create `apps/rpa-local-web/public/demo/mock-rpa-target.html`:
 
@@ -611,7 +611,7 @@ Create `apps/rpa-local-web/public/demo/mock-rpa-target.html`:
 </html>
 ```
 
-- [ ] **Step 3: Add mock page references to runbook**
+- [x] **Step 3: Add mock page references to runbook**
 
 In `docs/rpa-local-web-demo-runbook.md`, add a fallback section:
 
@@ -627,7 +627,7 @@ If Google Images or weather.com.cn blocks automation, open:
 Use this page only to verify the RPA product chain deterministically. Record the live-site blocker separately in the results template.
 ```
 
-- [ ] **Step 4: Smoke check the mock page file**
+- [x] **Step 4: Smoke check the mock page file**
 
 Run:
 
@@ -644,7 +644,7 @@ Expected: all key markers are present.
 **Files:**
 - Create: `docs/rpa-local-web-compatibility-checklist.md`
 
-- [ ] **Step 1: Create compatibility checklist**
+- [x] **Step 1: Create compatibility checklist**
 
 Create `docs/rpa-local-web-compatibility-checklist.md`:
 
@@ -704,7 +704,7 @@ Use this checklist before declaring the local B/S RPA MVP ready for demo.
 - [ ] `.rpa-local/` remains out of git.
 ```
 
-- [ ] **Step 2: Run checklist grep**
+- [x] **Step 2: Run checklist grep**
 
 Run:
 
@@ -721,7 +721,7 @@ Expected: all key compatibility topics are present.
 **Files:**
 - Create: `docs/rpa-local-web-demo-results-template.md`
 
-- [ ] **Step 1: Create results template**
+- [x] **Step 1: Create results template**
 
 Create `docs/rpa-local-web-demo-results-template.md`:
 
@@ -797,7 +797,7 @@ rg -n "RPA|Playwright|DSL|selector|screenshot|trace|video|executionId|flowId|exe
 - [ ] Demo blocked by product issue that needs a fix.
 ```
 
-- [ ] **Step 2: Confirm runtime outputs are not committed**
+- [x] **Step 2: Confirm runtime outputs are not committed**
 
 Run:
 
@@ -934,20 +934,6 @@ Run:
 
 ```bash
 git status --short
-git add docs/superpowers/plans/2026-06-06-rpa-demo-flow-compatibility-gate.md docs/superpowers/plans/2026-06-05-rpa-local-bs-mvp.md docs/rpa-local-web-demo-runbook.md docs/rpa-local-web-compatibility-checklist.md docs/rpa-local-web-demo-results-template.md apps/rpa-local-web/demo/prompts
+git add docs/superpowers/plans/2026-06-06-rpa-demo-flow-compatibility-gate.md docs/superpowers/plans/2026-06-05-rpa-local-bs-mvp.md docs/rpa-local-web-demo-runbook.md docs/rpa-local-web-compatibility-checklist.md docs/rpa-local-web-demo-results-template.md apps/rpa-local-web/demo/prompts apps/rpa-local-web/public/demo/mock-rpa-target.html
 git commit -m "Document and validate RPA MVP demo flow"
 ```
-
----
-
-## Review Notes
-
-Before implementation, ask CC to review only this execution plan and these constraints:
-
-- The two demo flows should be low-risk and no-login/no-real-write.
-- Google Images should exercise codegen upload hardening.
-- weather.com.cn should exercise natural-language generation.
-- External-site instability should be documented as a smoke-demo risk, not hidden.
-- The plan should not require daemon core changes.
-
-Do not paste CC prompts into this document.

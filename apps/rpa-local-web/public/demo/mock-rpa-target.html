@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RPA Mock Target</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: Arial, sans-serif;
+        color: #1f2937;
+        background: #f8fafc;
+      }
+
+      main {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+
+      section {
+        margin-bottom: 24px;
+        border: 1px solid #d8e0ea;
+        border-radius: 6px;
+        background: #ffffff;
+        padding: 16px;
+      }
+
+      label {
+        display: block;
+        margin: 10px 0 6px;
+        font-weight: 700;
+      }
+
+      input,
+      button {
+        min-height: 34px;
+        font: inherit;
+      }
+
+      input {
+        min-width: 260px;
+        border: 1px solid #b8c3d1;
+        border-radius: 4px;
+        padding: 4px 8px;
+      }
+
+      button {
+        margin-left: 8px;
+        border: 1px solid #1d4ed8;
+        border-radius: 4px;
+        background: #2563eb;
+        color: #ffffff;
+        padding: 4px 12px;
+        cursor: pointer;
+      }
+
+      .results {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 14px;
+      }
+
+      .image-card,
+      .weather-card {
+        border: 1px solid #d8e0ea;
+        border-radius: 6px;
+        padding: 10px;
+        background: #fdfefe;
+      }
+
+      .image-card img {
+        width: 100%;
+        aspect-ratio: 4 / 3;
+        object-fit: cover;
+        border-radius: 4px;
+      }
+
+      .download-link {
+        display: inline-block;
+        margin-top: 8px;
+      }
+
+      pre {
+        white-space: pre-wrap;
+        background: #eef3f8;
+        border-radius: 4px;
+        padding: 8px;
+      }
+
+      @media (max-width: 720px) {
+        .results {
+          grid-template-columns: 1fr;
+        }
+
+        input {
+          min-width: 0;
+          width: 100%;
+          box-sizing: border-box;
+        }
+
+        button {
+          margin: 10px 0 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>RPA Mock Target</h1>
+      <p>This local page is a deterministic fallback for RPA demo verification.</p>
+
+      <section aria-labelledby="image-title">
+        <h2 id="image-title">Mock Image Search</h2>
+        <form id="image-form">
+          <label for="image-keyword">Image keyword</label>
+          <input id="image-keyword" name="image_keyword" value="sunset mountain" />
+          <button id="image-search-button" type="submit">Search images</button>
+        </form>
+        <div id="image-results" class="results" aria-live="polite"></div>
+      </section>
+
+      <section aria-labelledby="weather-title">
+        <h2 id="weather-title">Mock Weather Lookup</h2>
+        <form id="weather-form">
+          <label for="city-name">City name</label>
+          <input id="city-name" name="city_name" value="北京" />
+          <label for="weather-date">Weather date</label>
+          <input id="weather-date" name="weather_date" type="date" value="2026-06-06" />
+          <button id="weather-search-button" type="submit">Lookup weather</button>
+        </form>
+        <div id="weather-results" class="results" aria-live="polite"></div>
+        <h3>Weather summary JSON</h3>
+        <pre id="weather-summary-json">{}</pre>
+      </section>
+    </main>
+
+    <script>
+      const imageData = [
+        { color: '#f97316' },
+        { color: '#0ea5e9' },
+        { color: '#22c55e' }
+      ];
+
+      const weatherData = [
+        { city: '北京', date: '2026-06-06', dateLabel: '6月6日', weather: '晴', high: '30℃', low: '20℃', wind: '北风 3级' },
+        { city: '北京', date: '2026-06-07', dateLabel: '6月7日', weather: '多云', high: '29℃', low: '21℃', wind: '南风 2级' },
+        { city: '上海', date: '2026-06-06', dateLabel: '6月6日', weather: '小雨', high: '27℃', low: '22℃', wind: '东风 3级' }
+      ];
+
+      function svgDataUri(title, color) {
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480">' +
+          '<rect width="640" height="480" fill="' + color + '"/>' +
+          '<text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-size="32" fill="white">' +
+          title +
+          '</text></svg>';
+        return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+      }
+
+      document.getElementById('image-form').addEventListener('submit', (event) => {
+        event.preventDefault();
+        const keyword = document.getElementById('image-keyword').value.trim() || 'demo image';
+        const container = document.getElementById('image-results');
+        container.innerHTML = '';
+        imageData.forEach((item, index) => {
+          const title = keyword + ' result ' + (index + 1);
+          const imageUrl = svgDataUri(title, item.color);
+          const card = document.createElement('article');
+          card.className = 'image-card';
+          card.setAttribute('data-result-index', String(index + 1));
+          card.innerHTML =
+            '<h3>' + title + '</h3>' +
+            '<img alt="' + title + '" src="' + imageUrl + '" data-download-url="' + imageUrl + '" />' +
+            '<a class="download-link" download="' + keyword.replace(/\s+/g, '-') + '-' + (index + 1) + '.svg" href="' + imageUrl + '">Download image</a>';
+          container.appendChild(card);
+        });
+      });
+
+      document.getElementById('weather-form').addEventListener('submit', (event) => {
+        event.preventDefault();
+        const city = document.getElementById('city-name').value.trim();
+        const date = document.getElementById('weather-date').value;
+        const match = weatherData.find((item) => item.city === city && item.date === date);
+        const container = document.getElementById('weather-results');
+        container.innerHTML = '';
+        const summary = match
+          ? {
+              city: match.city,
+              date: match.date,
+              dateLabel: match.dateLabel,
+              weather: match.weather,
+              temperature: { high: match.high, low: match.low },
+              wind: match.wind,
+              sourceUrl: window.location.href
+            }
+          : {
+              city,
+              date,
+              error: 'No visible forecast card matched the requested city/date.',
+              sourceUrl: window.location.href
+            };
+        const card = document.createElement('article');
+        card.className = 'weather-card';
+        card.innerHTML = match
+          ? '<h3>' + summary.city + ' ' + summary.dateLabel + '</h3><p class="weather-desc">' + summary.weather + '</p><p class="temp">' + summary.temperature.high + ' / ' + summary.temperature.low + '</p><p class="wind">' + summary.wind + '</p>'
+          : '<h3>No match</h3><p>No visible forecast card matched the requested city/date.</p>';
+        container.appendChild(card);
+        document.getElementById('weather-summary-json').textContent = JSON.stringify(summary, null, 2);
+      });
+    </script>
+  </body>
+</html>
