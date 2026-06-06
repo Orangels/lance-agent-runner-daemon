@@ -311,6 +311,8 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 
 **Purpose:** Provide the minimal verification display that codegen and natural-language loops depend on: step list, current log stream, current screenshot, and execution status.
 
+**Execution plan:** `docs/superpowers/plans/2026-06-06-rpa-runtime-verification-ui.md`
+
 **Files likely touched:**
 
 - Create/Modify: `apps/rpa-local-web/src/components/StepList.tsx`
