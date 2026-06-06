@@ -458,6 +458,8 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 
 **Purpose:** Attach RPA-specific execution diagnostics to the generic review bundle so the two RPA skills can be improved from real runs.
 
+**Execution plan:** `docs/superpowers/plans/2026-06-06-rpa-observability-extension-skill-review-loop.md`
+
 **Files likely created/touched:**
 
 - Create: `apps/rpa-local-web/src/server/observability/rpa-diagnostics.ts`
