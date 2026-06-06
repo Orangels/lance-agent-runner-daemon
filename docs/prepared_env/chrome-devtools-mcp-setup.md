@@ -51,10 +51,20 @@ Error: No such tool available: mcp__plugin_chrome_devtools_mcp_chrome_devtools__
 
 ## 三、解决方案：改用 `claude mcp add -s user` + 短 server 名
 
-弃用插件安装方式，改用 `claude mcp add -s user` 注册，并使用**短 server 名**，从源头去掉 `plugin_` 长前缀：
+弃用插件安装方式，改用 `claude mcp add -s user` 注册，并使用**短 server 名**，从源头去掉 `plugin_` 长前缀。
+
+RPA daemon 的 `rpa-local` profile 会通过 `CLAUDE_CONFIG_DIR` 指定 Claude Code 配置目录。当前本地配置使用：
 
 ```bash
-claude mcp add -s user chrome-dev-mcp -- npx chrome-devtools-mcp@latest --headless=true --isolated=true
+CLAUDE_CONFIG_DIR=/home/orangels/.claude
+```
+
+因此必须把 MCP server 注册到 daemon 实际使用的 `CLAUDE_CONFIG_DIR` 下，而不是只注册到交互式 Claude Code 默认读取的配置中：
+
+```bash
+CLAUDE_CONFIG_DIR=/home/orangels/.claude \
+claude mcp add -s user chrome-dev-mcp -- \
+npx chrome-devtools-mcp@latest --headless=true --isolated=true
 ```
 
 效果：
@@ -70,6 +80,35 @@ claude mcp add -s user chrome-dev-mcp -- npx chrome-devtools-mcp@latest --headle
 
 > 命名原则：server 名越短越好。工具名总长 = `mcp__` + server 名 + `__` + 工具名，
 > 务必让最长的工具名也落在 64 字符以内。
+
+### RPA daemon 环境初始化脚本
+
+仓库提供了幂等 setup 脚本：
+
+```bash
+pnpm setup:rpa-chrome-devtools-mcp
+```
+
+等价于：
+
+```bash
+scripts/setup-rpa-chrome-devtools-mcp.sh
+```
+
+脚本默认使用 `CLAUDE_CONFIG_DIR=/home/orangels/.claude`，也可通过环境变量覆盖：
+
+```bash
+CLAUDE_CONFIG_DIR=/path/to/claude-config pnpm setup:rpa-chrome-devtools-mcp
+```
+
+脚本行为：
+
+- 检查 `claude`、`npx`、`google-chrome` 是否存在。
+- 用 daemon 实际使用的 `CLAUDE_CONFIG_DIR` 执行 `claude mcp list`。
+- 如果 `chrome-dev-mcp` 已存在，只做验证，不重复写配置。
+- 如果不存在，执行一次 `claude mcp add -s user chrome-dev-mcp ...`。
+
+不要把 `claude mcp add` 放进 daemon 每次启动脚本。它是写配置动作，不是启动 MCP 服务动作；每次启动都写配置会增加排查难度，也可能在并发启动时产生配置写入竞争。启动脚本只负责启动 daemon / RPA Web，MCP 配置缺失时用本 setup 脚本修复。
 
 ## 四、前置条件：服务器需有可用的 Chrome
 
@@ -103,7 +142,7 @@ which google-chrome && google-chrome --version
 
 ## 五、生效操作（重要）
 
-`claude mcp add -s user` 改完配置后，**必须完全退出并重启 Claude Code 进程**，工具才会重新注入会话：
+`claude mcp add -s user` 改完配置后，**必须完全退出并重启 Claude Code 进程**，工具才会重新注入会话。对 RPA daemon 来说，就是要重启 daemon 进程，让后续 run 拉起新的 Claude Code 子进程：
 
 - ✅ 完全退出 CLI（关闭终端或 `Ctrl+C` 两次）后重新启动
 - ❌ `/mcp` 重连——不会刷新会话工具表
@@ -116,7 +155,7 @@ ps aux | grep -E "chrome-devtools-mcp" | grep -v grep
 # 如有残留，按 PID kill 掉
 ```
 
-重启后，在会话中调用 `mcp__chrome-dev-mcp__list_pages` 等工具即可正常使用。
+重启后，在会话中调用 `mcp__chrome-dev-mcp__list_pages` 等工具即可正常使用。RPA 自然语言生成 run 中，也应能看到 `mcp__chrome-dev-mcp__*` 工具，而不再降级到 WebFetch。
 
 ## 六、验证
 
@@ -144,10 +183,12 @@ pkill -f "remote-debugging-port=9333"; rm -rf /tmp/cdptest
 ## 七、复用提示（环境变化时）
 
 - 核心原则：**所有 MCP 都用 `claude mcp add -s user` + 短 server 名注册**，不要用插件方式安装，避免 `plugin_` 长前缀触发 64 字符工具名上限。
-- 新机器准备环境：先 `apt` 装系统 Chrome（第四节），再 `claude mcp add -s user chrome-dev-mcp ...`（第三节），最后重启 Claude Code（第五节）。
+- 新机器准备环境：先 `apt` 装系统 Chrome（第四节），再运行 `pnpm setup:rpa-chrome-devtools-mcp`（第三节），最后重启 daemon / Claude Code（第五节）。
 - 若再次出现「server 已连接、schema 也在、调用却报 `No such tool available`」且涉及插件 MCP，优先怀疑工具名超长，先核对工具名总长是否超过 64 字符。
 
-```
-claude mcp remove cdt
-claude mcp add -s user chrome-dev-mcp -- npx chrome-devtools-mcp@latest --headless=true --isolated=true
+如需清理旧短名后重建：
+
+```bash
+CLAUDE_CONFIG_DIR=/home/orangels/.claude claude mcp remove cdt
+pnpm setup:rpa-chrome-devtools-mcp
 ```

@@ -49,7 +49,7 @@ export async function persistRequiredGenerationArtifacts(
 ): Promise<RpaGenerationArtifact[]> {
   const artifactsResponse = await input.daemonClient.listRunArtifacts(input.runId);
   const generationArtifacts = artifactsResponse.artifacts
-    .filter((artifact) => artifact.relativePath.startsWith('output/'))
+    .filter((artifact) => artifact.relativePath.startsWith('output/') && !isKnownToolStateArtifact(artifact.relativePath))
     .map((artifact): RpaGenerationArtifact => ({
       artifactId: artifact.id,
       relativePath: artifact.relativePath,
@@ -113,6 +113,15 @@ export async function persistRequiredGenerationArtifacts(
       await rm(tempFlowDir, { recursive: true, force: true });
     }
   }
+}
+
+function isKnownToolStateArtifact(relativePath: string): boolean {
+  return (
+    relativePath.startsWith('output/.omc/') ||
+    relativePath.startsWith('output/.config/') ||
+    relativePath.startsWith('output/.claude/') ||
+    relativePath.startsWith('output/.cache/')
+  );
 }
 
 async function replaceFinalFlowDir(tempFlowDir: string, finalFlowDir: string): Promise<void> {

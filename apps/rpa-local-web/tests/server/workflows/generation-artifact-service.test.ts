@@ -49,6 +49,45 @@ describe('generation artifact service', () => {
     });
   });
 
+  it('ignores known Claude tool state files under hidden output directories', async () => {
+    const storageRoot = await createStorageRoot();
+    const daemonClient = createDaemonClient({
+      artifacts: {
+        artifacts: [
+          ...generationArtifacts(),
+          {
+            ...artifact('620d46a7-session.json'),
+            id: 'art_omc_session',
+            ruleId: 'rpa-other-output',
+            role: 'supporting',
+            relativePath: 'output/.omc/sessions/620d46a7-session.json',
+            fileName: '620d46a7-session.json',
+          },
+        ],
+      },
+    });
+
+    const persisted = await persistRequiredGenerationArtifacts({
+      daemonClient,
+      storageRoot,
+      flowId: 'weather_lookup',
+      runId: 'run_omc',
+      tempSuffix: 'nl_omc',
+      generator: { mode: 'nl', skillId: 'rpa-script-generate', daemonRunId: 'run_omc' },
+    });
+
+    expect(persisted.map((artifact) => artifact.fileName)).toEqual([
+      ...requiredGenerationArtifactNames,
+      ...optionalGenerationArtifactNames,
+    ]);
+    expect(daemonClient.downloadArtifact).not.toHaveBeenCalledWith(
+      expect.objectContaining({ artifactId: 'art_omc_session' }),
+    );
+    await expect(
+      readFile(path.join(storageRoot, 'flows', 'weather_lookup', '620d46a7-session.json'), 'utf8'),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('removes temp artifacts and does not leave a final flow when generated DSL is invalid', async () => {
     const storageRoot = await createStorageRoot();
     const finalFlowDir = resolveFinalFlowDir(storageRoot, 'case_query');
