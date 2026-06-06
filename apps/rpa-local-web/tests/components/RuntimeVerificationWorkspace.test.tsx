@@ -140,6 +140,40 @@ describe('RuntimeVerificationWorkspace', () => {
       params: {},
     });
   });
+
+  it('offers a repair callback after a failed execution', async () => {
+    const client = new FakeRuntimeClient();
+    client.startExecution.mockResolvedValueOnce({
+      executionId: 'exec_failed',
+      flowId: 'case_query',
+      status: 'queued',
+    });
+    client.getExecutionStatus.mockResolvedValue({
+      executionId: 'exec_failed',
+      flowId: 'case_query',
+      status: 'failed',
+      mode: 'verify',
+      dryRun: true,
+      headless: false,
+      failedStepId: 'step_003',
+    });
+    const onRepairRequest = vi.fn();
+
+    render(<RuntimeVerificationWorkspace client={client} onRepairRequest={onRepairRequest} />);
+    await screen.findByText('案件查询');
+    await userEvent.click(screen.getByRole('button', { name: /Start/ }));
+
+    await act(async () => {
+      client.emit({ type: 'run.completed', executionId: 'exec_failed', status: 'failed', sequence: 1 });
+    });
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Repair with Claude Code' }));
+
+    expect(onRepairRequest).toHaveBeenCalledWith({
+      executionId: 'exec_failed',
+      failedStepId: 'step_003',
+    });
+  });
 });
 
 class FakeRuntimeClient {

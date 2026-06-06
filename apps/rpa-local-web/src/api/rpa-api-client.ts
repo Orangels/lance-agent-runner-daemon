@@ -19,6 +19,14 @@ import type {
   SubmitCodegenQuestionAnswersRequest,
   SubmitCodegenQuestionAnswersResponse,
 } from '../shared/codegen-types.js';
+import type {
+  NaturalLanguageSessionStatusResponse,
+  RepairNaturalLanguageSessionRequest,
+  StartNaturalLanguageSessionRequest,
+  StartNaturalLanguageSessionResponse,
+  SubmitNaturalLanguageQuestionAnswersRequest,
+  SubmitNaturalLanguageQuestionAnswersResponse,
+} from '../shared/natural-language-types.js';
 
 type FetchLike = typeof fetch;
 
@@ -97,6 +105,48 @@ export class RpaApiClient {
         body: JSON.stringify(request),
       },
     );
+  }
+
+  startNaturalLanguageSession(
+    request: StartNaturalLanguageSessionRequest,
+  ): Promise<StartNaturalLanguageSessionResponse> {
+    return this.requestJson('/api/rpa/nl/sessions', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
+  }
+
+  getNaturalLanguageSession(sessionId: string): Promise<NaturalLanguageSessionStatusResponse> {
+    return this.requestJson(`/api/rpa/nl/sessions/${encodeURIComponent(sessionId)}`);
+  }
+
+  cancelNaturalLanguageSession(sessionId: string): Promise<NaturalLanguageSessionStatusResponse> {
+    return this.requestJson(`/api/rpa/nl/sessions/${encodeURIComponent(sessionId)}/cancel`, {
+      method: 'POST',
+    });
+  }
+
+  submitNaturalLanguageQuestionAnswers(
+    sessionId: string,
+    request: SubmitNaturalLanguageQuestionAnswersRequest,
+  ): Promise<SubmitNaturalLanguageQuestionAnswersResponse> {
+    return this.requestJson(
+      `/api/rpa/nl/sessions/${encodeURIComponent(sessionId)}/question-form/answers`,
+      {
+        method: 'POST',
+        body: JSON.stringify(request),
+      },
+    );
+  }
+
+  repairNaturalLanguageSession(
+    sessionId: string,
+    request: RepairNaturalLanguageSessionRequest,
+  ): Promise<NaturalLanguageSessionStatusResponse> {
+    return this.requestJson(`/api/rpa/nl/sessions/${encodeURIComponent(sessionId)}/repair`, {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
   }
 
   startExecution(request: StartRpaExecutionRequest): Promise<StartRpaExecutionResponse> {

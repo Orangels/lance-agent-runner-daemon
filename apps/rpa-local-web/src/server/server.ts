@@ -10,6 +10,7 @@ import type {
 import { DaemonClient } from './daemon-client.js';
 import type { RpaLocalServerConfig } from './config.js';
 import { createCodegenSessionStore } from './codegen/codegen-session-store.js';
+import { createNaturalLanguageSessionStore } from './natural-language/nl-session-store.js';
 import { createPlaywrightCodegenRunner } from './codegen/playwright-codegen-runner.js';
 import {
   createPythonPlaywrightExecutor,
@@ -19,10 +20,15 @@ import {
 import { registerCodegenRoutes } from './routes/codegen.js';
 import { registerExecutionRoutes } from './routes/executions.js';
 import { registerFlowRoutes } from './routes/flows.js';
+import { registerNaturalLanguageRoutes } from './routes/natural-language.js';
 import {
   createCodegenHardeningWorkflow,
   type CodegenHardeningWorkflow,
 } from './workflows/codegen-hardening-workflow.js';
+import {
+  createNaturalLanguageGenerationWorkflow,
+  type NaturalLanguageGenerationWorkflow,
+} from './workflows/natural-language-generation-workflow.js';
 import { createRpaReviewBundleService } from './observability/rpa-review-bundle-service.js';
 import { registerReviewRoutes } from './routes/review.js';
 
@@ -32,6 +38,7 @@ export interface CreateRpaLocalServerInput {
   executor?: RpaLocalExecutor;
   executorOptions?: Pick<PythonPlaywrightExecutorOptions, 'pythonCommand' | 'pythonArgs' | 'defaultTimeoutMs'>;
   codegenWorkflow?: CodegenHardeningWorkflow;
+  naturalLanguageWorkflow?: NaturalLanguageGenerationWorkflow;
 }
 
 export async function createRpaLocalServer(input: CreateRpaLocalServerInput): Promise<Express> {
@@ -50,6 +57,7 @@ export async function createRpaLocalServer(input: CreateRpaLocalServerInput): Pr
       ...input.executorOptions,
     });
   const codegenStore = createCodegenSessionStore({ storageRoot: input.config.storageRoot });
+  const nlStore = createNaturalLanguageSessionStore({ storageRoot: input.config.storageRoot });
   const codegenRunner = createPlaywrightCodegenRunner({
     command: input.config.codegenCommand,
     args: input.config.codegenArgs,
@@ -67,6 +75,15 @@ export async function createRpaLocalServer(input: CreateRpaLocalServerInput): Pr
     storageRoot: input.config.storageRoot,
     daemonClient,
   });
+  const nlWorkflow =
+    input.naturalLanguageWorkflow ??
+    createNaturalLanguageGenerationWorkflow({
+      daemonClient,
+      defaultProfileId: input.config.defaultProfileId,
+      executionReader: executor,
+      storageRoot: input.config.storageRoot,
+      store: nlStore,
+    });
 
   app.get('/api/rpa/health', (_req, res) => {
     const payload: RpaHealthResponse = { ok: true, app: 'rpa-local-web' };
@@ -108,6 +125,11 @@ export async function createRpaLocalServer(input: CreateRpaLocalServerInput): Pr
     store: codegenStore,
     runner: codegenRunner,
     workflow: codegenWorkflow,
+  });
+  registerNaturalLanguageRoutes(app, {
+    storageRoot: input.config.storageRoot,
+    store: nlStore,
+    workflow: nlWorkflow,
   });
   registerExecutionRoutes(app, executor);
   registerReviewRoutes(app, {

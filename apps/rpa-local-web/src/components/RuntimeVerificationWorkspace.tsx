@@ -45,6 +45,7 @@ export interface RuntimeVerificationWorkspaceProps {
   flowId?: string;
   onFlowIdChange?: (flowId: string) => void;
   autoStartRequest?: RuntimeVerificationAutoStartRequest;
+  onRepairRequest?: (input: { executionId: string; failedStepId?: string }) => void;
   client?: RuntimeVerificationApiClient;
 }
 
@@ -61,6 +62,7 @@ export function RuntimeVerificationWorkspace({
   flowId: controlledFlowId,
   onFlowIdChange,
   autoStartRequest,
+  onRepairRequest,
   client: injectedClient,
 }: RuntimeVerificationWorkspaceProps) {
   const defaultClient = useMemo(() => new RpaApiClient(), []);
@@ -325,6 +327,17 @@ export function RuntimeVerificationWorkspace({
 
       {flowError ? <p className="runtime-workspace__error">{flowError}</p> : null}
       {runtimeError ? <p className="runtime-workspace__error">{runtimeError}</p> : null}
+      {onRepairRequest && executionId && executionStatus === 'failed' ? (
+        <div className="runtime-workspace__actions">
+          <button
+            type="button"
+            className="command-button"
+            onClick={() => onRepairRequest({ executionId, failedStepId })}
+          >
+            Repair with Claude Code
+          </button>
+        </div>
+      ) : null}
 
       <div className="runtime-workspace__grid">
         <StepList steps={steps} events={events} failedStepId={failedStepId} />

@@ -1,3 +1,14 @@
+import type {
+  RpaChoiceQuestion,
+  RpaQuestion,
+  RpaQuestionAnswers,
+  RpaQuestionBase,
+  RpaQuestionForm,
+  RpaQuestionOption,
+  RpaQuestionType,
+  RpaTextQuestion,
+} from './question-form-types.js';
+
 export const codegenSessionStatuses = [
   'starting',
   'recording',
@@ -11,44 +22,14 @@ export const codegenSessionStatuses = [
 
 export type CodegenSessionStatus = (typeof codegenSessionStatuses)[number];
 
-export type CodegenQuestionType = 'text' | 'textarea' | 'radio' | 'checkbox' | 'select';
-
-export interface CodegenQuestionOption {
-  label: string;
-  value: string;
-}
-
-export interface CodegenQuestionBase {
-  id: string;
-  type: CodegenQuestionType;
-  label: string;
-  required?: boolean;
-  description?: string;
-}
-
-export interface CodegenTextQuestion extends CodegenQuestionBase {
-  type: 'text' | 'textarea';
-  placeholder?: string;
-  defaultValue?: string;
-}
-
-export interface CodegenChoiceQuestion extends CodegenQuestionBase {
-  type: 'radio' | 'checkbox' | 'select';
-  options: CodegenQuestionOption[];
-  defaultValue?: string | string[];
-}
-
-export type CodegenQuestion = CodegenTextQuestion | CodegenChoiceQuestion;
-
-export interface CodegenQuestionForm {
-  formId: string;
-  version?: string;
-  title?: string;
-  description?: string;
-  questions: CodegenQuestion[];
-}
-
-export type CodegenQuestionAnswers = Record<string, string | string[] | boolean | number | null>;
+export type CodegenQuestionType = RpaQuestionType;
+export type CodegenQuestionOption = RpaQuestionOption;
+export type CodegenQuestionBase = RpaQuestionBase;
+export type CodegenTextQuestion = RpaTextQuestion;
+export type CodegenChoiceQuestion = RpaChoiceQuestion;
+export type CodegenQuestion = RpaQuestion;
+export type CodegenQuestionForm = RpaQuestionForm;
+export type CodegenQuestionAnswers = RpaQuestionAnswers;
 
 export interface StartCodegenSessionRequest {
   targetUrl: string;

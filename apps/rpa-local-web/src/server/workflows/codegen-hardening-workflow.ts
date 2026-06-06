@@ -1,5 +1,4 @@
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import path from 'node:path';
+import { readFile } from 'node:fs/promises';
 import type {
   ArtifactsResponse,
   CreateRunRequest,
@@ -8,21 +7,14 @@ import type {
   PublicWorkspace,
   UploadWorkspaceFileResponse,
 } from '../../shared/daemon-types.js';
-import {
-  isDaemonArtifactFinalizedEvent,
-  isDaemonEndEvent,
-  isDaemonErrorEvent,
-  isDaemonTextDeltaEvent,
-} from '../../shared/daemon-event-types.js';
 import type {
   CodegenQuestionAnswers,
-  CodegenQuestionForm,
   SubmitCodegenQuestionAnswersRequest,
 } from '../../shared/codegen-types.js';
-import { requiredGenerationArtifactNames, type RpaGenerationArtifact } from '../../shared/artifacts.js';
-import { validateRpaDsl } from '../validators/dsl-validator.js';
-import { validateGenerationArtifacts } from '../validators/artifact-validator.js';
 import type { CodegenSessionStore } from '../codegen/codegen-session-store.js';
+import { parseQuestionFormFromTranscript } from './question-form-parser.js';
+import { consumeDaemonRun as consumeDaemonRunEvents } from './daemon-run-consumer.js';
+import { persistRequiredGenerationArtifacts } from './generation-artifact-service.js';
 
 export interface CodegenHardeningDaemonClient {
   createWorkspace(request: CreateWorkspaceRequest): Promise<PublicWorkspace>;
@@ -190,29 +182,19 @@ export function createCodegenHardeningWorkflow(options: CodegenHardeningWorkflow
   }
 
   async function consumeDaemonRun(sessionId: string, runId: string): Promise<void> {
-    let transcript = '';
-    let terminalStatus: string | undefined;
-
     try {
-      for await (const record of daemonClient.subscribeRunEvents(runId)) {
-        const { event } = record;
-        if (isDaemonTextDeltaEvent(event)) {
-          transcript += event.delta;
-        } else if (isDaemonArtifactFinalizedEvent(event)) {
-          await store.appendLog(sessionId, `Artifact created: ${event.artifact.relativePath}`);
-        } else if (isDaemonErrorEvent(event)) {
-          await store.appendLog(sessionId, `${event.code ?? 'ERROR'}: ${event.message}`);
-        } else if (isDaemonEndEvent(event)) {
-          terminalStatus = event.status;
-        }
-      }
+      const consumed = await consumeDaemonRunEvents({
+        daemonClient,
+        runId,
+        appendLog: (message) => store.appendLog(sessionId, message).then(() => undefined),
+      });
 
-      if (terminalStatus !== 'succeeded') {
-        await failSession(sessionId, 'DAEMON_RUN_FAILED', `Daemon run ended with status: ${terminalStatus ?? 'unknown'}.`);
+      if (consumed.terminalStatus !== 'succeeded') {
+        await failSession(sessionId, 'DAEMON_RUN_FAILED', `Daemon run ended with status: ${consumed.terminalStatus ?? 'unknown'}.`);
         return;
       }
 
-      const questionForm = parseQuestionForm(transcript);
+      const questionForm = parseQuestionFormFromTranscript(consumed.transcript);
       if (questionForm) {
         await store.setQuestionForm(sessionId, questionForm);
         await store.transition(sessionId, 'needs_input');
@@ -234,69 +216,22 @@ export function createCodegenHardeningWorkflow(options: CodegenHardeningWorkflow
 
   async function persistGeneratedArtifacts(sessionId: string, runId: string): Promise<void> {
     const session = await store.getSession(sessionId);
-    const artifactsResponse = await daemonClient.listRunArtifacts(runId);
-    const generationArtifacts = artifactsResponse.artifacts
-      .filter((artifact) => artifact.relativePath.startsWith('output/'))
-      .map((artifact): RpaGenerationArtifact => ({
-        artifactId: artifact.id,
-        relativePath: artifact.relativePath,
+    const artifacts = await persistRequiredGenerationArtifacts({
+      daemonClient,
+      storageRoot: options.storageRoot,
+      flowId: session.flowId,
+      runId,
+      tempSuffix: session.sessionId,
+    });
+    await store.setArtifacts(
+      sessionId,
+      artifacts.map((artifact) => ({
+        artifactId: artifact.artifactId,
         fileName: artifact.fileName,
-        mimeType: artifact.mimeType ?? undefined,
-        size: artifact.size ?? 0,
-        sha256: artifact.sha256 ?? undefined,
-      }));
-    const artifactValidation = validateGenerationArtifacts(generationArtifacts);
-    if (!artifactValidation.ok) {
-      throw new WorkflowError(
-        'ARTIFACT_VALIDATION_FAILED',
-        `Generated artifacts failed validation: ${artifactValidation.errors.map((issue) => issue.code).join(', ')}.`,
-      );
-    }
-
-    const tempFlowDir = `${session.finalFlowDir}.tmp-${session.sessionId}`;
-    await rm(tempFlowDir, { recursive: true, force: true });
-    await mkdir(tempFlowDir, { recursive: true });
-    const persisted: RpaGenerationArtifact[] = [];
-    let promoted = false;
-    try {
-      for (const artifact of artifactValidation.artifacts) {
-        const response = await daemonClient.downloadArtifact({ runId, artifactId: artifact.artifactId });
-        if (!response.ok) {
-          throw new WorkflowError(
-            'ARTIFACT_DOWNLOAD_FAILED',
-            `Failed to download generation artifact: ${artifact.fileName}.`,
-          );
-        }
-        const body = await response.text();
-        await writeFile(path.join(tempFlowDir, artifact.fileName), body, 'utf8');
-        persisted.push(artifact);
-      }
-
-      const dsl = JSON.parse(await readFile(path.join(tempFlowDir, 'flow.dsl.json'), 'utf8')) as unknown;
-      const dslValidation = validateRpaDsl(dsl);
-      if (!dslValidation.ok) {
-        throw new WorkflowError(
-          'DSL_INVALID',
-          `Generated DSL failed validation: ${dslValidation.errors.map((issue) => issue.code).join(', ')}.`,
-        );
-      }
-
-      await rename(tempFlowDir, session.finalFlowDir);
-      promoted = true;
-      await store.setArtifacts(
-        sessionId,
-        persisted.map((artifact) => ({
-          artifactId: artifact.artifactId,
-          fileName: artifact.fileName,
-          relativePath: artifact.relativePath,
-          size: artifact.size,
-        })),
-      );
-    } finally {
-      if (!promoted) {
-        await rm(tempFlowDir, { recursive: true, force: true });
-      }
-    }
+        relativePath: artifact.relativePath,
+        size: artifact.size,
+      })),
+    );
   }
 
   async function failSession(sessionId: string, code: string, message: string): Promise<void> {
@@ -324,45 +259,4 @@ async function uploadRecordedScript(input: {
     fileName: 'flow.py',
     targetPath: 'input/flow.py',
   });
-}
-
-function parseQuestionForm(transcript: string): CodegenQuestionForm | null {
-  const match = transcript.match(/<question-form\b([^>]*)>([\s\S]*?)<\/question-form>/);
-  if (!match) return null;
-
-  const attrs = match[1] ?? '';
-  const body = match[2] ?? '';
-  const formId = attr(attrs, 'id') ?? 'rpa-question-form';
-  const version = attr(attrs, 'version');
-  const parsed = JSON.parse(body.trim()) as unknown;
-  if (!isRecord(parsed) || !Array.isArray(parsed.questions)) {
-    throw new WorkflowError('QUESTION_FORM_INVALID', 'Question form payload is invalid.');
-  }
-
-  return {
-    formId,
-    version: typeof parsed.version === 'string' ? parsed.version : version,
-    title: typeof parsed.title === 'string' ? parsed.title : undefined,
-    description: typeof parsed.description === 'string' ? parsed.description : undefined,
-    questions: parsed.questions as CodegenQuestionForm['questions'],
-  };
-}
-
-function attr(value: string, name: string): string | undefined {
-  const match = value.match(new RegExp(`${name}="([^"]+)"`));
-  return match?.[1];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-class WorkflowError extends Error {
-  readonly code: string;
-
-  constructor(code: string, message: string) {
-    super(message);
-    this.name = 'WorkflowError';
-    this.code = code;
-  }
 }

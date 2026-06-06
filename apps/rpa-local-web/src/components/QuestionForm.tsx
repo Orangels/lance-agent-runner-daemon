@@ -1,20 +1,20 @@
 import { useState } from 'react';
 import type {
-  CodegenQuestion,
-  CodegenQuestionAnswers,
-  CodegenQuestionForm as CodegenQuestionFormModel,
-} from '../shared/codegen-types.js';
+  RpaQuestion,
+  RpaQuestionAnswers,
+  RpaQuestionForm as RpaQuestionFormModel,
+} from '../shared/question-form-types.js';
 
 export interface QuestionFormProps {
-  form: CodegenQuestionFormModel;
+  form: RpaQuestionFormModel;
   busy?: boolean;
-  onSubmit: (answers: CodegenQuestionAnswers) => void | Promise<void>;
+  onSubmit: (answers: RpaQuestionAnswers) => void | Promise<void>;
 }
 
 export function QuestionForm({ form, busy = false, onSubmit }: QuestionFormProps) {
-  const [answers, setAnswers] = useState<CodegenQuestionAnswers>(() => initialAnswers(form.questions));
+  const [answers, setAnswers] = useState<RpaQuestionAnswers>(() => initialAnswers(form.questions));
 
-  const updateAnswer = (question: CodegenQuestion, value: string | string[]): void => {
+  const updateAnswer = (question: RpaQuestion, value: string | string[]): void => {
     setAnswers((current) => ({ ...current, [question.id]: value }));
   };
 
@@ -44,9 +44,9 @@ function QuestionField({
   value,
   onChange,
 }: {
-  question: CodegenQuestion;
-  value: CodegenQuestionAnswers[string];
-  onChange: (question: CodegenQuestion, value: string | string[]) => void;
+  question: RpaQuestion;
+  value: RpaQuestionAnswers[string];
+  onChange: (question: RpaQuestion, value: string | string[]) => void;
 }) {
   const label = (
     <span>
@@ -150,7 +150,7 @@ function QuestionField({
   return null;
 }
 
-function initialAnswers(questions: CodegenQuestion[]): CodegenQuestionAnswers {
+function initialAnswers(questions: RpaQuestion[]): RpaQuestionAnswers {
   return Object.fromEntries(
     questions.map((question) => [
       question.id,

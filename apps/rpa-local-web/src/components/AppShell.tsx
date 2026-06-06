@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Bot, Braces, FolderKanban, PlaySquare, Settings, WandSparkles } from 'lucide-react';
 import { CodegenWorkspace } from './CodegenWorkspace.js';
+import { NaturalLanguageWorkspace } from './NaturalLanguageWorkspace.js';
 import { RuntimeVerificationWorkspace } from './RuntimeVerificationWorkspace.js';
 import { StatusBadge } from './StatusBadge.js';
 
@@ -109,6 +110,8 @@ export function AppShell({ activeSectionId, onSectionChange }: AppShellProps) {
 
           {activeSection.id === 'codegen' ? (
             <CodegenWorkspace />
+          ) : activeSection.id === 'natural-language' ? (
+            <NaturalLanguageWorkspace />
           ) : activeSection.id === 'executions' ? (
             <RuntimeVerificationWorkspace />
           ) : (

@@ -186,9 +186,16 @@ select {
   gap: 12px;
 }
 
+.natural-language-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .runtime-workspace__summary,
 .codegen-summary,
 .codegen-control,
+.natural-language-control,
 .daemon-hardening-panel,
 .question-form,
 .execution-control-bar,
@@ -249,6 +256,24 @@ select {
   align-items: end;
   gap: 10px;
   padding: 12px;
+}
+
+.natural-language-control {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(150px, .6fr) minmax(160px, .6fr);
+  gap: 10px;
+  padding: 12px;
+}
+
+.natural-language-control__actions {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.field--wide {
+  grid-column: 1 / -1;
 }
 
 .daemon-hardening-panel,

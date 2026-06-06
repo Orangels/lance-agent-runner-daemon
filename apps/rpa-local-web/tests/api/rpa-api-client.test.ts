@@ -148,6 +148,71 @@ describe('RPA browser API client', () => {
     );
   });
 
+  it('starts, reads, cancels, answers, and repairs natural-language sessions through JSON endpoints', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ sessionId: 'nl_1', flowId: 'case_query', status: 'starting' }))
+      .mockResolvedValueOnce(jsonResponse({ sessionId: 'nl_1', flowId: 'case_query', status: 'needs_input', logs: [] }))
+      .mockResolvedValueOnce(jsonResponse({ sessionId: 'nl_1', status: 'generating' }))
+      .mockResolvedValueOnce(jsonResponse({ sessionId: 'nl_1', status: 'repairing' }))
+      .mockResolvedValueOnce(jsonResponse({ sessionId: 'nl_1', status: 'cancelled' }));
+    const client = new RpaApiClient({ fetchImpl });
+
+    await client.startNaturalLanguageSession({
+      targetUrl: 'https://example.com/cases',
+      flowId: 'case_query',
+      flowName: 'Case query',
+      requirement: 'Search cases.',
+      businessConstraints: 'No writes.',
+      safetyNotes: 'Ask before submit.',
+    });
+    await client.getNaturalLanguageSession('nl_1');
+    await client.submitNaturalLanguageQuestionAnswers('nl_1', {
+      formId: 'qf_1',
+      answers: { date: '2026-06-06' },
+    });
+    await client.repairNaturalLanguageSession('nl_1', {
+      executionId: 'exec_1',
+      instruction: 'Fix selector.',
+    });
+    await client.cancelNaturalLanguageSession('nl_1');
+
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      1,
+      '/api/rpa/nl/sessions',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
+      }),
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      2,
+      '/api/rpa/nl/sessions/nl_1',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      3,
+      '/api/rpa/nl/sessions/nl_1/question-form/answers',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ formId: 'qf_1', answers: { date: '2026-06-06' } }),
+      }),
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      4,
+      '/api/rpa/nl/sessions/nl_1/repair',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ executionId: 'exec_1', instruction: 'Fix selector.' }),
+      }),
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      5,
+      '/api/rpa/nl/sessions/nl_1/cancel',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
   it('reads execution status, logs, and artifacts from expected endpoints', async () => {
     const fetchImpl = vi
       .fn()

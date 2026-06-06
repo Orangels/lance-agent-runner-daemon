@@ -50,10 +50,11 @@ Completed so far:
 - `Codegen 上传加固闭环` is implemented and CC reviewed.
 - `Daemon Generic Review Bundle And Feedback` landed in commit `a60948a`.
 - `RPA Observability Extension And Skill Review Loop` landed in commit `a60948a`, with manifest polish follow-ups documented in commit `9c1165a`.
+- `自然语言生成闭环` is implemented and CC reviewed.
 
 Current planned slice:
 
-- `自然语言生成闭环`.
+- `流程复用与执行闭环`.
 
 ## Implementation Dependency Map
 
@@ -506,11 +507,13 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 
 ---
 
-## Slice: 自然语言生成闭环
+## Slice: 自然语言生成闭环 (Completed)
 
 **Purpose:** Add natural-language script generation using `rpa-script-generate`, confirmation forms, and chrome-devtools-mcp exploration through the RPA profile.
 
 **Execution plan:** `docs/superpowers/plans/2026-06-06-rpa-natural-language-generation-loop.md`
+
+**Status:** Implemented and CC reviewed. Initial CC review found one P1 around natural-language failure transitions; the fix added legal `needs_input/generated -> failed` transitions and regression coverage. CC second review confirmed the P1 was resolved and found no new P0/P1.
 
 **Files likely touched:**
 
@@ -522,17 +525,17 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 
 **Tasks:**
 
-- [ ] Add UI for natural-language target description, target URL, business constraints, and safety notes.
-- [ ] Create the first daemon run with `kind: generate`, `skillId: rpa-script-generate`, and `promptMode: business-context`, using business context that includes original requirement, target URL, business constraints, and stage metadata.
-- [ ] Create confirmation/revision runs with `kind: revise`, `skillId: rpa-script-generate`, and `promptMode: business-context` where the legality matrix permits it; include `previousRunId`, artifact paths, `formAnswers`, and stage metadata.
-- [ ] Pass business context package: original requirement, current prompt, form answers, previous run/artifact paths, exploration notes path, and stage metadata.
-- [ ] Parse `<question-form version="rpa-question-form.v0.1">` from assistant output.
-- [ ] Render `radio`, `checkbox`, `select`, `text`, and `textarea` only.
-- [ ] Submit form answers as ordinary user-visible conversation content and business context for the next run.
-- [ ] Ensure chrome-devtools-mcp is profile-provided through Claude Code config, not daemon core.
-- [ ] Download and validate the same required artifacts as codegen.
-- [ ] Reuse the same verify/executor path.
-- [ ] If verify fails and the user chooses Claude Code repair, create `kind: revise`, `skillId: rpa-script-generate`, `promptMode: business-context`, with execution failure, failed step id, screenshot/log/trace paths, and current DSL/script/config paths.
+- [x] Add UI for natural-language target description, target URL, business constraints, and safety notes.
+- [x] Create the first daemon run with `kind: generate`, `skillId: rpa-script-generate`, and `promptMode: business-context`, using business context that includes original requirement, target URL, business constraints, and stage metadata.
+- [x] Create confirmation/revision runs with `kind: revise`, `skillId: rpa-script-generate`, and `promptMode: business-context` where the legality matrix permits it; include `previousRunId`, artifact paths, `formAnswers`, and stage metadata.
+- [x] Pass business context package: original requirement, current prompt, form answers, previous run/artifact paths, exploration notes path, and stage metadata.
+- [x] Parse `<question-form version="rpa-question-form.v0.1">` from assistant output.
+- [x] Render `radio`, `checkbox`, `select`, `text`, and `textarea` only.
+- [x] Submit form answers as ordinary user-visible conversation content and business context for the next run.
+- [x] Ensure chrome-devtools-mcp is profile-provided through Claude Code config, not daemon core.
+- [x] Download and validate the same required artifacts as codegen.
+- [x] Reuse the same verify/executor path.
+- [x] If verify fails and the user chooses Claude Code repair, create `kind: revise`, `skillId: rpa-script-generate`, `promptMode: business-context`, with execution failure, failed step id, screenshot/log/trace paths, and current DSL/script/config paths.
 
 **Acceptance:**
 
@@ -542,6 +545,26 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 - Production execution uses `flow.hardened.py`; chrome-devtools-mcp is exploration-only.
 
 **Suggested commit:** `Implement natural language RPA generation loop`
+
+**Verification:**
+
+- `pnpm --filter @lance-agent-runner/rpa-local-web exec vitest run tests/server/workflows/question-form-parser.test.ts tests/server/workflows/daemon-run-consumer.test.ts tests/server/workflows/generation-artifact-service.test.ts tests/server/nl-session-store.test.ts tests/server/natural-language-generation-workflow.test.ts tests/server/codegen-hardening-workflow.test.ts tests/components/codegen-workspace.test.tsx`
+- `pnpm --filter @lance-agent-runner/rpa-local-web exec vitest run tests/server/routes/natural-language.test.ts tests/server/server.test.ts`
+- `pnpm --filter @lance-agent-runner/rpa-local-web exec vitest run tests/components/NaturalLanguageWorkspace.test.tsx tests/components/RuntimeVerificationWorkspace.test.tsx tests/App.test.tsx`
+- `pnpm --filter @lance-agent-runner/rpa-local-web typecheck`
+- `pnpm --filter @lance-agent-runner/rpa-local-web test`
+- `pnpm --filter @lance-agent-runner/rpa-local-web build`
+- `pnpm typecheck`
+- `pnpm build`
+- `pnpm test`
+- `git diff --check`
+- Daemon boundary grep for RPA/Playwright/DSL/executor/chrome-devtools terms returned no matches under `apps/daemon/src`.
+
+**CC Review Summary:**
+
+- First opus review: no P0; one P1 on failure transitions from `needs_input` / `generated`; boundary verdict passed.
+- Fix: added legal failed transitions, regression tests, duplicate final-flow rejection, and storageRoot redaction for repair failure evidence.
+- Second opus review: prior P1 resolved, no new P0/P1, proceed to commit.
 
 ---
 
