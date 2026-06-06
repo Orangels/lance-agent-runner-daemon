@@ -38,7 +38,11 @@ argument-hint: "[目标系统URL] [业务流程描述]"
 
 在生成 `flow.py` / `flow.hardened.py` 前，必须像 `kami-landing` 一样使用 AskQuestion 收集和确认变量参数、页面分支、字段含义、写操作风险和人工介入点。
 
-如果当前 Claude Code 环境提供真实 AskQuestion 工具，优先使用该工具。若没有真实 AskQuestion 工具，则输出等价的 `<question-form>` JSON，并在 `</question-form>` 后停止本轮，等待用户提交答案。等价表单必须声明 `version="rpa-question-form.v0.1"`，JSON 内也必须包含 `"version": "rpa-question-form.v0.1"`，且 `questions[].id` 必须稳定。不要在表单未回答前生成最终脚本，除非用户明确说“跳过问题”或“直接生成”。
+如果当前 Claude Code 环境提供真实 AskQuestion 工具，优先使用该工具。若没有真实 AskQuestion 工具，则输出等价的 `<question-form>` JSON，并在 `</question-form>` 后停止本轮，等待用户提交答案。等价表单必须声明 `version="rpa-question-form.v0.1"`，JSON 内也必须包含 `"version": "rpa-question-form.v0.1"`，且 `questions[].id` 必须稳定。
+
+`<question-form>` 标签内部只能放**裸 JSON 对象**：不要使用 ```json fenced code block，不要写注释，不要在标签内部混入 Markdown 或解释文字。`questions[].type` 只能使用 `radio`、`checkbox`、`select`、`text`、`textarea`；单选问题使用 `radio`，普通字符串输入使用 `text`，不要使用 `single_choice`、`multiple_choice`、`string`、`direction-cards` 等别名或扩展题型。
+
+不要在表单未回答前生成最终脚本，除非用户明确说“跳过问题”或“直接生成”。
 
 ## 执行步骤
 

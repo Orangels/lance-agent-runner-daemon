@@ -30,3 +30,5 @@ codegen 脚本通常把录制时的日期、单位、查询条件写死。加固
 - 敏感参数按 `mask: true` 写入审计脱敏规则。
 
 确认方式必须优先使用 AskQuestion；如果当前 Claude Code 环境没有真实 AskQuestion 工具，则输出等价的 `<question-form id="rpa-parameterization" version="rpa-question-form.v0.1">` 文本协议。Claude Code 输出合法 JSON 表单并停止本轮；表单标签和 JSON 内容都必须声明 `version` 为 `rpa-question-form.v0.1`；RPA Web 负责渲染；用户提交后以前缀 `[form answers — rpa-parameterization]` 的普通消息回传，Claude Code 再继续更新 DSL、脚本和报告。
+
+`<question-form>` 标签内部只能放裸 JSON 对象，不要包 ```json fenced code block，不要写注释或 Markdown。问题类型只允许 `radio`、`checkbox`、`select`、`text`、`textarea`；单选用 `radio`，字符串输入用 `text`，不要使用 `single_choice`、`multiple_choice`、`string` 等别名。

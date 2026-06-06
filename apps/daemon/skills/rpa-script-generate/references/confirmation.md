@@ -48,7 +48,7 @@
 </question-form>
 ```
 
-如果使用 `<question-form>`，标签属性和 JSON 内容都必须声明 `version` 为 `rpa-question-form.v0.1`。输出 `</question-form>` 后停止本轮生成，等待用户提交。用户答案会作为下一轮普通消息回传，格式类似：
+如果使用 `<question-form>`，标签属性和 JSON 内容都必须声明 `version` 为 `rpa-question-form.v0.1`。标签内部只能放裸 JSON 对象，不要包 ```json fenced code block，不要写注释或 Markdown。问题类型只允许 `radio`、`checkbox`、`select`、`text`、`textarea`；单选用 `radio`，字符串输入用 `text`，不要使用 `single_choice`、`multiple_choice`、`string` 等别名。输出 `</question-form>` 后停止本轮生成，等待用户提交。用户答案会作为下一轮普通消息回传，格式类似：
 
 ```text
 [form answers — rpa-confirmation]
@@ -56,4 +56,3 @@
 ```
 
 不可逆写操作前必须暂停，除非当前模式是 dry-run 且脚本不会真正提交。
-

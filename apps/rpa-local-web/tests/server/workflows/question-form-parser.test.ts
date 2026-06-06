@@ -56,6 +56,50 @@ Need to confirm the workflow details.
     ]);
   });
 
+  it('normalizes common Claude question-form variants from fenced JSON', () => {
+    const form = parseQuestionFormFromTranscript(`<question-form id="rpa-parameterization" version="rpa-question-form.v0.1">
+\`\`\`json
+{
+  "version": "rpa-question-form.v0.1",
+  "title": "确认参数",
+  "questions": [
+    {
+      "id": "city_param_shape",
+      "type": "single_choice",
+      "label": "城市输入参数如何设计？",
+      "options": [
+        { "value": "single_city_name", "label": "合并为单一参数 city_name" }
+      ]
+    },
+    {
+      "id": "default_city",
+      "type": "string",
+      "label": "city_name 的默认值 / 示例值",
+      "default": "北京"
+    }
+  ]
+}
+\`\`\`
+</question-form>`);
+
+    expect(form).toMatchObject({
+      formId: 'rpa-parameterization',
+      title: '确认参数',
+      questions: [
+        {
+          id: 'city_param_shape',
+          type: 'radio',
+          options: [{ value: 'single_city_name', label: '合并为单一参数 city_name' }],
+        },
+        {
+          id: 'default_city',
+          type: 'text',
+          defaultValue: '北京',
+        },
+      ],
+    });
+  });
+
   it('rejects malformed JSON with QUESTION_FORM_INVALID', () => {
     expectQuestionFormInvalid(() =>
       parseQuestionFormFromTranscript(`<question-form id="bad" version="rpa-question-form.v0.1">

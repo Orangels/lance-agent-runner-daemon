@@ -42,7 +42,7 @@ export function parseQuestionFormFromTranscript(transcript: string): RpaQuestion
 
 function parsePayload(body: string): unknown {
   try {
-    return JSON.parse(body.trim()) as unknown;
+    return JSON.parse(stripOptionalJsonFence(body).trim()) as unknown;
   } catch {
     throw new QuestionFormParseError('Question form payload is invalid JSON.');
   }
@@ -55,7 +55,8 @@ function parseQuestion(value: unknown): RpaQuestion {
   if (typeof value.id !== 'string' || value.id.length === 0) {
     throw new QuestionFormParseError('Question id is required.');
   }
-  if (typeof value.type !== 'string' || !isQuestionType(value.type)) {
+  const type = typeof value.type === 'string' ? normalizeQuestionType(value.type) : null;
+  if (type === null) {
     throw new QuestionFormParseError(`Unsupported question type: ${String(value.type)}.`);
   }
   if (typeof value.label !== 'string' || value.label.length === 0) {
@@ -64,33 +65,33 @@ function parseQuestion(value: unknown): RpaQuestion {
 
   const base = {
     id: value.id,
-    type: value.type,
+    type,
     label: value.label,
     required: readBoolean(value.required),
     description: readString(value.description),
   };
 
-  if (isChoiceQuestionType(value.type)) {
+  if (isChoiceQuestionType(type)) {
     if (!Array.isArray(value.options)) {
       throw new QuestionFormParseError('Choice question options are required.');
     }
     return {
       ...base,
-      type: value.type,
+      type,
       options: value.options.map(parseOption),
-      defaultValue: readStringOrStringArray(value.defaultValue),
+      defaultValue: readStringOrStringArray(value.defaultValue) ?? readStringOrStringArray(value.default),
     } satisfies RpaChoiceQuestion;
   }
 
-  if (!isTextQuestionType(value.type)) {
+  if (!isTextQuestionType(type)) {
     throw new QuestionFormParseError(`Unsupported question type: ${String(value.type)}.`);
   }
 
   return {
     ...base,
-    type: value.type,
+    type,
     placeholder: readString(value.placeholder),
-    defaultValue: readString(value.defaultValue),
+    defaultValue: readString(value.defaultValue) ?? readString(value.default),
   } satisfies RpaTextQuestion;
 }
 
@@ -103,6 +104,14 @@ function parseOption(value: unknown): RpaQuestionOption {
 
 function isQuestionType(value: string): value is RpaQuestionType {
   return allowedQuestionTypes.has(value as RpaQuestionType);
+}
+
+function normalizeQuestionType(value: string): RpaQuestionType | null {
+  if (isQuestionType(value)) return value;
+  if (value === 'single_choice') return 'radio';
+  if (value === 'multiple_choice') return 'checkbox';
+  if (value === 'string') return 'text';
+  return null;
 }
 
 function isChoiceQuestionType(value: RpaQuestionType): value is RpaChoiceQuestion['type'] {
@@ -133,4 +142,10 @@ function readStringOrStringArray(value: unknown): string | string[] | undefined 
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function stripOptionalJsonFence(body: string): string {
+  const trimmed = body.trim();
+  const match = trimmed.match(/^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```$/i);
+  return match?.[1] ?? trimmed;
 }
