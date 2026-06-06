@@ -1,5 +1,7 @@
-import type { ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Bot, Braces, FolderKanban, PlaySquare, Settings, WandSparkles } from 'lucide-react';
+import { RpaApiClient } from '../api/rpa-api-client.js';
+import type { RpaConfigResponse, RpaDaemonHealthResponse } from '../shared/rpa-api-types.js';
 import { CodegenWorkspace } from './CodegenWorkspace.js';
 import { FlowAssetsWorkspace } from './FlowAssetsWorkspace.js';
 import { NaturalLanguageWorkspace } from './NaturalLanguageWorkspace.js';
@@ -49,7 +51,7 @@ export const rpaSections: RpaSection[] = [
     id: 'settings',
     label: 'Settings',
     title: '本地配置',
-    description: '后续配置 daemon 地址、profile、浏览器策略、下载目录和调试采集模式。',
+    description: '查看 daemon 地址、profile、浏览器录制命令、本地 storage root 和连接状态。',
     icon: <Settings aria-hidden="true" />,
   },
 ];
@@ -61,6 +63,42 @@ export interface AppShellProps {
 
 export function AppShell({ activeSectionId, onSectionChange }: AppShellProps) {
   const activeSection = rpaSections.find((section) => section.id === activeSectionId) ?? rpaSections[0]!;
+  const apiClient = useMemo(() => new RpaApiClient(), []);
+  const [config, setConfig] = useState<RpaConfigResponse | null>(null);
+  const [daemonHealth, setDaemonHealth] = useState<RpaDaemonHealthResponse | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
+  const [statusLoading, setStatusLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadStatus() {
+      setStatusLoading(true);
+      setStatusError(null);
+      try {
+        const [nextConfig, nextDaemonHealth] = await Promise.all([
+          apiClient.getConfig(),
+          apiClient.getDaemonHealth(),
+        ]);
+        if (cancelled) return;
+        setConfig(nextConfig);
+        setDaemonHealth(nextDaemonHealth);
+      } catch (error) {
+        if (cancelled) return;
+        setStatusError(error instanceof Error ? error.message : 'Unable to load local configuration.');
+      } finally {
+        if (!cancelled) setStatusLoading(false);
+      }
+    }
+
+    void loadStatus();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiClient]);
+
+  const daemonBadge = daemonBadgeState({ daemonHealth, loading: statusLoading, statusError });
 
   return (
     <main className="app-shell">
@@ -71,7 +109,7 @@ export function AppShell({ activeSectionId, onSectionChange }: AppShellProps) {
         </div>
         <div className="topbar__status">
           <StatusBadge tone="ready">Local</StatusBadge>
-          <StatusBadge tone="neutral">Daemon</StatusBadge>
+          <StatusBadge tone={daemonBadge.tone}>{daemonBadge.label}</StatusBadge>
         </div>
       </header>
 
@@ -104,8 +142,18 @@ export function AppShell({ activeSectionId, onSectionChange }: AppShellProps) {
               <h2 id="section-title">{activeSection.title}</h2>
               <p>{activeSection.description}</p>
             </div>
-            <StatusBadge tone={activeSection.id === 'executions' ? 'ready' : 'warning'}>
-              {activeSection.id === 'executions' || activeSection.id === 'flows' ? 'Workbench' : 'Skeleton'}
+            <StatusBadge
+              tone={
+                activeSection.id === 'settings' || activeSection.id === 'executions' || activeSection.id === 'flows'
+                  ? 'ready'
+                  : 'warning'
+              }
+            >
+              {activeSection.id === 'settings'
+                ? 'Configured'
+                : activeSection.id === 'executions' || activeSection.id === 'flows'
+                  ? 'Workbench'
+                  : 'Skeleton'}
             </StatusBadge>
           </div>
 
@@ -118,7 +166,12 @@ export function AppShell({ activeSectionId, onSectionChange }: AppShellProps) {
           ) : activeSection.id === 'executions' ? (
             <RuntimeVerificationWorkspace />
           ) : (
-            <PlaceholderGrid />
+            <SettingsWorkspace
+              config={config}
+              daemonHealth={daemonHealth}
+              loading={statusLoading}
+              statusError={statusError}
+            />
           )}
         </section>
       </section>
@@ -126,24 +179,82 @@ export function AppShell({ activeSectionId, onSectionChange }: AppShellProps) {
   );
 }
 
-function PlaceholderGrid() {
+interface DaemonBadgeInput {
+  daemonHealth: RpaDaemonHealthResponse | null;
+  loading: boolean;
+  statusError: string | null;
+}
+
+function daemonBadgeState(input: DaemonBadgeInput): { label: string; tone: 'neutral' | 'ready' | 'warning' } {
+  if (input.loading) return { label: 'Daemon checking', tone: 'neutral' };
+  if (input.statusError) return { label: 'Daemon unknown', tone: 'warning' };
+  if (input.daemonHealth?.daemonReachable) return { label: 'Daemon connected', tone: 'ready' };
+  return { label: 'Daemon unavailable', tone: 'warning' };
+}
+
+interface SettingsWorkspaceProps {
+  config: RpaConfigResponse | null;
+  daemonHealth: RpaDaemonHealthResponse | null;
+  loading: boolean;
+  statusError: string | null;
+}
+
+function SettingsWorkspace({ config, daemonHealth, loading, statusError }: SettingsWorkspaceProps) {
+  const daemonCommand = config ? [config.codegenCommand, ...config.codegenArgs].join(' ') : 'Loading';
+  const daemonStatus = daemonHealth?.daemonReachable ? 'Connected' : 'Unavailable';
+  const daemonDetail = daemonHealth?.daemonReachable
+    ? `HTTP ${daemonHealth.status ?? 200}`
+    : daemonHealth?.error ?? statusError ?? 'Daemon health has not been loaded yet.';
+
   return (
-    <div className="placeholder-grid">
-      <div className="placeholder-panel">
-        <h3>输入</h3>
-        <div className="placeholder-line" />
-        <div className="placeholder-line placeholder-line--short" />
-      </div>
-      <div className="placeholder-panel">
-        <h3>运行状态</h3>
-        <div className="placeholder-line" />
-        <div className="placeholder-line placeholder-line--short" />
-      </div>
-      <div className="placeholder-panel">
-        <h3>产物</h3>
-        <div className="placeholder-line" />
-        <div className="placeholder-line placeholder-line--short" />
-      </div>
+    <div className="settings-workspace">
+      <section className="settings-panel" aria-labelledby="settings-daemon-heading">
+        <div className="settings-panel__heading">
+          <h3 id="settings-daemon-heading">Daemon connection</h3>
+          <StatusBadge tone={daemonHealth?.daemonReachable ? 'ready' : 'warning'}>
+            {loading ? 'Checking' : daemonStatus}
+          </StatusBadge>
+        </div>
+        <dl className="settings-list">
+          <div>
+            <dt>Daemon base URL</dt>
+            <dd>{config?.daemonBaseUrl ?? 'Loading'}</dd>
+          </div>
+          <div>
+            <dt>Default profile</dt>
+            <dd>{config?.defaultProfileId ?? 'Loading'}</dd>
+          </div>
+          <div>
+            <dt>Daemon configured</dt>
+            <dd>{config ? (config.daemonConfigured ? 'Yes' : 'No') : 'Loading'}</dd>
+          </div>
+          <div>
+            <dt>Health detail</dt>
+            <dd>{daemonDetail}</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section className="settings-panel" aria-labelledby="settings-local-heading">
+        <div className="settings-panel__heading">
+          <h3 id="settings-local-heading">Local runtime</h3>
+          <StatusBadge tone="ready">{config?.mode ?? 'Loading'}</StatusBadge>
+        </div>
+        <dl className="settings-list">
+          <div>
+            <dt>Storage root</dt>
+            <dd>{config?.storageRoot ?? 'Loading'}</dd>
+          </div>
+          <div>
+            <dt>Codegen command</dt>
+            <dd>{daemonCommand}</dd>
+          </div>
+          <div>
+            <dt>Browser/display</dt>
+            <dd>Configured by the server environment used to start RPA Local Web.</dd>
+          </div>
+        </dl>
+      </section>
     </div>
   );
 }

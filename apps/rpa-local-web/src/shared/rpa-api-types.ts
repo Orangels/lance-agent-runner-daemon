@@ -11,6 +11,11 @@ export interface RpaHealthResponse {
 export interface RpaConfigResponse {
   defaultProfileId: string;
   daemonConfigured: boolean;
+  daemonBaseUrl: string;
+  storageRoot: string;
+  codegenCommand: string;
+  codegenArgs: string[];
+  mode: 'development' | 'production' | 'test';
 }
 
 export interface RpaDaemonHealthResponse {
@@ -83,6 +88,17 @@ export interface RpaFlowDetailResponse {
   warnings: RpaValidationIssueSummary[];
   runtimeParams: RpaFlowRuntimeParamsResponse;
   provenance: RpaFlowProvenanceResponse;
+}
+
+export interface RpaFlowSummary {
+  flowId: string;
+  title: string;
+  source: RpaDslDocument['meta']['source'];
+  requiresVerifyBeforeRun: boolean;
+}
+
+export interface RpaFlowListResponse {
+  flows: RpaFlowSummary[];
 }
 
 export interface ImportRpaPackageResponse {

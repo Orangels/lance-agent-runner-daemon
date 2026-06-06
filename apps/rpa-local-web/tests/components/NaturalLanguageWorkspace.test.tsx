@@ -92,7 +92,7 @@ describe('NaturalLanguageWorkspace', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Generate flow' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Verify flow' }));
 
-    expect(await screen.findByText('案件查询')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '案件查询' })).toBeInTheDocument();
     expect(runtimeClient.getFlow).toHaveBeenCalledWith('case_query');
     expect(runtimeClient.startExecution).not.toHaveBeenCalled();
   });
@@ -179,6 +179,10 @@ class FakeNaturalLanguageClient {
 
 class FakeRuntimeClient implements RuntimeVerificationApiClient {
   private handler?: (event: RpaExecutionEvent) => void;
+
+  readonly listFlows = vi.fn(async () => ({
+    flows: [{ flowId: 'case_query', title: '案件查询', source: 'nl' as const, requiresVerifyBeforeRun: false }],
+  }));
 
   readonly getFlow = vi.fn(async (flowId: string): Promise<RpaFlowDetailResponse> => {
     const dsl = createMinimalRpaDsl();

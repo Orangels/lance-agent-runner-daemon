@@ -704,11 +704,12 @@ pnpm build
 pnpm test
 ```
 
+## Recently Completed UI Cleanup
+
+- RPA Web topbar and Settings now read `GET /api/rpa/config` and `GET /api/rpa/daemon/health`; keep future UI improvements in `apps/rpa-local-web` and do not add RPA-specific health semantics to `apps/daemon`.
+
 ## Known Follow-Ups
 
-- Replace the static topbar `Daemon` badge with real status from `GET /api/rpa/daemon/health`, and show degraded/error state when the daemon is unreachable.
-- Replace the `Settings` skeleton with a real local configuration view backed by `GET /api/rpa/config` and `GET /api/rpa/daemon/health`, including daemon base URL, default profile, storage root, codegen command, and browser/display hints.
-- Keep these UI improvements in `apps/rpa-local-web`; do not add RPA-specific health semantics to `apps/daemon`.
 - Add generic daemon profile support for explicit MCP config files, e.g. `profiles[].mcpConfigPaths`, and pass them to Claude Code as `--mcp-config <file>`. This is needed so `rpa-local` can reliably load `chrome-devtools-mcp` in daemon-launched non-interactive `claude -p` runs instead of depending on the system default interactive Claude Code session.
 - Add an RPA profile-owned `mcp.chrome-devtools.json` with fixed `chrome-devtools-mcp` version, disabled usage statistics/update checks/performance CrUX, explicit Chrome/Chromium executable or browser URL, dedicated user data dir, and required display environment.
 - Add a preflight check that runs with the same `CLAUDE_CONFIG_DIR`, `PATH`, `DISPLAY`, `cwd`, and `--mcp-config` that daemon will use, then reports whether `chrome-devtools-mcp` connected and exposed tools. If unavailable, RPA Web should show a clear degraded state and let the workflow either fail fast or use the documented WebFetch/curl fallback.

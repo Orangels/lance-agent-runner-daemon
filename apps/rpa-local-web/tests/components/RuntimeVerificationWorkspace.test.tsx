@@ -22,16 +22,30 @@ describe('RuntimeVerificationWorkspace', () => {
 
     render(<RuntimeVerificationWorkspace client={client} />);
 
-    expect(await screen.findByText('案件查询')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '案件查询' })).toBeInTheDocument();
     expect(screen.getByText('打开查询页')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Flow' })).toHaveDisplayValue('案件查询');
     expect(client.getFlow).toHaveBeenCalledWith('case_query');
+  });
+
+  it('selects an existing flow by title before execution', async () => {
+    const client = new FakeRuntimeClient();
+
+    render(<RuntimeVerificationWorkspace client={client} />);
+    await screen.findByRole('heading', { name: '案件查询' });
+
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Flow' }), 'report_download');
+
+    await waitFor(() => expect(client.getFlow).toHaveBeenLastCalledWith('report_download'));
+    expect(screen.getByRole('combobox', { name: 'Flow' })).toHaveDisplayValue('报表下载');
+    expect(await screen.findByRole('heading', { name: '报表下载' })).toBeInTheDocument();
   });
 
   it('starts verify runs, streams events, and refreshes runtime panels', async () => {
     const client = new FakeRuntimeClient();
 
     render(<RuntimeVerificationWorkspace client={client} />);
-    await screen.findByText('案件查询');
+    await screen.findByRole('heading', { name: '案件查询' });
 
     await userEvent.type(screen.getByLabelText('案件编号'), 'A123');
     await userEvent.click(screen.getByRole('button', { name: /Start/ }));
@@ -81,7 +95,7 @@ describe('RuntimeVerificationWorkspace', () => {
     const client = new FakeRuntimeClient();
 
     render(<RuntimeVerificationWorkspace client={client} />);
-    await screen.findByText('案件查询');
+    await screen.findByRole('heading', { name: '案件查询' });
     await userEvent.type(screen.getByLabelText('案件编号'), 'A123');
     await userEvent.click(screen.getByRole('button', { name: /Start/ }));
     await userEvent.click(screen.getByRole('button', { name: /Cancel/ }));
@@ -96,13 +110,14 @@ describe('RuntimeVerificationWorkspace', () => {
       <RuntimeVerificationWorkspace client={client} flowId="case_query" onFlowIdChange={onFlowIdChange} />,
     );
 
-    expect(await screen.findByDisplayValue('case_query')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '案件查询' })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Flow' })).toHaveValue('case_query');
 
     rerender(<RuntimeVerificationWorkspace client={client} flowId="report_download" onFlowIdChange={onFlowIdChange} />);
 
     await waitFor(() => expect(client.getFlow).toHaveBeenLastCalledWith('report_download'));
-    expect(screen.getByDisplayValue('report_download')).toBeInTheDocument();
-    expect(await screen.findByText('报表下载')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Flow' })).toHaveValue('report_download');
+    expect(await screen.findByRole('heading', { name: '报表下载' })).toBeInTheDocument();
   });
 
   it('auto-starts once per autoStartRequest request id', async () => {
@@ -171,7 +186,7 @@ describe('RuntimeVerificationWorkspace', () => {
     const client = new FakeRuntimeClient();
 
     render(<RuntimeVerificationWorkspace client={client} />);
-    await screen.findByText('案件查询');
+    await screen.findByRole('heading', { name: '案件查询' });
 
     await userEvent.click(screen.getByRole('button', { name: /Start/ }));
 
@@ -195,7 +210,7 @@ describe('RuntimeVerificationWorkspace', () => {
     const onVerifySucceeded = vi.fn();
 
     render(<RuntimeVerificationWorkspace client={client} onVerifySucceeded={onVerifySucceeded} />);
-    await screen.findByText('案件查询');
+    await screen.findByRole('heading', { name: '案件查询' });
     await userEvent.type(screen.getByLabelText('案件编号'), 'A123');
     await userEvent.click(screen.getByRole('button', { name: /Start/ }));
 
@@ -225,7 +240,7 @@ describe('RuntimeVerificationWorkspace', () => {
     const onRepairRequest = vi.fn();
 
     render(<RuntimeVerificationWorkspace client={client} onRepairRequest={onRepairRequest} />);
-    await screen.findByText('案件查询');
+    await screen.findByRole('heading', { name: '案件查询' });
     await userEvent.type(screen.getByLabelText('案件编号'), 'A123');
     await userEvent.click(screen.getByRole('button', { name: /Start/ }));
 
@@ -244,6 +259,13 @@ describe('RuntimeVerificationWorkspace', () => {
 
 class FakeRuntimeClient {
   private handler?: (event: RpaExecutionEvent) => void;
+
+  readonly listFlows = vi.fn(async () => ({
+    flows: [
+      { flowId: 'case_query', title: '案件查询', source: 'codegen' as const, requiresVerifyBeforeRun: false },
+      { flowId: 'report_download', title: '报表下载', source: 'nl' as const, requiresVerifyBeforeRun: false },
+    ],
+  }));
 
   readonly getFlow = vi.fn(async (flowId: string): Promise<RpaFlowDetailResponse> => {
     const dsl = createMinimalRpaDsl();

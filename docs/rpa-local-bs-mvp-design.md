@@ -1334,11 +1334,11 @@ SaaS executor = server worker / Browserless / container worker
 3. 支持 confirmed flow 的 headless run 模式、trace/录像留痕和保留策略。
 4. 文档明确本地 B/S MVP 与 SaaS 后续分支的复用边界。
 
-## RPA Web UI 后续增强
+## RPA Web UI 配置与健康状态
 
-- 当前顶部 `Daemon` 状态和 `Settings` 页仍可能是静态展示或 skeleton。后续应改为真实读取 `GET /api/rpa/config` 和 `GET /api/rpa/daemon/health`。
-- `Settings` 页应展示 daemon base URL、默认 profile、本地 storage root、codegen command、浏览器/display 配置提示，以及 daemon 连接失败时的可读错误。
-- 这些 UI 增强只属于 `apps/rpa-local-web`，不得把 RPA 专属健康状态或配置语义下沉到 `apps/daemon` core。
+- 顶部 `Daemon` 状态读取 `GET /api/rpa/daemon/health`，并在 daemon 不可达时显示 degraded/error state。
+- `Settings` 页读取 `GET /api/rpa/config` 和 `GET /api/rpa/daemon/health`，展示 daemon base URL、默认 profile、本地 storage root、codegen command、浏览器/display 配置提示，以及 daemon 连接失败时的可读错误。
+- 这些 UI 能力只属于 `apps/rpa-local-web`，不得把 RPA 专属健康状态或配置语义下沉到 `apps/daemon` core。
 
 ## 已落地的 skill 草案
 

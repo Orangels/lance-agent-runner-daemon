@@ -20,16 +20,38 @@ def resolve_param(value: str, params: dict, context: dict) -> str:
     return value
 
 
+def default_config_path() -> str:
+    return str(Path(__file__).with_name("config.example.json"))
+
+
+def resolve_headless(config: dict, mode: str, force_headless: bool, force_headed: bool) -> bool:
+    if force_headless:
+        return True
+    if force_headed:
+        return False
+    return bool(config.get("browser", {}).get("headless", mode == "run"))
+
+
+def is_dry_run(mode: str) -> bool:
+    return mode in {"verify", "dry-run"}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="config.json")
+    parser.add_argument("--config", default=default_config_path())
     parser.add_argument("--params", default="run.params.json")
+    parser.add_argument("--execution-dir", default=".")
     parser.add_argument("--mode", choices=["verify", "dry-run", "run"], default="verify")
+    parser.add_argument("--dry-run", action="store_true")
+    headless_group = parser.add_mutually_exclusive_group()
+    headless_group.add_argument("--headless", action="store_true")
+    headless_group.add_argument("--headed", action="store_true")
     args = parser.parse_args()
 
     config = load_json(args.config)
     params = load_json(args.params) if Path(args.params).exists() else {}
-    headless = bool(config.get("browser", {}).get("headless", args.mode == "run"))
+    dry_run = args.dry_run or is_dry_run(args.mode)
+    headless = resolve_headless(config, args.mode, args.headless, args.headed)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless, slow_mo=config.get("browser", {}).get("slow_mo_ms", 0))
@@ -41,6 +63,7 @@ def main() -> None:
         expect(page.locator("body")).to_be_visible()
 
         # Add generated flow steps here from flow.dsl.json.
+        # Use dry_run to skip or pause irreversible write operations.
 
         context.close()
         browser.close()
@@ -48,4 +71,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

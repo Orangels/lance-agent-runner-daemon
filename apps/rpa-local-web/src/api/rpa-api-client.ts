@@ -7,6 +7,7 @@ import type {
   RpaExecutionLogResponse,
   RpaExecutionStatusResponse,
   RpaFlowDetailResponse,
+  RpaFlowListResponse,
   RpaHealthResponse,
   StartRpaExecutionRequest,
   StartRpaExecutionResponse,
@@ -76,6 +77,10 @@ export class RpaApiClient {
 
   getFlow(flowId: string): Promise<RpaFlowDetailResponse> {
     return this.requestJson(`/api/rpa/flows/${encodeURIComponent(flowId)}`);
+  }
+
+  listFlows(): Promise<RpaFlowListResponse> {
+    return this.requestJson('/api/rpa/flows');
   }
 
   getPackageDownloadUrl(flowId: string): string {

@@ -20,6 +20,44 @@ def is_dry_run(mode: str) -> bool:
     return mode in {"verify", "dry-run"}
 
 
+def default_config_path() -> str:
+    return str(Path(__file__).with_name("config.example.json"))
+
+
+def resolve_runtime_path(execution_dir: str, configured_path: str) -> str:
+    path = Path(configured_path)
+    if path.is_absolute():
+        return str(path)
+    return str(Path(execution_dir) / path)
+
+
+def normalize_runtime_config(config: dict[str, Any], execution_dir: str) -> dict[str, Any]:
+    audit_config = config.setdefault("audit", {})
+    audit_config["jsonl_path"] = resolve_runtime_path(
+        execution_dir,
+        audit_config.get("jsonl_path", "runtime/audit.jsonl"),
+    )
+    audit_config["screenshots_dir"] = resolve_runtime_path(
+        execution_dir,
+        audit_config.get("screenshots_dir", "runtime/screenshots"),
+    )
+    audit_config["trace_dir"] = resolve_runtime_path(
+        execution_dir,
+        audit_config.get("trace_dir", "runtime/trace"),
+    )
+    downloads_config = config.setdefault("downloads", {})
+    downloads_config["dir"] = resolve_runtime_path(execution_dir, downloads_config.get("dir", "runtime/downloads"))
+    return config
+
+
+def resolve_headless(config: dict[str, Any], mode: str, force_headless: bool, force_headed: bool) -> bool:
+    if force_headless:
+        return True
+    if force_headed:
+        return False
+    return bool(config.get("browser", {}).get("headless", mode == "run"))
+
+
 def mask_params(params: dict[str, Any], masked_keys: set[str]) -> dict[str, Any]:
     return {key: ("***" if key in masked_keys else value) for key, value in params.items()}
 
@@ -40,10 +78,9 @@ def screenshot(page: Page, config: dict[str, Any], step_id: str) -> str:
     return str(path)
 
 
-def run_flow(page: Page, config: dict[str, Any], params: dict[str, Any], mode: str) -> None:
+def run_flow(page: Page, config: dict[str, Any], params: dict[str, Any], mode: str, dry_run: bool) -> None:
     masked_keys = set(config.get("masked_params", []))
     flow_id = config.get("flow_id", "{{flow_id}}")
-    dry_run = is_dry_run(mode)
 
     step_id = "s1"
     audit(config, {
@@ -107,14 +144,21 @@ def run_flow(page: Page, config: dict[str, Any], params: dict[str, Any], mode: s
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="config.json")
+    parser.add_argument("--config", default=default_config_path())
     parser.add_argument("--params", default="run.params.json")
+    parser.add_argument("--execution-dir", default=".")
     parser.add_argument("--mode", choices=["verify", "dry-run", "run"], default="verify")
+    parser.add_argument("--dry-run", action="store_true")
+    headless_group = parser.add_mutually_exclusive_group()
+    headless_group.add_argument("--headless", action="store_true")
+    headless_group.add_argument("--headed", action="store_true")
     args = parser.parse_args()
 
-    config = load_json(args.config)
+    execution_dir = str(Path(args.execution_dir).resolve())
+    config = normalize_runtime_config(load_json(args.config), execution_dir)
     params = load_json(args.params) if Path(args.params).exists() else {}
-    headless = bool(config.get("browser", {}).get("headless", args.mode == "run"))
+    dry_run = args.dry_run or is_dry_run(args.mode)
+    headless = resolve_headless(config, args.mode, args.headless, args.headed)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless, slow_mo=config.get("browser", {}).get("slow_mo_ms", 0))
@@ -122,9 +166,9 @@ def main() -> None:
         page = context.new_page()
         page.set_default_timeout(config.get("default_timeout_ms", 15000))
         try:
-            run_flow(page, config, params, args.mode)
+            run_flow(page, config, params, args.mode, dry_run)
         except Exception as exc:
-            audit(config, {"status": "failed", "error": str(exc), "mode": args.mode})
+            audit(config, {"status": "failed", "error": str(exc), "mode": args.mode, "dry_run": dry_run})
             raise
         finally:
             context.close()
@@ -133,4 +177,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

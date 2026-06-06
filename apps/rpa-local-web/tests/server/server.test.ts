@@ -41,9 +41,13 @@ describe('RPA local server', () => {
       expect(config).toEqual({
         defaultProfileId: 'rpa-local',
         daemonConfigured: true,
+        daemonBaseUrl: 'http://daemon.local',
+        storageRoot: '.rpa-local-test',
+        codegenCommand: 'playwright',
+        codegenArgs: ['codegen'],
+        mode: 'test',
       });
       expect(JSON.stringify(config)).not.toContain('secret');
-      expect(JSON.stringify(config)).not.toContain('daemon.local');
     });
   });
 

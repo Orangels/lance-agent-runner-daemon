@@ -95,6 +95,11 @@ export async function createRpaLocalServer(input: CreateRpaLocalServerInput): Pr
     const payload: RpaConfigResponse = {
       defaultProfileId: input.config.defaultProfileId,
       daemonConfigured: input.config.daemonBaseUrl.trim().length > 0,
+      daemonBaseUrl: input.config.daemonBaseUrl,
+      storageRoot: input.config.storageRoot,
+      codegenCommand: input.config.codegenCommand,
+      codegenArgs: input.config.codegenArgs,
+      mode: input.config.mode,
     };
     res.json(payload);
   });

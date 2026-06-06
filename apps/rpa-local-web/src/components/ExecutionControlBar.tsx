@@ -1,5 +1,5 @@
 import { Ban, Play } from 'lucide-react';
-import type { RpaExecutionMode } from '../shared/rpa-api-types.js';
+import type { RpaExecutionMode, RpaFlowSummary } from '../shared/rpa-api-types.js';
 
 export interface ExecutionControlBarStartInput {
   flowId: string;
@@ -15,6 +15,8 @@ export interface ExecutionControlBarProps {
   headless: boolean;
   activeExecutionId?: string;
   busy?: boolean;
+  flowOptions?: RpaFlowSummary[];
+  flowsLoading?: boolean;
   onFlowIdChange: (flowId: string) => void;
   onModeChange: (mode: RpaExecutionMode) => void;
   onDryRunChange: (dryRun: boolean) => void;
@@ -30,6 +32,8 @@ export function ExecutionControlBar({
   headless,
   activeExecutionId,
   busy = false,
+  flowOptions = [],
+  flowsLoading = false,
   onFlowIdChange,
   onModeChange,
   onDryRunChange,
@@ -38,7 +42,7 @@ export function ExecutionControlBar({
   onCancel,
 }: ExecutionControlBarProps) {
   const flowIdIsValid = flowId.trim().length > 0;
-  const startDisabled = busy || !flowIdIsValid;
+  const startDisabled = busy || !flowIdIsValid || flowOptions.length === 0;
 
   const setModeDefaults = (nextMode: RpaExecutionMode) => {
     onModeChange(nextMode);
@@ -54,13 +58,22 @@ export function ExecutionControlBar({
   return (
     <section className="execution-control-bar" aria-label="Execution controls">
       <label className="field">
-        <span>Flow ID</span>
-        <input
-          aria-label="Flow ID"
+        <span>Flow</span>
+        <select
+          aria-label="Flow"
+          disabled={busy || flowsLoading || flowOptions.length === 0}
           value={flowId}
           onChange={(event) => onFlowIdChange(event.target.value)}
-          placeholder="case_query"
-        />
+        >
+          {flowsLoading ? <option value="">Loading flows...</option> : null}
+          {!flowsLoading && flowOptions.length === 0 ? <option value="">No flows available</option> : null}
+          {flowOptions.map((flow) => (
+            <option key={flow.flowId} value={flow.flowId}>
+              {flow.title}
+              {flow.requiresVerifyBeforeRun ? ' (verify required)' : ''}
+            </option>
+          ))}
+        </select>
       </label>
 
       <fieldset className="segmented-field" aria-label="Execution mode">

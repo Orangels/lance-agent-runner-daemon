@@ -885,6 +885,64 @@ select {
   flex-wrap: wrap;
 }
 
+.settings-workspace {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.settings-panel {
+  border: 1px solid #d4deeb;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.settings-panel__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #e3e9f2;
+}
+
+.settings-panel__heading h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.settings-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+  margin: 0;
+}
+
+.settings-list div {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.35fr) minmax(0, 1fr);
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #edf2f7;
+}
+
+.settings-list div:last-child {
+  border-bottom: 0;
+}
+
+.settings-list dt {
+  color: #526174;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.settings-list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
 .status-badge {
   display: inline-flex;
   align-items: center;
@@ -920,6 +978,14 @@ select {
   }
 
   .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-list div {
     grid-template-columns: 1fr;
   }
 

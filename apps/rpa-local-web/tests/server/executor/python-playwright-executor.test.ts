@@ -40,28 +40,54 @@ async function createFlow(
 }
 
 async function createFakeRunner(storageRoot: string, behavior: 'success' | 'fail' | 'sleep') {
-  const runnerPath = path.join(storageRoot, `fake-${behavior}.mjs`);
+  const runnerPath = path.join(storageRoot, `fake-${behavior}.sh`);
   const source = `
-import { mkdir, writeFile } from 'node:fs/promises';
-import path from 'node:path';
+#!/bin/sh
+set -eu
 
-const args = process.argv.slice(2);
-const executionDir = args[args.indexOf('--execution-dir') + 1];
-console.log('script path ' + args[0]);
-console.log('execution dir ' + executionDir);
+execution_dir=""
+next_is_execution_dir=0
+args_json="["
+first_arg=1
 
-if ('${behavior}' === 'sleep') {
-  await new Promise((resolve) => setTimeout(resolve, 5000));
-}
+for arg in "$@"; do
+  if [ "$next_is_execution_dir" = "1" ]; then
+    execution_dir="$arg"
+    next_is_execution_dir=0
+  fi
+  if [ "$arg" = "--execution-dir" ]; then
+    next_is_execution_dir=1
+  fi
 
-if ('${behavior}' === 'fail') {
-  console.error('failure at ' + executionDir);
-  process.exit(7);
-}
+  escaped=$(printf '%s' "$arg" | sed 's/\\\\/\\\\\\\\/g; s/"/\\\\"/g')
+  if [ "$first_arg" = "1" ]; then
+    first_arg=0
+  else
+    args_json="$args_json,"
+  fi
+  args_json="$args_json\\"$escaped\\""
+done
+args_json="$args_json]"
 
-await mkdir(path.join(executionDir, 'artifacts', 'screenshots'), { recursive: true });
-await writeFile(path.join(executionDir, 'artifacts', 'screenshots', 'open_query.png'), 'fake screenshot');
-console.log('done');
+printf 'script path %s\\n' "$1"
+printf 'execution dir %s\\n' "$execution_dir"
+printf '%s' "$args_json" > "$execution_dir/args.json"
+
+if [ '${behavior}' = 'sleep' ]; then
+  sleep 5 &
+  sleep_pid=$!
+  trap 'kill "$sleep_pid" 2>/dev/null || true; exit 143' TERM INT
+  wait "$sleep_pid"
+fi
+
+if [ '${behavior}' = 'fail' ]; then
+  printf 'failure at %s\\n' "$execution_dir" >&2
+  exit 7
+fi
+
+mkdir -p "$execution_dir/artifacts/screenshots"
+printf 'fake screenshot' > "$execution_dir/artifacts/screenshots/open_query.png"
+printf 'done\\n'
 `;
   await writeFile(runnerPath, source);
   return runnerPath;
@@ -83,7 +109,7 @@ describe('Python Playwright executor', () => {
     const runnerPath = await createFakeRunner(storageRoot, 'success');
     const executor = createPythonPlaywrightExecutor({
       storageRoot,
-      pythonCommand: process.execPath,
+      pythonCommand: '/bin/sh',
       pythonArgs: [runnerPath],
     });
 
@@ -110,13 +136,41 @@ describe('Python Playwright executor', () => {
     });
   });
 
+  it('passes the local executor CLI contract to generated scripts', async () => {
+    const storageRoot = await mkdtemp(path.join(os.tmpdir(), 'rpa-python-cli-contract-'));
+    await createFlow(storageRoot);
+    const runnerPath = await createFakeRunner(storageRoot, 'success');
+    const executor = createPythonPlaywrightExecutor({
+      storageRoot,
+      pythonCommand: '/bin/sh',
+      pythonArgs: [runnerPath],
+    });
+
+    const started = await executor.start({
+      flowId: 'case_query',
+      mode: 'run',
+      dryRun: true,
+      headless: false,
+      params: { case_no: 'A123' },
+    });
+    await collectUntilTerminal(executor.subscribe(started.executionId));
+
+    const argsJson = JSON.parse(
+      await readFile(path.join(storageRoot, 'executions', started.executionId, 'args.json'), 'utf8'),
+    ) as string[];
+    expect(argsJson).toEqual(
+      expect.arrayContaining(['--mode', 'run', '--params', '--execution-dir', '--dry-run', '--headed']),
+    );
+    expect(argsJson).not.toContain('--headless');
+  });
+
   it('maps non-zero exit to failed status without leaking absolute paths', async () => {
     const storageRoot = await mkdtemp(path.join(os.tmpdir(), 'rpa-python-fail-'));
     await createFlow(storageRoot);
     const runnerPath = await createFakeRunner(storageRoot, 'fail');
     const executor = createPythonPlaywrightExecutor({
       storageRoot,
-      pythonCommand: process.execPath,
+      pythonCommand: '/bin/sh',
       pythonArgs: [runnerPath],
     });
 
@@ -137,7 +191,7 @@ describe('Python Playwright executor', () => {
     const runnerPath = await createFakeRunner(storageRoot, 'sleep');
     const timeoutExecutor = createPythonPlaywrightExecutor({
       storageRoot,
-      pythonCommand: process.execPath,
+      pythonCommand: '/bin/sh',
       pythonArgs: [runnerPath],
     });
 
@@ -152,7 +206,7 @@ describe('Python Playwright executor', () => {
 
     const cancelExecutor = createPythonPlaywrightExecutor({
       storageRoot,
-      pythonCommand: process.execPath,
+      pythonCommand: '/bin/sh',
       pythonArgs: [runnerPath],
     });
     const canceled = await cancelExecutor.start({
@@ -172,7 +226,7 @@ describe('Python Playwright executor', () => {
     const runnerPath = await createFakeRunner(storageRoot, 'success');
     const executor = createPythonPlaywrightExecutor({
       storageRoot,
-      pythonCommand: process.execPath,
+      pythonCommand: '/bin/sh',
       pythonArgs: [runnerPath],
     });
 
@@ -196,7 +250,7 @@ describe('Python Playwright executor', () => {
     const runnerPath = await createFakeRunner(storageRoot, 'success');
     const executor = createPythonPlaywrightExecutor({
       storageRoot,
-      pythonCommand: process.execPath,
+      pythonCommand: '/bin/sh',
       pythonArgs: [runnerPath],
     });
 
@@ -212,7 +266,7 @@ describe('Python Playwright executor', () => {
     const runnerPath = await createFakeRunner(storageRoot, 'success');
     const executor = createPythonPlaywrightExecutor({
       storageRoot,
-      pythonCommand: process.execPath,
+      pythonCommand: '/bin/sh',
       pythonArgs: [runnerPath],
     });
 
@@ -235,7 +289,7 @@ describe('Python Playwright executor', () => {
     const runnerPath = await createFakeRunner(storageRoot, 'success');
     const executor = createPythonPlaywrightExecutor({
       storageRoot,
-      pythonCommand: process.execPath,
+      pythonCommand: '/bin/sh',
       pythonArgs: [runnerPath],
     });
 
@@ -258,7 +312,7 @@ describe('Python Playwright executor', () => {
     const runnerPath = await createFakeRunner(storageRoot, 'success');
     const executor = createPythonPlaywrightExecutor({
       storageRoot,
-      pythonCommand: process.execPath,
+      pythonCommand: '/bin/sh',
       pythonArgs: [runnerPath],
     });
 

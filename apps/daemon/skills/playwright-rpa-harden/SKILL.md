@@ -114,9 +114,14 @@ role > label > placeholder > text > testid > id > css
 
 脚本必须支持：
 
-- `--mode verify|dry-run|run`。
-- `--config config.json`。
-- `--params run.params.json`。
+- 本地 executor 调用协议：
+  `flow.hardened.py --mode verify|run --params <executionDir>/run.params.json --execution-dir <executionDir> [--dry-run] [--headed|--headless]`。
+- `--mode verify|dry-run|run`，其中 executor 只传 `verify|run`，脚本可额外兼容 `dry-run`。
+- `--params run.params.json`，读取运行时业务参数。
+- `--execution-dir <executionDir>`，所有审计日志、截图、trace、录像、下载等执行期产物必须写入该目录下。
+- `--dry-run`，即使 `--mode run` 也必须强制跳过或暂停不可逆写操作。
+- `--headed` / `--headless`，覆盖配置文件和 mode 默认值；`--headed` 用于用户可视化验证，`--headless` 用于后台执行。
+- 可选 `--config <path>`；未传时默认读取脚本同目录的 `config.example.json`，不要假设执行目录里有 `config.json`。
 - JSONL 审计日志。
 - 每步截图或失败截图。
 - trace/录像配置入口。
@@ -140,4 +145,3 @@ role > label > placeholder > text > testid > id > css
 - 不把 xpath 或 css 美化成“已加固”，无法替换就显式告警。
 - 不把重试加到不可幂等写操作上。
 - DSL 是前端展示、导入导出、审计、验证的单一事实源。
-

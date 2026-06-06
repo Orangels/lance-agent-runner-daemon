@@ -1,7 +1,9 @@
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import type { Express, Response } from 'express';
 import type {
   RpaFlowDetailResponse,
+  RpaFlowListResponse,
+  RpaFlowSummary,
   RpaValidationIssueSummary,
 } from '../../shared/rpa-api-types.js';
 import type { RpaDslDocument } from '../../shared/dsl-schema.js';
@@ -34,6 +36,17 @@ class RpaFlowRouteError extends Error {
 
 export function registerFlowRoutes(app: Express, options: RegisterFlowRoutesOptions): void {
   const flowsRoot = resolveFlowsRoot(options.storageRoot);
+
+  app.get('/api/rpa/flows', async (_req, res) => {
+    try {
+      const payload: RpaFlowListResponse = {
+        flows: await listFlowSummaries(options.storageRoot),
+      };
+      res.json(payload);
+    } catch (error) {
+      sendError(res, error, options.storageRoot);
+    }
+  });
 
   app.get('/api/rpa/flows/:flowId', async (req, res) => {
     try {
@@ -80,6 +93,48 @@ export function registerFlowRoutes(app: Express, options: RegisterFlowRoutesOpti
       sendError(res, error, options.storageRoot);
     }
   });
+}
+
+async function listFlowSummaries(storageRoot: string): Promise<RpaFlowSummary[]> {
+  const flowsRoot = resolveFlowsRoot(storageRoot);
+  let entries: Array<{ name: string; isDirectory(): boolean }>;
+  try {
+    entries = await readdir(flowsRoot, { withFileTypes: true });
+  } catch (error) {
+    if (isNodeError(error) && error.code === 'ENOENT') return [];
+    throw new RpaFlowRouteError('FLOW_LIST_FAILED', 'Failed to list flows.');
+  }
+
+  const summaries: RpaFlowSummary[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+
+    let flowId: string;
+    try {
+      flowId = safeFlowId(entry.name);
+    } catch {
+      continue;
+    }
+
+    try {
+      const dslPath = resolveFlowArtifactPath(flowsRoot, flowId, 'flow.dsl.json');
+      const dsl = await readDsl(dslPath);
+      const validation = validateRpaDsl(dsl);
+      if (!validation.ok) continue;
+      const safeDsl = dsl as RpaDslDocument;
+      const metadata = await readFlowLocalMetadata(resolveFlowDir(storageRoot, flowId), flowId);
+      summaries.push({
+        flowId,
+        title: safeDsl.meta.title,
+        source: safeDsl.meta.source,
+        requiresVerifyBeforeRun: metadata.requiresVerifyBeforeRun,
+      });
+    } catch {
+      continue;
+    }
+  }
+
+  return summaries.sort((left, right) => left.flowId.localeCompare(right.flowId));
 }
 
 function parseFlowId(input: string | undefined): string {

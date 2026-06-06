@@ -6,6 +6,7 @@ import type {
   RpaExecutionMode,
   RpaExecutionStatus,
   RpaFlowDetailResponse,
+  RpaFlowSummary,
   StartRpaExecutionRequest,
   StartRpaExecutionResponse,
 } from '../shared/rpa-api-types.js';
@@ -19,6 +20,7 @@ import { StatusBadge } from './StatusBadge.js';
 import { StepList } from './StepList.js';
 
 export interface RuntimeVerificationApiClient {
+  listFlows(): Promise<{ flows: RpaFlowSummary[] }>;
   getFlow(flowId: string): Promise<RpaFlowDetailResponse>;
   startExecution(input: StartRpaExecutionRequest): Promise<StartRpaExecutionResponse>;
   cancelExecution(executionId: string): Promise<{ ok: true }>;
@@ -65,7 +67,7 @@ interface CurrentExecutionContext {
 }
 
 export function RuntimeVerificationWorkspace({
-  initialFlowId = 'case_query',
+  initialFlowId = '',
   flowId: controlledFlowId,
   onFlowIdChange,
   autoStartRequest,
@@ -90,7 +92,10 @@ export function RuntimeVerificationWorkspace({
   const [paramErrors, setParamErrors] = useState<Record<string, string>>({});
 
   const [flow, setFlow] = useState<RpaFlowDetailResponse | null>(null);
+  const [flowOptions, setFlowOptions] = useState<RpaFlowSummary[]>([]);
   const [flowError, setFlowError] = useState<string | null>(null);
+  const [flowListError, setFlowListError] = useState<string | null>(null);
+  const [flowsLoading, setFlowsLoading] = useState(false);
   const [flowLoading, setFlowLoading] = useState(false);
 
   const [executionId, setExecutionId] = useState<string | undefined>();
@@ -152,11 +157,32 @@ export function RuntimeVerificationWorkspace({
     [client],
   );
 
+  const loadFlowOptions = useCallback(async () => {
+    setFlowsLoading(true);
+    setFlowListError(null);
+    try {
+      const response = await client.listFlows();
+      setFlowOptions(response.flows);
+      if (controlledFlowId === undefined && flowId.trim().length === 0 && response.flows.length > 0) {
+        setUncontrolledFlowId(response.flows[0]!.flowId);
+      }
+    } catch (error) {
+      setFlowOptions([]);
+      setFlowListError(error instanceof Error ? error.message : 'Failed to load flows.');
+    } finally {
+      setFlowsLoading(false);
+    }
+  }, [client, controlledFlowId, flowId]);
+
+  useEffect(() => {
+    void loadFlowOptions();
+  }, [loadFlowOptions]);
+
   useEffect(() => {
     const trimmedFlowId = flowId.trim();
     if (!trimmedFlowId) {
       setFlow(null);
-      setFlowError('Flow ID is required.');
+      setFlowError(flowOptions.length === 0 ? null : 'Flow selection is required.');
       return;
     }
 
@@ -379,6 +405,8 @@ export function RuntimeVerificationWorkspace({
         busy={busy}
         dryRun={dryRun}
         flowId={flowId}
+        flowOptions={flowOptions}
+        flowsLoading={flowsLoading}
         headless={headless}
         mode={mode}
         onCancel={cancelExecution}
@@ -397,6 +425,7 @@ export function RuntimeVerificationWorkspace({
       />
 
       {flowError ? <p className="runtime-workspace__error">{flowError}</p> : null}
+      {flowListError ? <p className="runtime-workspace__error">{flowListError}</p> : null}
       {runtimeError ? <p className="runtime-workspace__error">{runtimeError}</p> : null}
       {onRepairRequest && executionId && executionStatus === 'failed' ? (
         <div className="runtime-workspace__actions">

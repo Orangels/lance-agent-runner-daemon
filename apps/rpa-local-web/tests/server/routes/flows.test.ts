@@ -35,6 +35,65 @@ function dslWithWarningAndStorageState(storageRoot: string): RpaDslDocument {
 }
 
 describe('RPA flow detail routes', () => {
+  it('lists existing valid flows for execution selection without exposing paths', async () => {
+    const storageRoot = await mkdtemp(path.join(os.tmpdir(), 'rpa-flow-route-list-'));
+    const caseDsl = createMinimalRpaDsl();
+    const reportDsl: RpaDslDocument = {
+      ...createMinimalRpaDsl(),
+      flow_id: 'report_download',
+      meta: {
+        ...createMinimalRpaDsl().meta,
+        title: '报表下载',
+        source: 'nl',
+      },
+    };
+    await writeFlowDsl(storageRoot, reportDsl);
+    await writeFlowDsl(storageRoot, caseDsl);
+    await writeFlowLocalMetadata(path.join(storageRoot, 'flows', reportDsl.flow_id), {
+      schemaVersion: 'rpa-flow-local.v0.1',
+      flowId: reportDsl.flow_id,
+      source: 'imported',
+      createdAt: '2026-06-06T00:00:00.000Z',
+      requiresVerifyBeforeRun: true,
+      imported: {
+        originalFlowId: 'report_download',
+        packageCreatedAt: '2026-06-05T00:00:00.000Z',
+        packageSha256: 'sha256:def',
+        packageFileName: 'report_download.rpa.zip',
+      },
+    });
+
+    const { status, payload } = await requestFlowList(storageRoot);
+
+    expect(status).toBe(200);
+    expect(payload).toEqual({
+      flows: [
+        {
+          flowId: 'case_query',
+          title: '案件查询',
+          source: 'codegen',
+          requiresVerifyBeforeRun: false,
+        },
+        {
+          flowId: 'report_download',
+          title: '报表下载',
+          source: 'nl',
+          requiresVerifyBeforeRun: true,
+        },
+      ],
+    });
+    expect(JSON.stringify(payload)).not.toContain(storageRoot);
+  });
+
+  it('returns an empty list when no local flows exist', async () => {
+    const storageRoot = await mkdtemp(path.join(os.tmpdir(), 'rpa-flow-route-empty-list-'));
+
+    const { status, payload } = await requestFlowList(storageRoot);
+
+    expect(status).toBe(200);
+    expect(payload).toEqual({ flows: [] });
+  });
+
   it('returns a safe validated flow detail response with DSL steps and warnings', async () => {
     const storageRoot = await mkdtemp(path.join(os.tmpdir(), 'rpa-flow-route-detail-'));
     await writeFlowDsl(storageRoot, dslWithWarningAndStorageState(storageRoot));
@@ -145,7 +204,22 @@ async function requestFlow(storageRoot: string, flowId: string): Promise<{ statu
   return { status: res.statusCode, payload: res.payload };
 }
 
-type RouteHandler = (req: { params: { flowId: string } }, res: MockResponse) => Promise<void> | void;
+async function requestFlowList(storageRoot: string): Promise<{ status: number; payload: any }> {
+  const routes = new Map<string, RouteHandler>();
+  const app = {
+    get: vi.fn((route: string, handler: RouteHandler) => {
+      routes.set(route, handler);
+      return app;
+    }),
+  } as unknown as Express;
+  registerFlowRoutes(app, { storageRoot });
+
+  const res = createMockResponse();
+  await routes.get('/api/rpa/flows')?.({ params: {} }, res);
+  return { status: res.statusCode, payload: res.payload };
+}
+
+type RouteHandler = (req: { params: Record<string, string | undefined> }, res: MockResponse) => Promise<void> | void;
 
 interface MockResponse {
   statusCode: number;

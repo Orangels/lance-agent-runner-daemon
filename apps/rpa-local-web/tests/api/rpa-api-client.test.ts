@@ -12,13 +12,26 @@ function jsonResponse(payload: unknown) {
 describe('RPA browser API client', () => {
   it('reads local config from the RPA BFF', async () => {
     const fetchImpl = vi.fn(async () =>
-      jsonResponse({ defaultProfileId: 'rpa-local', daemonConfigured: true }),
+      jsonResponse({
+        defaultProfileId: 'rpa-local',
+        daemonConfigured: true,
+        daemonBaseUrl: 'http://127.0.0.1:17890',
+        storageRoot: '/tmp/rpa-local',
+        codegenCommand: 'python',
+        codegenArgs: ['-m', 'playwright', 'codegen'],
+        mode: 'development',
+      }),
     );
     const client = new RpaApiClient({ fetchImpl });
 
     await expect(client.getConfig()).resolves.toEqual({
       defaultProfileId: 'rpa-local',
       daemonConfigured: true,
+      daemonBaseUrl: 'http://127.0.0.1:17890',
+      storageRoot: '/tmp/rpa-local',
+      codegenCommand: 'python',
+      codegenArgs: ['-m', 'playwright', 'codegen'],
+      mode: 'development',
     });
     expect(fetchImpl).toHaveBeenCalledWith(
       '/api/rpa/config',
@@ -55,6 +68,29 @@ describe('RPA browser API client', () => {
     await expect(client.getFlow('case_query')).resolves.toMatchObject({ flowId: 'case_query' });
     expect(fetchImpl).toHaveBeenCalledWith(
       '/api/rpa/flows/case_query',
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('lists existing flows from the RPA BFF', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({
+        flows: [
+          { flowId: 'case_query', title: '案件查询', source: 'codegen', requiresVerifyBeforeRun: false },
+          { flowId: 'report_download', title: '报表下载', source: 'nl', requiresVerifyBeforeRun: true },
+        ],
+      }),
+    );
+    const client = new RpaApiClient({ fetchImpl });
+
+    await expect(client.listFlows()).resolves.toEqual({
+      flows: [
+        { flowId: 'case_query', title: '案件查询', source: 'codegen', requiresVerifyBeforeRun: false },
+        { flowId: 'report_download', title: '报表下载', source: 'nl', requiresVerifyBeforeRun: true },
+      ],
+    });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      '/api/rpa/flows',
       expect.objectContaining({ method: 'GET' }),
     );
   });
