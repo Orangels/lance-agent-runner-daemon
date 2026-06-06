@@ -1,16 +1,11 @@
-import type { RpaExecutionMode, RpaExecutionStatus } from '../../shared/rpa-api-types.js';
+import type {
+  RpaExecutionEvent,
+  RpaExecutionEventType,
+  RpaExecutionMode,
+  RpaExecutionStatus,
+} from '../../shared/rpa-api-types.js';
 
-export type { RpaExecutionMode, RpaExecutionStatus };
-
-export type RpaExecutionEventType =
-  | 'run.started'
-  | 'step.started'
-  | 'step.screenshot'
-  | 'step.completed'
-  | 'step.failed'
-  | 'artifact.created'
-  | 'run.completed'
-  | 'log';
+export type { RpaExecutionEvent, RpaExecutionEventType, RpaExecutionMode, RpaExecutionStatus };
 
 export type RpaExecutionParamValue = string | number | boolean | null;
 export type RpaExecutionParamSummaryValue = RpaExecutionParamValue | '[masked]';
@@ -48,19 +43,4 @@ export interface FinishExecutionInput {
   failedStepId?: string;
   error?: { code: string; message: string };
   exitCode?: number | null;
-}
-
-export interface RpaExecutionEvent {
-  type: RpaExecutionEventType;
-  executionId: string;
-  timestamp: string;
-  stepId?: string;
-  stream?: 'stdout' | 'stderr';
-  message?: string;
-  artifactId?: string;
-  role?: 'screenshot' | 'download' | 'trace' | 'video' | 'log' | 'other';
-  relativePath?: string;
-  status?: RpaExecutionStatus;
-  exitCode?: number | null;
-  sequence?: number;
 }

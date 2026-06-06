@@ -46,10 +46,11 @@ Completed so far:
 - `RPA Workspace Package Skeleton` landed in commit `e75a5ef`.
 - `RPA DSL And Artifact Contract` landed in commit `b39829d`.
 - `RPA Execution Backend And Local Executor` landed in commit `30c49da`.
+- `Minimal Runtime Verification UI` completed in the current implementation commit.
 
 Next planned slice:
 
-- `Minimal Runtime Verification UI`.
+- `Codegen 上传加固闭环`.
 
 ## Implementation Dependency Map
 
@@ -311,6 +312,8 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 
 **Purpose:** Provide the minimal verification display that codegen and natural-language loops depend on: step list, current log stream, current screenshot, and execution status.
 
+**Status:** Completed in the current implementation commit.
+
 **Execution plan:** `docs/superpowers/plans/2026-06-06-rpa-runtime-verification-ui.md`
 
 **Files likely touched:**
@@ -336,6 +339,10 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 - Daily run can be executed headless without real-time visual demo.
 - Failed step links to log, screenshot reference, and DSL step id.
 - Codegen and natural-language workflow slices can reuse this UI instead of inventing separate verification views.
+
+**Verification:** targeted slice tests, full RPA web tests, RPA web typecheck/build, root `pnpm typecheck`, root `pnpm build`, daemon boundary grep, test-layout checks, and `git diff --check` passed. Full RPA web tests were run outside the sandbox because server tests require local port listening and child process I/O.
+
+**CC review:** initial review found one P1 around missing `RuntimeVerificationWorkspace` reuse props (`flowId`, `onFlowIdChange`, `autoStartRequest`). The implementation was updated with controlled flow id support, auto-start by request id, component-level sequence dedupe, and tests. Directed re-review reported the P1 resolved, no new P0/P1, and approved commit.
 
 **Suggested commit:** `Add minimal RPA verification UI`
 

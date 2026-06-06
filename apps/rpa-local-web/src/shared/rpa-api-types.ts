@@ -1,3 +1,5 @@
+import type { RpaDslDocument } from './dsl-schema.js';
+
 export interface RpaHealthResponse {
   ok: true;
   app: 'rpa-local-web';
@@ -17,6 +19,49 @@ export interface RpaDaemonHealthResponse {
 
 export type RpaExecutionMode = 'verify' | 'run';
 export type RpaExecutionStatus = 'queued' | 'running' | 'canceling' | 'succeeded' | 'failed' | 'canceled' | 'timed_out';
+
+export const rpaExecutionEventTypes = [
+  'run.started',
+  'step.started',
+  'step.screenshot',
+  'step.completed',
+  'step.failed',
+  'artifact.created',
+  'run.completed',
+  'log',
+] as const;
+
+export type RpaExecutionEventType = (typeof rpaExecutionEventTypes)[number];
+
+export interface RpaExecutionEvent {
+  type: RpaExecutionEventType;
+  executionId: string;
+  timestamp: string;
+  stepId?: string;
+  stream?: 'stdout' | 'stderr';
+  message?: string;
+  artifactId?: string;
+  role?: 'screenshot' | 'download' | 'trace' | 'video' | 'log' | 'other';
+  relativePath?: string;
+  status?: RpaExecutionStatus;
+  exitCode?: number | null;
+  sequence?: number;
+}
+
+export interface RpaValidationIssueSummary {
+  severity: 'error' | 'warning';
+  code: string;
+  path: string;
+  message: string;
+}
+
+export interface RpaFlowDetailResponse {
+  flowId: string;
+  title: string;
+  source: RpaDslDocument['meta']['source'];
+  dsl: RpaDslDocument;
+  warnings: RpaValidationIssueSummary[];
+}
 
 export interface StartRpaExecutionRequest {
   flowId: string;

@@ -21,5 +21,14 @@ describe('RPA local web app shell', () => {
       'true',
     );
     expect(screen.getByText('用业务描述生成 RPA 流程')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Executions' }));
+
+    expect(screen.getByRole('tab', { name: 'Executions' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    expect(screen.getByRole('region', { name: 'Execution controls' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Flow ID')).toHaveValue('case_query');
   });
 });

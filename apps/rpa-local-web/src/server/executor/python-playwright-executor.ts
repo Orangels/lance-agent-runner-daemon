@@ -9,7 +9,7 @@ import type {
 } from '../../shared/rpa-api-types.js';
 import type { RpaDslDocument } from '../../shared/dsl-schema.js';
 import { requiredGenerationArtifactNames } from '../../shared/artifacts.js';
-import { resolveFlowArtifactPath, safeFlowId } from '../flow-store.js';
+import { resolveFlowArtifactPath, resolveFlowsRoot, safeFlowId } from '../flow-store.js';
 import { validateRpaDsl } from '../validators/dsl-validator.js';
 import {
   findCurrentScreenshot,
@@ -73,7 +73,7 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 
 export function createPythonPlaywrightExecutor(options: PythonPlaywrightExecutorOptions): RpaLocalExecutor {
   const storageRoot = path.resolve(options.storageRoot);
-  const flowsRoot = path.join(storageRoot, 'flows');
+  const flowsRoot = resolveFlowsRoot(storageRoot);
   const store = createFileExecutionStore({ storageRoot });
   const activeProcesses = new Map<string, ManagedProcessHandle>();
   const pendingCancelRequests = new Set<string>();

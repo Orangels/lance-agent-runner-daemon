@@ -7,11 +7,29 @@ import { createMinimalRpaDsl } from '../../src/shared/dsl-schema.js';
 import {
   buildRpaPackageManifest,
   resolveFlowArtifactPath,
+  resolveFlowsRoot,
   safeFlowId,
   writeJsonFile,
 } from '../../src/server/flow-store.js';
 
 describe('RPA flow store helpers', () => {
+  it('resolves the shared flows root under storage root', async () => {
+    const storageRoot = await mkdtemp(path.join(os.tmpdir(), 'rpa-flow-root-'));
+
+    expect(resolveFlowsRoot(storageRoot)).toBe(path.join(path.resolve(storageRoot), 'flows'));
+  });
+
+  it('resolves flow artifacts under a precomputed flows root without double joining flows', async () => {
+    const storageRoot = await mkdtemp(path.join(os.tmpdir(), 'rpa-flow-artifact-root-'));
+    const flowsRoot = resolveFlowsRoot(storageRoot);
+
+    const resolved = resolveFlowArtifactPath(flowsRoot, 'case_query', 'flow.dsl.json');
+
+    expect(resolved).toBe(path.join(flowsRoot, 'case_query', 'flow.dsl.json'));
+    expect(resolved).toContain(path.join(storageRoot, 'flows', 'case_query'));
+    expect(resolved).not.toContain(path.join('flows', 'flows'));
+  });
+
   it('validates flow ids and confines artifact paths to the flow directory', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'rpa-flow-store-'));
 

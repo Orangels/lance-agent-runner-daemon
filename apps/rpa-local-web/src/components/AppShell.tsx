@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Bot, Braces, FolderKanban, PlaySquare, Settings, WandSparkles } from 'lucide-react';
+import { RuntimeVerificationWorkspace } from './RuntimeVerificationWorkspace.js';
 import { StatusBadge } from './StatusBadge.js';
 
 export type RpaSectionId = 'codegen' | 'natural-language' | 'flows' | 'executions' | 'settings';
@@ -100,28 +101,36 @@ export function AppShell({ activeSectionId, onSectionChange }: AppShellProps) {
               <h2 id="section-title">{activeSection.title}</h2>
               <p>{activeSection.description}</p>
             </div>
-            <StatusBadge tone="warning">Skeleton</StatusBadge>
+            <StatusBadge tone={activeSection.id === 'executions' ? 'ready' : 'warning'}>
+              {activeSection.id === 'executions' ? 'Workbench' : 'Skeleton'}
+            </StatusBadge>
           </div>
 
-          <div className="placeholder-grid">
-            <div className="placeholder-panel">
-              <h3>输入</h3>
-              <div className="placeholder-line" />
-              <div className="placeholder-line placeholder-line--short" />
-            </div>
-            <div className="placeholder-panel">
-              <h3>运行状态</h3>
-              <div className="placeholder-line" />
-              <div className="placeholder-line placeholder-line--short" />
-            </div>
-            <div className="placeholder-panel">
-              <h3>产物</h3>
-              <div className="placeholder-line" />
-              <div className="placeholder-line placeholder-line--short" />
-            </div>
-          </div>
+          {activeSection.id === 'executions' ? <RuntimeVerificationWorkspace /> : <PlaceholderGrid />}
         </section>
       </section>
     </main>
+  );
+}
+
+function PlaceholderGrid() {
+  return (
+    <div className="placeholder-grid">
+      <div className="placeholder-panel">
+        <h3>输入</h3>
+        <div className="placeholder-line" />
+        <div className="placeholder-line placeholder-line--short" />
+      </div>
+      <div className="placeholder-panel">
+        <h3>运行状态</h3>
+        <div className="placeholder-line" />
+        <div className="placeholder-line placeholder-line--short" />
+      </div>
+      <div className="placeholder-panel">
+        <h3>产物</h3>
+        <div className="placeholder-line" />
+        <div className="placeholder-line placeholder-line--short" />
+      </div>
+    </div>
   );
 }

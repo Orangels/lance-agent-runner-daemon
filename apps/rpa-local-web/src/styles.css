@@ -20,6 +20,11 @@ button {
   font: inherit;
 }
 
+input,
+textarea {
+  font: inherit;
+}
+
 .app-shell {
   min-height: 100vh;
   display: flex;
@@ -168,6 +173,461 @@ button {
   width: 62%;
 }
 
+.runtime-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.runtime-workspace__summary,
+.execution-control-bar,
+.rpa-step-list,
+.rpa-screenshot-panel,
+.rpa-execution-log-panel,
+.rpa-artifact-panel {
+  border: 1px solid #d7dee8;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.runtime-workspace__summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.runtime-workspace__summary h3,
+.rpa-step-list h3,
+.rpa-screenshot-panel h3,
+.rpa-execution-log-panel h3,
+.rpa-artifact-panel h3 {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.runtime-workspace__summary p {
+  margin: 4px 0 0;
+  color: #5b6677;
+  font-size: 12px;
+}
+
+.runtime-workspace__error,
+.field-error {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #f2b8ad;
+  border-radius: 6px;
+  color: #8d2b1f;
+  background: #fff1ef;
+  font-size: 12px;
+}
+
+.execution-control-bar {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.1fr) minmax(170px, auto) auto auto minmax(220px, 1.4fr) auto;
+  align-items: end;
+  gap: 10px;
+  padding: 12px;
+}
+
+.field,
+.checkbox-field,
+.segmented-field {
+  min-width: 0;
+}
+
+.field,
+.checkbox-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.field span,
+.checkbox-field span,
+.segmented-field legend,
+.rpa-execution-log-panel__stream span {
+  color: #526174;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.field input,
+.field textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #cfd8e5;
+  border-radius: 5px;
+  background: #ffffff;
+  color: #1c2430;
+}
+
+.field input {
+  height: 36px;
+  padding: 7px 9px;
+}
+
+.field textarea {
+  min-height: 60px;
+  resize: vertical;
+  padding: 7px 9px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+}
+
+.segmented-field {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.segmented-field legend {
+  grid-column: 1 / -1;
+  margin-bottom: 1px;
+}
+
+.segmented-field label {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid #cfd8e5;
+  border-radius: 5px;
+  background: #f8fafc;
+  cursor: pointer;
+}
+
+.checkbox-field {
+  min-height: 36px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 9px;
+  border: 1px solid #cfd8e5;
+  border-radius: 5px;
+  background: #f8fafc;
+}
+
+.execution-control-bar__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.command-button {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 7px 11px;
+  border: 1px solid #2367b1;
+  border-radius: 5px;
+  background: #2367b1;
+  color: #ffffff;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.command-button svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.command-button--secondary {
+  border-color: #c7d2df;
+  background: #ffffff;
+  color: #334155;
+}
+
+.command-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.runtime-workspace__grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.85fr) minmax(320px, 1.4fr) minmax(260px, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.runtime-workspace__side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.rpa-step-list,
+.rpa-screenshot-panel,
+.rpa-execution-log-panel,
+.rpa-artifact-panel {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.rpa-step-list__header,
+.rpa-screenshot-panel__header,
+.rpa-execution-log-panel__header,
+.rpa-artifact-panel__header {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.rpa-step-list__count,
+.rpa-execution-log-panel__count,
+.rpa-artifact-panel__count {
+  color: #526174;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.rpa-step-list__empty,
+.rpa-screenshot-panel__empty,
+.rpa-screenshot-panel__loading,
+.rpa-screenshot-panel__error,
+.rpa-execution-log-panel__empty,
+.rpa-artifact-panel__empty {
+  margin: 0;
+  padding: 14px 12px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.rpa-screenshot-panel__error {
+  color: #8d2b1f;
+}
+
+.rpa-step-list__items,
+.rpa-execution-log-panel__events,
+.rpa-artifact-panel__items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rpa-step-list__item {
+  padding: 10px 12px;
+  border-bottom: 1px solid #eef2f6;
+}
+
+.rpa-step-list__item:last-child {
+  border-bottom: 0;
+}
+
+.rpa-step-list__main,
+.rpa-step-list__meta,
+.rpa-artifact-panel__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.rpa-step-list__id,
+.rpa-step-list__role,
+.rpa-artifact-panel__role {
+  flex: 0 0 auto;
+  color: #526174;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.rpa-step-list__name,
+.rpa-step-list__action,
+.rpa-artifact-panel__link,
+.rpa-artifact-panel__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rpa-step-list__name {
+  color: #1c2430;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.rpa-step-list__meta {
+  justify-content: space-between;
+  margin-top: 6px;
+}
+
+.rpa-step-list__action {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.rpa-step-list__status {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.rpa-step-list__status--pending {
+  color: #526174;
+  background: #eef2f6;
+}
+
+.rpa-step-list__status--running {
+  color: #76510d;
+  background: #fff6d8;
+}
+
+.rpa-step-list__status--succeeded {
+  color: #11623f;
+  background: #e7f7ef;
+}
+
+.rpa-step-list__status--failed {
+  color: #8d2b1f;
+  background: #fff1ef;
+}
+
+.rpa-step-list__message {
+  margin: 6px 0 0;
+  color: #8d2b1f;
+  font-size: 12px;
+}
+
+.rpa-screenshot-panel__stage {
+  position: relative;
+  min-height: 320px;
+  display: grid;
+  place-items: center;
+  padding: 10px;
+  background: #0f172a;
+}
+
+.rpa-screenshot-panel__image {
+  max-width: 100%;
+  max-height: 540px;
+  display: block;
+  object-fit: contain;
+}
+
+.rpa-screenshot-panel__bbox {
+  position: absolute;
+  inset: 20% 20% auto auto;
+  width: 22%;
+  height: 18%;
+  border: 2px solid #f7c948;
+  box-shadow: 0 0 0 2px rgba(247, 201, 72, 0.25);
+  pointer-events: none;
+}
+
+.rpa-execution-log-panel__timeline {
+  max-height: 220px;
+  overflow: auto;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.rpa-execution-log-panel__event {
+  display: grid;
+  grid-template-columns: minmax(86px, 0.8fr) minmax(88px, 0.7fr) minmax(0, 1fr);
+  gap: 7px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #eef2f6;
+  font-size: 12px;
+}
+
+.rpa-execution-log-panel__event:last-child {
+  border-bottom: 0;
+}
+
+.rpa-execution-log-panel__timestamp,
+.rpa-execution-log-panel__type,
+.rpa-execution-log-panel__step,
+.rpa-execution-log-panel__message {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rpa-execution-log-panel__timestamp,
+.rpa-execution-log-panel__step {
+  color: #64748b;
+}
+
+.rpa-execution-log-panel__type {
+  color: #173b73;
+  font-weight: 700;
+}
+
+.rpa-execution-log-panel__message {
+  color: #1c2430;
+}
+
+.rpa-execution-log-panel__streams {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  padding: 10px;
+}
+
+.rpa-execution-log-panel__stream {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.rpa-execution-log-panel__stream textarea {
+  width: 100%;
+  min-height: 76px;
+  resize: vertical;
+  border: 1px solid #cfd8e5;
+  border-radius: 5px;
+  padding: 7px 8px;
+  background: #f8fafc;
+  color: #1c2430;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+}
+
+.rpa-artifact-panel__item {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  padding: 8px 10px;
+  border-bottom: 1px solid #eef2f6;
+  font-size: 12px;
+}
+
+.rpa-artifact-panel__item:last-child {
+  border-bottom: 0;
+}
+
+.rpa-artifact-panel__link {
+  color: #2367b1;
+  font-weight: 700;
+}
+
+.rpa-artifact-panel__size {
+  color: #64748b;
+  white-space: nowrap;
+}
+
 .status-badge {
   display: inline-flex;
   align-items: center;
@@ -227,5 +687,26 @@ button {
 
   .placeholder-grid {
     display: grid;
+  }
+
+  .runtime-workspace__summary,
+  .execution-control-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .runtime-workspace__summary {
+    flex-direction: column;
+  }
+
+  .execution-control-bar {
+    align-items: stretch;
+  }
+
+  .runtime-workspace__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .execution-control-bar__actions {
+    justify-content: flex-start;
   }
 }

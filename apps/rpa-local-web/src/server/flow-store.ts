@@ -16,6 +16,10 @@ export function safeFlowId(flowId: string): string {
   return flowId;
 }
 
+export function resolveFlowsRoot(storageRoot: string): string {
+  return path.join(path.resolve(storageRoot), 'flows');
+}
+
 export function resolveFlowArtifactPath(rootDir: string, flowId: string, artifactName: string): string {
   const safeId = safeFlowId(flowId);
   const flowDir = path.resolve(rootDir, safeId);

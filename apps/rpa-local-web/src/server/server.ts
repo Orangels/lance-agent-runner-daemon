@@ -15,6 +15,7 @@ import {
   type RpaLocalExecutor,
 } from './executor/python-playwright-executor.js';
 import { registerExecutionRoutes } from './routes/executions.js';
+import { registerFlowRoutes } from './routes/flows.js';
 
 export interface CreateRpaLocalServerInput {
   config: RpaLocalServerConfig;
@@ -73,6 +74,7 @@ export async function createRpaLocalServer(input: CreateRpaLocalServerInput): Pr
 
   app.locals.daemonClient = daemonClient;
   app.locals.rpaExecutor = executor;
+  registerFlowRoutes(app, { storageRoot: input.config.storageRoot });
   registerExecutionRoutes(app, executor);
 
   if (input.config.mode === 'development') {
