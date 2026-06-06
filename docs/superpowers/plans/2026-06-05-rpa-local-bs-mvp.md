@@ -45,10 +45,11 @@ Completed so far:
 - Slice 1b `Daemon-Composed Conversation Context` landed in commit `2bb593e`.
 - `RPA Workspace Package Skeleton` landed in commit `e75a5ef`.
 - `RPA DSL And Artifact Contract` landed in commit `b39829d`.
+- `RPA Execution Backend And Local Executor` landed in commit `30c49da`.
 
 Next planned slice:
 
-- `RPA Execution Backend And Local Executor`.
+- `Minimal Runtime Verification UI`.
 
 ## Implementation Dependency Map
 
@@ -261,7 +262,7 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 
 ---
 
-## Slice: RPA Execution Backend And Local Executor
+## Slice: RPA Execution Backend And Local Executor (Completed)
 
 **Purpose:** Implement `rpa-local-executor` as an internal backend module of `apps/rpa-local-web`, not a separate service.
 
@@ -280,21 +281,27 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 
 **Tasks:**
 
-- [ ] Create per-flow and per-execution directories owned by RPA Web, separate from daemon workspace paths.
-- [ ] Implement `executionId`, `daemonRunId`, and `flowId` association.
-- [ ] Implement backend APIs: start verify/run, cancel, status, SSE events, logs, current screenshot, and execution artifact download.
-- [ ] Emit events around `run.started`, `step.started`, `step.screenshot`, `step.completed`, `step.failed`, `artifact.created`, and `run.completed`.
-- [ ] Run Python script with `--mode verify|run`, optional `--dry-run`, and `--params run.params.json`.
-- [ ] Implement timeout, cancellation, stdout/stderr capture, and terminal status handling.
-- [ ] Store execution artifacts under RPA Web execution storage, not daemon `output/`.
+- [x] Create per-flow and per-execution directories owned by RPA Web, separate from daemon workspace paths.
+- [x] Implement `executionId`, `daemonRunId`, and `flowId` association.
+- [x] Implement backend APIs: start verify/run, cancel, status, SSE events, logs, current screenshot, and execution artifact download.
+- [x] Emit events around `run.started`, `log`, `artifact.created`, and `run.completed`; step event types remain reserved for generated scripts/UI integration.
+- [x] Run Python script with `--mode verify|run`, optional `--dry-run`, and `--params run.params.json`.
+- [x] Implement timeout, cancellation, stdout/stderr capture, and terminal status handling.
+- [x] Store execution artifacts under RPA Web execution storage, not daemon `output/`.
 
 **Acceptance:**
 
 - A fake Python script can be started, streamed, cancelled, and inspected through RPA Web backend APIs.
-- Execution records persist enough metadata for review: `daemonRunId`, `flowId`, script/config paths, params redacted summary, mode, headless, dryRun, status, failedStepId.
+- Execution records persist enough metadata for review: `daemonRunId`, `flowId`, params redacted summary, mode, headless, dryRun, status, failedStepId, and terminal errors; internal script/config paths are not exposed through API records.
 - Executor APIs never expose daemon workspace absolute paths.
 - Tests cover successful run, failed run, cancellation, and artifact collection.
 - `.rpa.zip` export package download is intentionally deferred to the flow reuse/import-export slice.
+
+**Implementation commit:** `30c49da`
+
+**Verification:** `pnpm --filter @lance-agent-runner/rpa-local-web test`, `pnpm --filter @lance-agent-runner/rpa-local-web typecheck`, `pnpm --filter @lance-agent-runner/rpa-local-web build`, `pnpm typecheck`, `pnpm build`, and daemon boundary grep passed.
+
+**CC review:** initial review found two P1 issues around SSE disconnect cleanup and route-level terminal streaming coverage. Both were fixed; second review reported no remaining P0/P1 and recommended commit.
 
 **Suggested commit:** `Add RPA local executor backend`
 

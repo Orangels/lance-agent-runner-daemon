@@ -207,7 +207,7 @@ Tests:
 - Modify: `apps/rpa-local-web/src/shared/rpa-api-types.ts`
 - Test: `apps/rpa-local-web/src/server/config.test.ts`
 
-- [ ] **Step 1: Write config tests**
+- [x] **Step 1: Write config tests**
 
 Create `apps/rpa-local-web/src/server/config.test.ts` with tests that assert:
 
@@ -223,7 +223,7 @@ pnpm --filter @lance-agent-runner/rpa-local-web exec vitest run src/server/confi
 
 Expected: FAIL because `storageRoot` does not exist.
 
-- [ ] **Step 2: Add storageRoot config**
+- [x] **Step 2: Add storageRoot config**
 
 Update `RpaLocalServerConfig`:
 
@@ -239,7 +239,7 @@ storageRoot: path.resolve(env.RPA_LOCAL_STORAGE_ROOT ?? '.rpa-local'),
 
 Run the config test again. Expected: PASS.
 
-- [ ] **Step 3: Add shared execution API types**
+- [x] **Step 3: Add shared execution API types**
 
 Update `apps/rpa-local-web/src/shared/rpa-api-types.ts` with:
 
@@ -316,7 +316,7 @@ Expected: PASS.
 - Create: `apps/rpa-local-web/src/server/executor/execution-store.ts`
 - Test: `apps/rpa-local-web/src/server/executor/execution-store.test.ts`
 
-- [ ] **Step 1: Write failing store tests**
+- [x] **Step 1: Write failing store tests**
 
 Test cases:
 
@@ -339,7 +339,7 @@ pnpm --filter @lance-agent-runner/rpa-local-web exec vitest run src/server/execu
 
 Expected: FAIL because executor modules do not exist.
 
-- [ ] **Step 2: Define execution types**
+- [x] **Step 2: Define execution types**
 
 In `execution-types.ts`, import shared status/mode types rather than redefining them:
 
@@ -393,7 +393,7 @@ export interface RpaExecutionEvent {
 }
 ```
 
-- [ ] **Step 3: Implement event formatting**
+- [x] **Step 3: Implement event formatting**
 
 In `execution-events.ts`, implement:
 
@@ -403,7 +403,7 @@ In `execution-events.ts`, implement:
 
 SSE format must use `event: <type>` and `data: <json>`.
 
-- [ ] **Step 4: Implement file-backed execution store**
+- [x] **Step 4: Implement file-backed execution store**
 
 In `execution-store.ts`, implement:
 
@@ -430,7 +430,7 @@ Store requirements:
 - register live buffering before reading `events.jsonl`, then replay history and flush buffered live events whose `sequence` has not already been sent
 - complete async subscriptions on terminal `run.completed`
 
-- [ ] **Step 5: Run store tests**
+- [x] **Step 5: Run store tests**
 
 Run:
 
@@ -447,7 +447,7 @@ Expected: PASS.
 - Create: `apps/rpa-local-web/src/server/executor/process-manager.ts`
 - Test: `apps/rpa-local-web/src/server/executor/process-manager.test.ts`
 
-- [ ] **Step 1: Write failing process-manager tests**
+- [x] **Step 1: Write failing process-manager tests**
 
 Use temporary JavaScript child scripts and `process.execPath` so tests do not require Python:
 
@@ -464,7 +464,7 @@ pnpm --filter @lance-agent-runner/rpa-local-web exec vitest run src/server/execu
 
 Expected: FAIL because `process-manager.ts` does not exist.
 
-- [ ] **Step 2: Implement process manager**
+- [x] **Step 2: Implement process manager**
 
 Implement:
 
@@ -501,7 +501,7 @@ Requirements:
 - cancel sends `SIGTERM`, then `SIGKILL` after a short grace period
 - timeout behaves like cancellation but returns `timedOut: true`
 
-- [ ] **Step 3: Run process-manager tests**
+- [x] **Step 3: Run process-manager tests**
 
 Run:
 
@@ -518,7 +518,7 @@ Expected: PASS.
 - Create: `apps/rpa-local-web/src/server/executor/artifact-collector.ts`
 - Test: `apps/rpa-local-web/src/server/executor/artifact-collector.test.ts`
 
-- [ ] **Step 1: Write failing artifact collector tests**
+- [x] **Step 1: Write failing artifact collector tests**
 
 Test cases:
 
@@ -536,7 +536,7 @@ pnpm --filter @lance-agent-runner/rpa-local-web exec vitest run src/server/execu
 
 Expected: FAIL because collector does not exist.
 
-- [ ] **Step 2: Implement collector**
+- [x] **Step 2: Implement collector**
 
 Implement:
 
@@ -546,7 +546,7 @@ Implement:
 
 Artifact ids should be stable hashes of normalized relative paths, for example `art_<sha256(relativePath).slice(0, 16)>`.
 
-- [ ] **Step 3: Run artifact collector tests**
+- [x] **Step 3: Run artifact collector tests**
 
 Run:
 
@@ -563,7 +563,7 @@ Expected: PASS.
 - Create: `apps/rpa-local-web/src/server/executor/python-playwright-executor.ts`
 - Test: `apps/rpa-local-web/src/server/executor/python-playwright-executor.test.ts`
 
-- [ ] **Step 1: Write failing executor tests**
+- [x] **Step 1: Write failing executor tests**
 
 Set up a temp storage root with:
 
@@ -613,7 +613,7 @@ pnpm --filter @lance-agent-runner/rpa-local-web exec vitest run src/server/execu
 
 Expected: FAIL because executor does not exist.
 
-- [ ] **Step 2: Implement Python Playwright executor**
+- [x] **Step 2: Implement Python Playwright executor**
 
 Implement:
 
@@ -660,7 +660,7 @@ Behavior:
 - collect artifacts after process exit and emit `artifact.created` events
 - terminal event is always `run.completed`
 
-- [ ] **Step 3: Run executor tests**
+- [x] **Step 3: Run executor tests**
 
 Run:
 
@@ -678,7 +678,7 @@ Expected: PASS.
 - Modify: `apps/rpa-local-web/src/server/server.ts`
 - Test: `apps/rpa-local-web/src/server/routes/executions.test.ts`
 
-- [ ] **Step 1: Write failing route tests**
+- [x] **Step 1: Write failing route tests**
 
 Use `createRpaLocalServer({ mode: 'test', storageRoot })` and injected fake executor command.
 
@@ -704,7 +704,7 @@ pnpm --filter @lance-agent-runner/rpa-local-web test -- src/server/routes/execut
 
 Expected: FAIL because routes do not exist.
 
-- [ ] **Step 2: Implement routes**
+- [x] **Step 2: Implement routes**
 
 Implement `registerExecutionRoutes(app, executor)`:
 
@@ -715,7 +715,7 @@ Implement `registerExecutionRoutes(app, executor)`:
 - artifact downloads use `res.download(filePath, artifact.fileName)`
 - no route returns `filePath`, `executionDir`, `flowDir`, daemon workspace path, or storage root
 
-- [ ] **Step 3: Wire routes into server**
+- [x] **Step 3: Wire routes into server**
 
 In `server.ts`:
 
@@ -723,7 +723,7 @@ In `server.ts`:
 - register execution routes before static/Vite middleware
 - allow test injection of executor options without exposing them to browser
 
-- [ ] **Step 4: Run route tests**
+- [x] **Step 4: Run route tests**
 
 Run outside sandbox if port binding is blocked:
 
@@ -741,7 +741,7 @@ Expected: PASS.
 - Modify: `docs/superpowers/plans/2026-06-05-rpa-local-bs-mvp.md` after implementation is complete.
 - Modify: `docs/superpowers/plans/2026-06-06-rpa-execution-backend-local-executor.md` after implementation is complete.
 
-- [ ] **Step 1: Ignore local execution storage**
+- [x] **Step 1: Ignore local execution storage**
 
 Add:
 
@@ -751,7 +751,7 @@ Add:
 
 to `.gitignore`.
 
-- [ ] **Step 2: Run focused tests**
+- [x] **Step 2: Run focused tests**
 
 Run:
 
@@ -769,7 +769,7 @@ pnpm --filter @lance-agent-runner/rpa-local-web test -- src/server/routes/execut
 
 Expected: PASS.
 
-- [ ] **Step 3: Run package verification**
+- [x] **Step 3: Run package verification**
 
 Run:
 
@@ -781,7 +781,7 @@ pnpm --filter @lance-agent-runner/rpa-local-web build
 
 Expected: PASS.
 
-- [ ] **Step 4: Run root verification**
+- [x] **Step 4: Run root verification**
 
 Run:
 
@@ -792,7 +792,7 @@ pnpm build
 
 Expected: PASS.
 
-- [ ] **Step 5: Check daemon boundary**
+- [x] **Step 5: Check daemon boundary**
 
 Run:
 
@@ -802,7 +802,7 @@ rg -n "executionId|RpaExecution|python-playwright|Playwright|flow\\.hardened|run
 
 Expected: no matches.
 
-- [ ] **Step 6: Update plan progress**
+- [x] **Step 6: Update plan progress**
 
 After implementation and verification:
 
@@ -813,18 +813,36 @@ After implementation and verification:
 
 ## Acceptance Checklist
 
-- [ ] `RPA_LOCAL_STORAGE_ROOT` config exists and defaults to `.rpa-local`.
-- [ ] Execution records preserve `executionId`, `flowId`, optional `daemonRunId`, mode, dryRun, headless, status, failedStepId, redacted params summary, and terminal errors.
-- [ ] Runtime params are written to `run.params.json` inside execution storage.
-- [ ] Local process runner uses `spawn` with `shell: false`.
-- [ ] Timeout and cancellation produce terminal statuses.
-- [ ] stdout/stderr are stored and streamed as log events.
-- [ ] SSE emits `run.started`, `log`, `artifact.created`, and `run.completed`; step events are supported by type contract even if fake scripts do not emit all of them yet.
-- [ ] Artifact collector safely lists/downloads files from the execution directory only.
-- [ ] Current screenshot endpoint returns the latest screenshot artifact or 404 when absent.
-- [ ] Execution route responses do not expose daemon workspace absolute paths or RPA Web storage absolute paths.
-- [ ] Fake script tests cover success, failure, timeout, cancellation, and artifact collection.
-- [ ] No code under `apps/daemon/src` imports or interprets RPA execution concepts.
+- [x] `RPA_LOCAL_STORAGE_ROOT` config exists and defaults to `.rpa-local`.
+- [x] Execution records preserve `executionId`, `flowId`, optional `daemonRunId`, mode, dryRun, headless, status, failedStepId, redacted params summary, and terminal errors.
+- [x] Runtime params are written to `run.params.json` inside execution storage.
+- [x] Local process runner uses `spawn` with `shell: false`.
+- [x] Timeout and cancellation produce terminal statuses.
+- [x] stdout/stderr are stored and streamed as log events.
+- [x] SSE emits `run.started`, `log`, `artifact.created`, and `run.completed`; step events are supported by type contract even if fake scripts do not emit all of them yet.
+- [x] Artifact collector safely lists/downloads files from the execution directory only.
+- [x] Current screenshot endpoint returns the latest screenshot artifact or 404 when absent.
+- [x] Execution route responses do not expose daemon workspace absolute paths or RPA Web storage absolute paths.
+- [x] Fake script tests cover success, failure, timeout, cancellation, and artifact collection.
+- [x] No code under `apps/daemon/src` imports or interprets RPA execution concepts.
+
+## Implementation Result
+
+- Implementation commit: `30c49da` (`Add RPA local executor backend`).
+- Verification passed:
+  - `pnpm --filter @lance-agent-runner/rpa-local-web exec vitest run src/server/executor/artifact-collector.test.ts src/server/executor/execution-store.test.ts src/server/executor/process-manager.test.ts src/server/executor/python-playwright-executor.test.ts`
+  - `pnpm --filter @lance-agent-runner/rpa-local-web exec vitest run src/server/routes/executions.test.ts`
+  - `pnpm --filter @lance-agent-runner/rpa-local-web test`
+  - `pnpm --filter @lance-agent-runner/rpa-local-web typecheck`
+  - `pnpm --filter @lance-agent-runner/rpa-local-web build`
+  - `pnpm typecheck`
+  - `pnpm build`
+  - `rg -n "executionId|RpaExecution|python-playwright|Playwright|flow\\.hardened|run\\.params|artifacts/screenshots" apps/daemon/src` returned no matches.
+  - `git diff --check`
+- Claude Code review:
+  - First review found two P1 issues: SSE disconnect cleanup and missing route-level live terminal streaming coverage.
+  - Both were fixed in `routes/executions.ts` and `routes/executions.test.ts`.
+  - Second review reported both P1 issues resolved, no new P0/P1, and recommended commit.
 
 ## CC Review Prompt After Plan
 
