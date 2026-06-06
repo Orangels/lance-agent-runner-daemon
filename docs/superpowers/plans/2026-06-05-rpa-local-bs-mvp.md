@@ -265,6 +265,8 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 
 **Purpose:** Implement `rpa-local-executor` as an internal backend module of `apps/rpa-local-web`, not a separate service.
 
+**Execution plan:** `docs/superpowers/plans/2026-06-06-rpa-execution-backend-local-executor.md`
+
 **Files likely created:**
 
 - Create: `apps/rpa-local-web/src/server/executor/execution-types.ts`
@@ -280,7 +282,7 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 
 - [ ] Create per-flow and per-execution directories owned by RPA Web, separate from daemon workspace paths.
 - [ ] Implement `executionId`, `daemonRunId`, and `flowId` association.
-- [ ] Implement backend APIs: start verify/run, cancel, status, SSE events, logs, current screenshot, artifact download, export package download.
+- [ ] Implement backend APIs: start verify/run, cancel, status, SSE events, logs, current screenshot, and execution artifact download.
 - [ ] Emit events around `run.started`, `step.started`, `step.screenshot`, `step.completed`, `step.failed`, `artifact.created`, and `run.completed`.
 - [ ] Run Python script with `--mode verify|run`, optional `--dry-run`, and `--params run.params.json`.
 - [ ] Implement timeout, cancellation, stdout/stderr capture, and terminal status handling.
@@ -292,6 +294,7 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 - Execution records persist enough metadata for review: `daemonRunId`, `flowId`, script/config paths, params redacted summary, mode, headless, dryRun, status, failedStepId.
 - Executor APIs never expose daemon workspace absolute paths.
 - Tests cover successful run, failed run, cancellation, and artifact collection.
+- `.rpa.zip` export package download is intentionally deferred to the flow reuse/import-export slice.
 
 **Suggested commit:** `Add RPA local executor backend`
 
