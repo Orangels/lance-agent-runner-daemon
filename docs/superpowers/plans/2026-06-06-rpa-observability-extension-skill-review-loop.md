@@ -1180,6 +1180,12 @@ Expected: no P0/P1 before commit.
 
 CC review result: Opus review found no P0/P1 and confirmed the daemon/RPA boundaries. The P2-1 short masked-param text replacement issue was fixed before commit; P2-2 and P2-3 remain follow-up candidates.
 
+Deferred manifest polish:
+
+- Derive `extension-manifest.json` `dslPath` / `scriptPath` from actual daemon bundle manifest/entries instead of relying only on logical convention paths.
+- Record every execution artifact in `largeFiles` with an accurate `included` flag, including files that are inlined when `includeSensitiveFiles=true`.
+- Suggested timing: after the natural-language generation loop is implemented, or before the first real skill-review bundle is used to tune `rpa-script-generate` / `playwright-rpa-harden`.
+
 ## Review Checklist Before Implementation
 
 - [x] Daemon core does not gain RPA-specific semantics.

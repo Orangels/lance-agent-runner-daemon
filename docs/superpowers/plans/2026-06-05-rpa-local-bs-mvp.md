@@ -498,6 +498,8 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 
 **CC review summary:** Opus review found no P0/P1 and confirmed daemon/RPA boundaries. P2-1 short masked-param over-redaction was fixed in this slice; P2-2 manifest logical path parsing and P2-3 largeFiles completeness can be handled later.
 
+**Deferred manifest polish:** After the natural-language generation loop is completed, or before the first real skill-review bundle is used to tune the RPA skills, revisit two bundle-manifest details: derive `dslPath` / `scriptPath` from actual daemon bundle entries instead of treating them only as logical convention paths, and record every execution artifact in `largeFiles` with an accurate `included` flag even when `includeSensitiveFiles=true` inlines the file body.
+
 **Suggested commit:** `Add RPA observability extension`
 
 ---

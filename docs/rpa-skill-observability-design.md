@@ -219,6 +219,13 @@ extensions/
 }
 ```
 
+### 后续 manifest 精细化事项
+
+以下两项不阻塞 MVP 复盘闭环，但建议在自然语言生成闭环完成后、或第一次真实 skill 复盘前补齐：
+
+1. `extension-manifest.json` 中的 `dslPath` / `scriptPath` 目前可以先作为逻辑约定路径使用。后续应从 daemon generic bundle 的实际 `manifest.json` / entries 中解析真实 artifact 路径，再写入 RPA manifest，避免 daemon artifact 布局变化时产生误导性引用。
+2. `largeFiles` manifest 后续应覆盖所有 execution artifact。即使 `includeSensitiveFiles=true` 导致某些文件体被内联，也应写入一条 `largeFiles` 记录，并用 `included: true | false` 表示该文件是否已打包进入 bundle。这样 review bundle 的 manifest 与实际内容完全一致。
+
 ## MVP Route Mapping
 
 RPA 专属复盘导出由 RPA Web 提供，不新增 daemon 的 RPA 专属 API，也不要求 daemon core 理解 DSL、Playwright、selector 或 executor。
