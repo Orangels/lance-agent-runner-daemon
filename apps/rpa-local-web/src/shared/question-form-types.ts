@@ -3,6 +3,7 @@ export type RpaQuestionType = 'text' | 'textarea' | 'radio' | 'checkbox' | 'sele
 export interface RpaQuestionOption {
   label: string;
   value: string;
+  description?: string;
 }
 
 export interface RpaQuestionBase {
@@ -23,6 +24,7 @@ export interface RpaChoiceQuestion extends RpaQuestionBase {
   type: 'radio' | 'checkbox' | 'select';
   options: RpaQuestionOption[];
   defaultValue?: string | string[];
+  maxSelections?: number;
 }
 
 export type RpaQuestion = RpaTextQuestion | RpaChoiceQuestion;

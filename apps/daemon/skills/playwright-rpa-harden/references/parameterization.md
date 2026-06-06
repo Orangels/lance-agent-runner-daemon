@@ -31,4 +31,4 @@ codegen 脚本通常把录制时的日期、单位、查询条件写死。加固
 
 确认方式必须优先使用 AskQuestion；如果当前 Claude Code 环境没有真实 AskQuestion 工具，则输出等价的 `<question-form id="rpa-parameterization" version="rpa-question-form.v0.1">` 文本协议。Claude Code 输出合法 JSON 表单并停止本轮；表单标签和 JSON 内容都必须声明 `version` 为 `rpa-question-form.v0.1`；RPA Web 负责渲染；用户提交后以前缀 `[form answers — rpa-parameterization]` 的普通消息回传，Claude Code 再继续更新 DSL、脚本和报告。
 
-`<question-form>` 标签内部只能放裸 JSON 对象，不要包 ```json fenced code block，不要写注释或 Markdown。问题类型只允许 `radio`、`checkbox`、`select`、`text`、`textarea`；单选用 `radio`，字符串输入用 `text`，不要使用 `single_choice`、`multiple_choice`、`string` 等别名。
+`<question-form>` 必须遵守 RPA Web 的结构化表单协议：本轮只输出一句短说明 + 一个表单 block；标签内部只放合法 JSON 对象，不写注释、不写 trailing comma、不在 JSON 外混入 Markdown，输出时不要包 ```json fenced code block；问题类型输出时只使用 `radio`、`checkbox`、`select`、`text`、`textarea`，不要输出 `direction-cards`；选项可用字符串数组或 `{ "label": "...", "value": "...", "description": "..." }` 对象数组，RPA 场景优先对象数组；`checkbox` 限制选择数量时使用 `maxSelections`。

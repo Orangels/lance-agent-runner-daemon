@@ -34,13 +34,21 @@ argument-hint: "[目标系统URL] [业务流程描述]"
 
 `output/` 只放 daemon 生成/加固 artifacts。脚本运行时产生的审计日志、截图、trace、下载文件属于 executor executionId 产物，默认写入 `runtime/`，不要写入 `output/`。
 
-## AskQuestion 约束
+## AskQuestion / question-form 约束
 
-在生成 `flow.py` / `flow.hardened.py` 前，必须像 `kami-landing` 一样使用 AskQuestion 收集和确认变量参数、页面分支、字段含义、写操作风险和人工介入点。
+在生成 `flow.py` / `flow.hardened.py` 前，必须使用 AskQuestion 或等价结构化表单收集和确认变量参数、页面分支、字段含义、写操作风险和人工介入点。
 
-如果当前 Claude Code 环境提供真实 AskQuestion 工具，优先使用该工具。若没有真实 AskQuestion 工具，则输出等价的 `<question-form>` JSON，并在 `</question-form>` 后停止本轮，等待用户提交答案。等价表单必须声明 `version="rpa-question-form.v0.1"`，JSON 内也必须包含 `"version": "rpa-question-form.v0.1"`，且 `questions[].id` 必须稳定。
+RPA Web 通常没有真实 AskQuestion 工具；此时使用 RPA Web 的 `<question-form>` 文本协议。输出规则是硬约束：
 
-`<question-form>` 标签内部只能放**裸 JSON 对象**：不要使用 ```json fenced code block，不要写注释，不要在标签内部混入 Markdown 或解释文字。`questions[].type` 只能使用 `radio`、`checkbox`、`select`、`text`、`textarea`；单选问题使用 `radio`，普通字符串输入使用 `text`，不要使用 `single_choice`、`multiple_choice`、`string`、`direction-cards` 等别名或扩展题型。
+- 本轮输出只能包含一句很短的说明 + 一个 `<question-form>` block；不要读文件、不要继续生成脚本、不要在 `</question-form>` 后继续解释。
+- `<question-form>` 必须声明稳定 `id`、可读 `title`、`version="rpa-question-form.v0.1"`；JSON 内也必须包含 `"version": "rpa-question-form.v0.1"`。
+- 标签内部只能放一个合法 JSON 对象：不要写注释、不要 trailing comma、不要在 JSON 外混入 Markdown。输出时不要包 ```json fenced code block（RPA Web parser 会兼容，但不要主动这样写）。
+- `questions[].id` 必须稳定；`questions[].label` 面向用户；必要时设置 `required: true`。
+- `questions[].type` 输出时只使用 canonical 类型：`radio`、`checkbox`、`select`、`text`、`textarea`。不要输出 `direction-cards`。普通字符串输入用 `text`。
+- `radio` / `checkbox` / `select` 的 `options` 可以是字符串数组或 `{ "label": "...", "value": "...", "description": "..." }` 对象数组；RPA 场景优先使用对象数组，保证回传值稳定。
+- 多选限制用 `maxSelections`，不要只写在 label 里。
+
+用户答案会作为下一轮普通消息回传，格式类似 `[form answers — rpa-parameterization]`。收到答案后再更新 DSL、脚本和报告。
 
 不要在表单未回答前生成最终脚本，除非用户明确说“跳过问题”或“直接生成”。
 

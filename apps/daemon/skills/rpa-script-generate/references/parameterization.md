@@ -43,7 +43,7 @@ DSL v0.1 没有 `widget` 字段，也不支持 `path`、`file`、`url`、`date_r
 
 参数候选确认必须优先使用 AskQuestion；如果当前 Claude Code 环境没有真实 AskQuestion 工具，则输出等价的 `<question-form id="rpa-parameterization" version="rpa-question-form.v0.1">` 结构化表单；表单标签和 JSON 内容都必须声明 `version` 为 `rpa-question-form.v0.1`，由 RPA Web 渲染后把 `[form answers — rpa-parameterization]` 作为下一轮普通用户消息回传。Claude Code 收到答案后再更新 DSL 和脚本。
 
-`<question-form>` 标签内部只能放裸 JSON 对象，不要包 ```json fenced code block，不要写注释或 Markdown。问题类型只允许 `radio`、`checkbox`、`select`、`text`、`textarea`；单选用 `radio`，字符串输入用 `text`，不要使用 `single_choice`、`multiple_choice`、`string` 等别名。
+`<question-form>` 必须遵守 RPA Web 的结构化表单协议：本轮只输出一句短说明 + 一个表单 block；标签内部只放合法 JSON 对象，不写注释、不写 trailing comma、不在 JSON 外混入 Markdown，输出时不要包 ```json fenced code block；问题类型输出时只使用 `radio`、`checkbox`、`select`、`text`、`textarea`，不要输出 `direction-cards`；选项可用字符串数组或 `{ "label": "...", "value": "...", "description": "..." }` 对象数组，RPA 场景优先对象数组；`checkbox` 限制选择数量时使用 `maxSelections`。
 
 ## 日常执行
 

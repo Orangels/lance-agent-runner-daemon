@@ -126,11 +126,16 @@ function QuestionField({
         <legend>{label}</legend>
         {question.options.map((option) => {
           const selected = Array.isArray(value) ? value : [];
+          const maxReached =
+            typeof question.maxSelections === 'number' &&
+            selected.length >= question.maxSelections &&
+            !selected.includes(option.value);
           return (
             <label key={option.value}>
               <input
                 type="checkbox"
                 value={option.value}
+                disabled={maxReached}
                 checked={selected.includes(option.value)}
                 onChange={(event) => {
                   const next = event.target.checked

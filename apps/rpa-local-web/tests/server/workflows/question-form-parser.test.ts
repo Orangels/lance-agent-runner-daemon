@@ -100,6 +100,57 @@ Need to confirm the workflow details.
     });
   });
 
+  it('accepts lanceDesign-style type aliases, string options, and single-quoted attrs', () => {
+    const form = parseQuestionFormFromTranscript(`<question-form id='rpa-parameterization' title='参数确认' version='rpa-question-form.v0.1'>
+{
+  "version": "rpa-question-form.v0.1",
+  "questions": [
+    { "id": "mode", "type": "single", "label": "执行模式", "options": ["只验证", "直接运行"] },
+    { "id": "fields", "type": "multi", "label": "返回字段", "maxSelections": 2, "options": ["日期", "天气", "温度"] },
+    { "id": "city", "type": "dropdown", "label": "城市", "options": [
+      { "label": "北京", "value": "101010100", "description": "默认城市" }
+    ] },
+    { "id": "note", "type": "paragraph", "label": "补充说明" }
+  ]
+}
+</question-form>`);
+
+    expect(form).toMatchObject({
+      formId: 'rpa-parameterization',
+      version: 'rpa-question-form.v0.1',
+      title: '参数确认',
+      questions: [
+        {
+          id: 'mode',
+          type: 'radio',
+          options: [
+            { label: '只验证', value: '只验证' },
+            { label: '直接运行', value: '直接运行' },
+          ],
+        },
+        {
+          id: 'fields',
+          type: 'checkbox',
+          maxSelections: 2,
+          options: [
+            { label: '日期', value: '日期' },
+            { label: '天气', value: '天气' },
+            { label: '温度', value: '温度' },
+          ],
+        },
+        {
+          id: 'city',
+          type: 'select',
+          options: [{ label: '北京', value: '101010100', description: '默认城市' }],
+        },
+        {
+          id: 'note',
+          type: 'textarea',
+        },
+      ],
+    });
+  });
+
   it('rejects malformed JSON with QUESTION_FORM_INVALID', () => {
     expectQuestionFormInvalid(() =>
       parseQuestionFormFromTranscript(`<question-form id="bad" version="rpa-question-form.v0.1">

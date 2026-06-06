@@ -34,7 +34,7 @@ export function parseQuestionFormFromTranscript(transcript: string): RpaQuestion
   return {
     formId: readAttr(attrs, 'id') ?? 'rpa-question-form',
     version: readString(parsed.version) ?? readAttr(attrs, 'version'),
-    title: readString(parsed.title),
+    title: readString(parsed.title) ?? readAttr(attrs, 'title'),
     description: readString(parsed.description),
     questions: parsed.questions.map(parseQuestion),
   };
@@ -80,6 +80,7 @@ function parseQuestion(value: unknown): RpaQuestion {
       type,
       options: value.options.map(parseOption),
       defaultValue: readStringOrStringArray(value.defaultValue) ?? readStringOrStringArray(value.default),
+      maxSelections: type === 'checkbox' ? readPositiveInteger(value.maxSelections) : undefined,
     } satisfies RpaChoiceQuestion;
   }
 
@@ -96,10 +97,26 @@ function parseQuestion(value: unknown): RpaQuestion {
 }
 
 function parseOption(value: unknown): RpaQuestionOption {
-  if (!isRecord(value) || typeof value.label !== 'string' || typeof value.value !== 'string') {
-    throw new QuestionFormParseError('Choice question options must include string label and value.');
+  if (typeof value === 'string') {
+    const label = value.trim();
+    if (label.length === 0) {
+      throw new QuestionFormParseError('Choice question string options must not be empty.');
+    }
+    return { label, value: label };
   }
-  return { label: value.label, value: value.value };
+  if (!isRecord(value) || typeof value.label !== 'string') {
+    throw new QuestionFormParseError('Choice question options must include a string label.');
+  }
+  const label = value.label.trim();
+  const optionValue = typeof value.value === 'string' && value.value.trim().length > 0 ? value.value.trim() : label;
+  if (label.length === 0) {
+    throw new QuestionFormParseError('Choice question options must include a non-empty label.');
+  }
+  return {
+    label,
+    value: optionValue,
+    description: readString(value.description),
+  };
 }
 
 function isQuestionType(value: string): value is RpaQuestionType {
@@ -107,10 +124,13 @@ function isQuestionType(value: string): value is RpaQuestionType {
 }
 
 function normalizeQuestionType(value: string): RpaQuestionType | null {
-  if (isQuestionType(value)) return value;
-  if (value === 'single_choice') return 'radio';
-  if (value === 'multiple_choice') return 'checkbox';
-  if (value === 'string') return 'text';
+  const normalized = value.toLowerCase().trim();
+  if (isQuestionType(normalized)) return normalized;
+  if (normalized === 'single_choice' || normalized === 'single' || normalized === 'choice') return 'radio';
+  if (normalized === 'multiple_choice' || normalized === 'multi' || normalized === 'multiple') return 'checkbox';
+  if (normalized === 'dropdown') return 'select';
+  if (normalized === 'string') return 'text';
+  if (normalized === 'long' || normalized === 'paragraph') return 'textarea';
   return null;
 }
 
@@ -123,7 +143,8 @@ function isTextQuestionType(value: RpaQuestionType): value is RpaTextQuestion['t
 }
 
 function readAttr(attrs: string, name: string): string | undefined {
-  return attrs.match(new RegExp(`${name}="([^"]+)"`))?.[1];
+  const match = attrs.match(new RegExp(`${name}\\s*=\\s*(?:"([^"]+)"|'([^']+)')`));
+  return match?.[1] ?? match?.[2];
 }
 
 function readString(value: unknown): string | undefined {
@@ -138,6 +159,10 @@ function readStringOrStringArray(value: unknown): string | string[] | undefined 
   if (typeof value === 'string') return value;
   if (Array.isArray(value) && value.every((item) => typeof item === 'string')) return value;
   return undefined;
+}
+
+function readPositiveInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

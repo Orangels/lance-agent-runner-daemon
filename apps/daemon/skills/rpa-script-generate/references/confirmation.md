@@ -19,7 +19,7 @@
 
 ## 确认方式
 
-必须像 `kami-landing` 一样优先使用 AskQuestion 提出结构化问题，而不是只输出普通自然语言问题。如果当前 Claude Code 环境没有真实 AskQuestion 工具，则输出等价的 `<question-form>` 文本协议。把同一页面或同一阶段的问题合并成一个短表单。每个问题要包含：
+必须优先使用 AskQuestion 或等价结构化表单提出问题，而不是只输出普通自然语言问题。如果当前 Claude Code 环境没有真实 AskQuestion 工具，则输出等价的 `<question-form>` 文本协议。把同一页面或同一阶段的问题合并成一个短表单。每个问题要包含：
 
 - 当前观察到的事实。
 - 需要用户选择或确认的点。
@@ -48,7 +48,17 @@
 </question-form>
 ```
 
-如果使用 `<question-form>`，标签属性和 JSON 内容都必须声明 `version` 为 `rpa-question-form.v0.1`。标签内部只能放裸 JSON 对象，不要包 ```json fenced code block，不要写注释或 Markdown。问题类型只允许 `radio`、`checkbox`、`select`、`text`、`textarea`；单选用 `radio`，字符串输入用 `text`，不要使用 `single_choice`、`multiple_choice`、`string` 等别名。输出 `</question-form>` 后停止本轮生成，等待用户提交。用户答案会作为下一轮普通消息回传，格式类似：
+如果使用 `<question-form>`，必须遵守 RPA Web 的结构化表单协议：
+
+- 本轮只输出一句短说明 + 一个 `<question-form>` block。
+- 标签属性和 JSON 内容都必须声明 `version` 为 `rpa-question-form.v0.1`。
+- 标签内部只放合法 JSON 对象；不要写注释、不要 trailing comma、不要在 JSON 外混入 Markdown。输出时不要包 ```json fenced code block。
+- 问题类型输出时只使用 `radio`、`checkbox`、`select`、`text`、`textarea`；不要输出 `direction-cards`。
+- `radio` / `checkbox` / `select` 的 `options` 可以是字符串数组或 `{ "label": "...", "value": "...", "description": "..." }` 对象数组；RPA 场景优先对象数组。
+- `checkbox` 限制选择数量时使用 `maxSelections`。
+- 输出 `</question-form>` 后停止本轮生成，等待用户提交。
+
+用户答案会作为下一轮普通消息回传，格式类似：
 
 ```text
 [form answers — rpa-confirmation]
