@@ -572,6 +572,8 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 
 **Purpose:** Prove generated flows are reusable across users/machines through parameter forms and `.rpa.zip` import/export.
 
+**Execution plan:** `docs/superpowers/plans/2026-06-06-rpa-flow-reuse-execution-loop.md`
+
 **Files likely created:**
 
 - Create: `apps/rpa-local-web/src/server/packages/rpa-package.ts`
@@ -682,27 +684,3 @@ pnpm test
 - Whether trace/video are enabled for the demo by default or only in review export.
 - Exact `.rpa.zip` manifest version once import/export code starts.
 - Whether multi-file codegen packages or manual `flow.py` upload fallback are worth adding after RPA Web-managed single-file codegen succeeds.
-
-## Plan Review Prompt For CC
-
-```text
-请快速复核 docs/superpowers/plans/2026-06-05-rpa-local-bs-mvp.md 的 review 修复。
-
-上一轮指出的 P1：slice 1 与 slice 2 的 prompt/skill/context snapshot 职责存在依赖倒置，并且 collectionMode 权限封顶后置会形成安全窗口。
-
-本轮已做调整：
-- 把 promptMode/business-context、collectionMode 三档、权限封顶、snapshot hash/size 字段、三张 snapshot 表、skill side files manifest 统一并入第一个 daemon 切片。
-- 把完整 review bundle、feedback、完整日志下载、sanitizer polish 下移到 codegen 闭环之后。
-- 把 Runtime Verification UI 提到 codegen 闭环之前。
-- 给 codegen question-form follow-up 明确使用 businessContext 携带表单答案、上轮 run id 和 artifact 路径。
-- 给 RPA Web daemon client 补充 cancelRun 任务。
-- 根据最新产品决定，把 codegen 主路径改为 RPA Web 后端启动 Playwright codegen，指定输出 `flow.py`，录制结束后自动上传给 daemon；手动上传不作为 MVP 主路径。
-
-请只确认：
-1. 上述 P1 是否已解决。
-2. codegen 方式 B 的计划修改是否保持 daemon/RPA Web 边界清楚。
-3. 是否新增 P0/P1。
-4. 是否可以进入实现。
-
-不要重新 review 设计文档，也不要展开 P2 大方案。
-```
