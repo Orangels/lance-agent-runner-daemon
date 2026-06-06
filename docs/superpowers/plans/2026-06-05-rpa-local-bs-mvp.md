@@ -48,10 +48,12 @@ Completed so far:
 - `RPA Execution Backend And Local Executor` landed in commit `30c49da`.
 - `Minimal Runtime Verification UI` landed in commit `bcd71d4`.
 - `Codegen 上传加固闭环` is implemented and CC reviewed.
+- `Daemon Generic Review Bundle And Feedback` landed in commit `a60948a`.
+- `RPA Observability Extension And Skill Review Loop` landed in commit `a60948a`, with manifest polish follow-ups documented in commit `9c1165a`.
 
-Next planned slice:
+Current planned slice:
 
-- `Daemon Generic Review Bundle And Feedback`.
+- `自然语言生成闭环`.
 
 ## Implementation Dependency Map
 
@@ -507,6 +509,8 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 ## Slice: 自然语言生成闭环
 
 **Purpose:** Add natural-language script generation using `rpa-script-generate`, confirmation forms, and chrome-devtools-mcp exploration through the RPA profile.
+
+**Execution plan:** `docs/superpowers/plans/2026-06-06-rpa-natural-language-generation-loop.md`
 
 **Files likely touched:**
 
