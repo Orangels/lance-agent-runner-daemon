@@ -113,6 +113,19 @@ Per-run logs are separate from service logs and live under:
 .claude-runner/data/logs/runs/<runId>/
 ```
 
+### `server.maxReviewBundleBytes`
+
+Maximum total byte count for the generic run review bundle before ZIP creation.
+
+Default:
+
+```text
+16777216 = 16 MiB
+```
+
+If an on-demand review bundle would exceed this limit, the daemon returns
+`413 REVIEW_BUNDLE_TOO_LARGE`.
+
 ### `server.maxUploadBytesPerFile`
 
 Maximum size for `POST /api/workspaces/:workspaceId/files`.
@@ -169,6 +182,15 @@ Allows this client to receive `debug` event visibility when the profile and run 
 
 If false, requested `debug` visibility is capped to `normal`.
 
+It is required for:
+
+```text
+GET /api/runs/:runId/logs/debug-events/download
+```
+
+It is also required for debug-only files inside review bundles, such as
+`logs/debug-events.ndjson` and `messages.debug.json`.
+
 It is also required, together with `canReadLogs`, when a run requests
 `collectionMode: "review"`.
 
@@ -178,6 +200,9 @@ Allows this client to call:
 
 ```text
 GET /api/runs/:runId/logs
+GET /api/runs/:runId/logs/stdout/download
+GET /api/runs/:runId/logs/stderr/download
+GET /api/runs/:runId/review-bundle/download
 ```
 
 It is also required when a run requests `collectionMode: "diagnostic"` or

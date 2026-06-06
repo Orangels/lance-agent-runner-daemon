@@ -1,6 +1,6 @@
 # Daemon Generic Review Bundle And Feedback Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Add business-agnostic daemon review-bundle export, complete log download, generic feedback storage, and stronger redaction so business skill runs can be reviewed without polluting daemon core with RPA semantics.
 
@@ -141,7 +141,7 @@ Rules:
 - Modify: `apps/daemon/src/db/repositories.ts`
 - Test: `apps/daemon/tests/db/repositories.test.ts`
 
-- [ ] **Step 1: Add failing repository tests for feedback ownership and ordering**
+- [x] **Step 1: Add failing repository tests for feedback ownership and ordering**
 
 Add tests that insert two workspaces and runs, create feedback for `run_1`, and assert:
 
@@ -163,7 +163,7 @@ pnpm --filter @lance-agent-runner/daemon exec vitest run tests/db/repositories.t
 
 Expected: FAIL because `run_feedback` and repository helpers do not exist.
 
-- [ ] **Step 2: Add `run_feedback` table**
+- [x] **Step 2: Add `run_feedback` table**
 
 Add:
 
@@ -183,7 +183,7 @@ CREATE INDEX IF NOT EXISTS idx_run_feedback_run_created
   ON run_feedback(run_id, created_at);
 ```
 
-- [ ] **Step 3: Add repository records and helpers**
+- [x] **Step 3: Add repository records and helpers**
 
 Add `RunFeedbackRecord` plus:
 
@@ -209,7 +209,7 @@ export function listRunFeedbackForClient(
 
 `listRunFeedbackForClient` must return `null` when the run is not readable by the client.
 
-- [ ] **Step 4: Run repository tests**
+- [x] **Step 4: Run repository tests**
 
 Run:
 
@@ -226,7 +226,7 @@ Expected: PASS.
 - Modify: `apps/daemon/src/core/log-sanitizer.ts`
 - Test: `apps/daemon/tests/core/log-sanitizer.test.ts`
 
-- [ ] **Step 1: Add failing sanitizer tests**
+- [x] **Step 1: Add failing sanitizer tests**
 
 Cover:
 
@@ -250,7 +250,7 @@ pnpm --filter @lance-agent-runner/daemon exec vitest run tests/core/log-sanitize
 
 Expected: FAIL because `sanitizeReviewValue` does not exist and current patterns are narrower.
 
-- [ ] **Step 2: Extend sanitizer without business semantics**
+- [x] **Step 2: Extend sanitizer without business semantics**
 
 Add:
 
@@ -268,7 +268,7 @@ Rules:
 - Limit recursive object traversal with a `WeakSet` to avoid cycles.
 - Keep a regression assertion that existing log behavior still redacts bearer tokens and sandbox absolute paths while preserving relative paths such as `output/report.docx`.
 
-- [ ] **Step 3: Run sanitizer tests**
+- [x] **Step 3: Run sanitizer tests**
 
 Run:
 
@@ -286,7 +286,7 @@ Expected: PASS.
 - Modify: `apps/daemon/src/core/ids.ts`
 - Test: `apps/daemon/tests/core/run-feedback-service.test.ts`
 
-- [ ] **Step 1: Add failing service tests**
+- [x] **Step 1: Add failing service tests**
 
 Cover:
 
@@ -303,7 +303,7 @@ pnpm --filter @lance-agent-runner/daemon exec vitest run tests/core/run-feedback
 
 Expected: FAIL because the service does not exist.
 
-- [ ] **Step 2: Implement service**
+- [x] **Step 2: Implement service**
 
 Add:
 
@@ -332,7 +332,7 @@ Also extend `apps/daemon/src/core/ids.ts`:
 export type IdPrefix = 'ws' | 'run' | 'msg' | 'conv' | 'artifact' | 'feedback';
 ```
 
-- [ ] **Step 3: Run feedback service tests**
+- [x] **Step 3: Run feedback service tests**
 
 Run:
 
@@ -351,7 +351,7 @@ Expected: PASS.
 - Test: `apps/daemon/tests/core/run-log-service.test.ts`
 - Test: `apps/daemon/tests/http/logs-routes.test.ts`
 
-- [ ] **Step 1: Add failing service tests for complete log downloads**
+- [x] **Step 1: Add failing service tests for complete log downloads**
 
 Add tests for:
 
@@ -361,7 +361,7 @@ Add tests for:
 - missing log path returns `NOT_FOUND`.
 - another client receives `NOT_FOUND`.
 
-- [ ] **Step 2: Add service method**
+- [x] **Step 2: Add service method**
 
 Extend `RunLogClient` with optional `canReadDebugEvents`. Add:
 
@@ -377,7 +377,7 @@ getRunLogDownload(input: {
 
 `stdout` and `stderr` require `canReadLogs`. `debug-events` requires `canReadDebugEvents`.
 
-- [ ] **Step 3: Add routes**
+- [x] **Step 3: Add routes**
 
 Add:
 
@@ -389,7 +389,7 @@ GET /api/runs/:runId/logs/debug-events/download
 
 Stream files with `createReadStream`, set `Content-Type: text/plain; charset=utf-8`, and set a safe attachment file name.
 
-- [ ] **Step 4: Run log tests**
+- [x] **Step 4: Run log tests**
 
 Run:
 
@@ -406,7 +406,7 @@ Expected: PASS.
 - Create: `apps/daemon/src/core/zip-writer.ts`
 - Test: `apps/daemon/tests/core/zip-writer.test.ts`
 
-- [ ] **Step 1: Add failing ZIP writer tests**
+- [x] **Step 1: Add failing ZIP writer tests**
 
 Test that:
 
@@ -414,7 +414,7 @@ Test that:
 - The generated buffer contains a central directory and can be parsed by a small test helper to recover `manifest.json`.
 - Entry paths with `..`, absolute paths, or backslashes throw `BAD_ZIP_ENTRY_PATH`.
 
-- [ ] **Step 2: Implement minimal ZIP writer**
+- [x] **Step 2: Implement minimal ZIP writer**
 
 Implement stored, uncompressed ZIP entries only:
 
@@ -436,7 +436,7 @@ Implementation requirements:
 - Throw a regular `Error` whose message contains `BAD_ZIP_ENTRY_PATH`; do not add this low-level utility error to `daemonErrorCodes`.
 - Keep output deterministic for tests by sorting entries by path.
 
-- [ ] **Step 3: Run ZIP tests**
+- [x] **Step 3: Run ZIP tests**
 
 Run:
 
@@ -456,7 +456,7 @@ Expected: PASS.
 - Test: `apps/daemon/tests/core/review-bundle-service.test.ts`
 - Test: `apps/daemon/tests/config/profiles.test.ts`
 
-- [ ] **Step 1: Add failing service tests**
+- [x] **Step 1: Add failing service tests**
 
 Create tests proving:
 
@@ -470,7 +470,7 @@ Create tests proving:
 - `messages.filtered.json` does not include `thinkingContent`, raw debug events, or `tool_result` payloads.
 - A bundle over `server.maxReviewBundleBytes` fails with `REVIEW_BUNDLE_TOO_LARGE` before building an oversized ZIP buffer.
 
-- [ ] **Step 2: Define service types**
+- [x] **Step 2: Define service types**
 
 Add:
 
@@ -490,7 +490,7 @@ export interface ReviewBundleService {
 
 The default provider list is empty.
 
-- [ ] **Step 3: Add review bundle size config**
+- [x] **Step 3: Add review bundle size config**
 
 Extend `ServerConfig` and config parsing with:
 
@@ -506,7 +506,7 @@ Also extend `daemonErrorCodes` in `apps/daemon/src/core/run-types.ts`:
 'REVIEW_BUNDLE_TOO_LARGE'
 ```
 
-- [ ] **Step 4: Build generic entries**
+- [x] **Step 4: Build generic entries**
 
 Use existing repository helpers:
 
@@ -538,7 +538,7 @@ Create bundle entries:
 - `large-files-manifest.json`
 - `feedback.jsonl`
 
-- [ ] **Step 5: Define message export filters**
+- [x] **Step 5: Define message export filters**
 
 For `messages.filtered.json`, export only user/assistant-visible data:
 
@@ -557,13 +557,13 @@ Do not include `thinkingContent`. Include only events that would be visible at n
 
 For `messages.debug.json`, include the fuller sanitized message/event records only when `client.canReadDebugEvents = true`. `messages.debug.json` is for structured message history; `logs/debug-events.ndjson` is for raw chronological debug event log lines.
 
-- [ ] **Step 6: Keep bundle size bounded**
+- [x] **Step 6: Keep bundle size bounded**
 
 Do not inline artifact bodies. For logs, use `RunLogService.getRunLogDownload(kind)` instead of reading run log paths directly, so review bundle export reuses path safety and permission logic. If a log file is unavailable, write an empty placeholder entry only when useful and record the missing file in `diagnostics.json`.
 
 Before calling `createZipBuffer`, sum planned entry byte sizes. If the sum exceeds `server.maxReviewBundleBytes`, throw `daemonError('REVIEW_BUNDLE_TOO_LARGE', 'Review bundle is too large', 413, { maxReviewBundleBytes, plannedByteCount })`.
 
-- [ ] **Step 7: Run service tests**
+- [x] **Step 7: Run service tests**
 
 Run:
 
@@ -584,7 +584,7 @@ Expected: PASS.
 - Test: `apps/daemon/tests/http/review-bundle-routes.test.ts`
 - Test: `apps/daemon/tests/http/feedback-routes.test.ts`
 
-- [ ] **Step 1: Add failing route tests**
+- [x] **Step 1: Add failing route tests**
 
 Cover:
 
@@ -595,7 +595,7 @@ Cover:
 - `POST /api/runs/run_1/feedback` stores sanitized generic feedback.
 - `GET /api/runs/run_1/feedback` returns feedback for the owning client and `404` for another client.
 
-- [ ] **Step 2: Add feedback validation schema**
+- [x] **Step 2: Add feedback validation schema**
 
 Add:
 
@@ -607,7 +607,7 @@ export const createRunFeedbackRequestSchema = z.object({
 }).strict();
 ```
 
-- [ ] **Step 3: Wire services into app**
+- [x] **Step 3: Wire services into app**
 
 Extend `CreateAppDependencies` with optional:
 
@@ -625,7 +625,7 @@ Mount:
 
 Mount these routers before the generic `/api/runs` router, matching the existing artifacts/logs route order, so sub-routes are not shadowed by `runsRouter`.
 
-- [ ] **Step 4: Run HTTP route tests**
+- [x] **Step 4: Run HTTP route tests**
 
 Run:
 
@@ -645,11 +645,11 @@ Expected: PASS.
 - Modify: `docs/business-skill-observability-design.md` only if implementation details need alignment
 - Test: `apps/daemon/tests/index.test.ts`
 
-- [ ] **Step 1: Instantiate services in daemon entrypoint**
+- [x] **Step 1: Instantiate services in daemon entrypoint**
 
 Create `reviewBundleService` and `feedbackService` from db/config/run log dependencies. Pass them to `createApp`.
 
-- [ ] **Step 2: Update API docs**
+- [x] **Step 2: Update API docs**
 
 Document all new endpoints, permissions, response content types, and error codes:
 
@@ -659,7 +659,7 @@ Document all new endpoints, permissions, response content types, and error codes
 - `400 VALIDATION_ERROR`
 - `413 REVIEW_BUNDLE_TOO_LARGE`
 
-- [ ] **Step 3: Update configuration docs**
+- [x] **Step 3: Update configuration docs**
 
 Clarify:
 
@@ -667,7 +667,7 @@ Clarify:
 - `clients[].canReadDebugEvents` gates debug event downloads and debug files inside bundles.
 - `collectionMode: lite` still keeps production default lightweight; bundle export cannot invent missing snapshot bodies.
 
-- [ ] **Step 4: Run daemon validation**
+- [x] **Step 4: Run daemon validation**
 
 Run:
 
@@ -686,7 +686,7 @@ Expected: all pass.
 
 - Modify: `docs/superpowers/plans/2026-06-05-rpa-local-bs-mvp.md`
 
-- [ ] **Step 1: Mark this slice completed after implementation review**
+- [x] **Step 1: Mark this slice completed after implementation review**
 
 Only after implementation and CC review pass, update the main plan:
 
@@ -698,11 +698,11 @@ Add the implementation commit and verification commands. Do not mark `RPA Observ
 
 ## Review Checklist Before Implementation
 
-- [ ] No RPA, Playwright, DSL, screenshot, trace, or executor semantics in daemon core.
-- [ ] Bundle export is manual/on-demand, not automatic production logging.
-- [ ] `collectionMode` and `eventVisibility` remain separate.
-- [ ] `canReadLogs` and `canReadDebugEvents` are both tested as negative and positive paths.
-- [ ] Feedback categories are stored as opaque strings.
-- [ ] Artifact file bodies are not inlined in the generic bundle.
-- [ ] Sanitizer covers logs, messages, request, snapshots, diagnostics, manifest, and feedback.
-- [ ] RPA-specific extension files are left to the next slice.
+- [x] No RPA, Playwright, DSL, screenshot, trace, or executor semantics in daemon core.
+- [x] Bundle export is manual/on-demand, not automatic production logging.
+- [x] `collectionMode` and `eventVisibility` remain separate.
+- [x] `canReadLogs` and `canReadDebugEvents` are both tested as negative and positive paths.
+- [x] Feedback categories are stored as opaque strings.
+- [x] Artifact file bodies are not inlined in the generic bundle.
+- [x] Sanitizer covers logs, messages, request, snapshots, diagnostics, manifest, and feedback.
+- [x] RPA-specific extension files are left to the next slice.

@@ -925,6 +925,159 @@ Authorization: Bearer <api-key>
 | 403 | `FORBIDDEN` | client 没有 `canReadLogs`。 |
 | 404 | `NOT_FOUND` | run 不存在或不属于该 client。 |
 
+## GET /api/runs/:runId/logs/:kind/download
+
+下载完整 run log 文件。`:kind` 支持：
+
+```text
+stdout
+stderr
+debug-events
+```
+
+`stdout` 和 `stderr` 需要 `client.canReadLogs=true`。`debug-events` 需要
+`client.canReadDebugEvents=true`。
+
+### Request
+
+```http
+GET /api/runs/run_xxx/logs/stdout/download
+Authorization: Bearer <api-key>
+```
+
+### Response 200
+
+返回文件流。
+
+Headers:
+
+```text
+Content-Type: text/plain; charset=utf-8
+Content-Length: <log size>
+Content-Disposition: attachment; filename="stdout.log"; filename*=UTF-8''stdout.log
+```
+
+### Common Errors
+
+| Status | Code | Meaning |
+| --- | --- | --- |
+| 401 | `UNAUTHORIZED` | API key 缺失或错误。 |
+| 403 | `FORBIDDEN` | client 没有所需日志或 debug 权限。 |
+| 404 | `NOT_FOUND` | run/log 不存在、不属于该 client，或文件已不存在。 |
+
+## GET /api/runs/:runId/review-bundle/download
+
+导出通用业务 skill review bundle。bundle 是 on-demand 生成，不包含 RPA 专属诊断；业务扩展内容通过 `extensions/` hook 后续追加。
+
+调用方必须具备 `client.canReadLogs=true`。如果调用方同时具备
+`client.canReadDebugEvents=true`，bundle 会包含 debug-only 文件，例如
+`logs/debug-events.ndjson` 和 `messages.debug.json`；否则这些文件会被省略。
+
+### Request
+
+```http
+GET /api/runs/run_xxx/review-bundle/download
+Authorization: Bearer <api-key>
+```
+
+### Response 200
+
+返回 ZIP 文件流。
+
+Headers:
+
+```text
+Content-Type: application/zip
+Content-Length: <bundle size>
+Content-Disposition: attachment; filename="run_run_xxx_review_bundle.zip"; filename*=UTF-8''run_run_xxx_review_bundle.zip
+```
+
+### Common Errors
+
+| Status | Code | Meaning |
+| --- | --- | --- |
+| 401 | `UNAUTHORIZED` | API key 缺失或错误。 |
+| 403 | `FORBIDDEN` | client 没有 `canReadLogs`。 |
+| 404 | `NOT_FOUND` | run 不存在或不属于该 client。 |
+| 413 | `REVIEW_BUNDLE_TOO_LARGE` | bundle 超过 `server.maxReviewBundleBytes`。 |
+
+## GET /api/runs/:runId/feedback
+
+读取某个 run 的通用反馈记录。feedback category 是 opaque string，daemon 只保存，不解释业务含义。
+
+### Request
+
+```http
+GET /api/runs/run_xxx/feedback
+Authorization: Bearer <api-key>
+```
+
+### Response 200
+
+```json
+{
+  "feedback": [
+    {
+      "id": "feedback_xxx",
+      "runId": "run_xxx",
+      "clientId": "lqbot",
+      "category": "skill",
+      "message": "这里应该先询问用户参数。",
+      "metadata": {
+        "artifactPath": "output/result.json"
+      },
+      "createdAt": 1760000000000
+    }
+  ]
+}
+```
+
+## POST /api/runs/:runId/feedback
+
+新增某个 run 的通用反馈记录。`message` 和 `metadata` 会经过通用脱敏。
+
+### Request
+
+```http
+POST /api/runs/run_xxx/feedback
+Authorization: Bearer <api-key>
+Content-Type: application/json
+
+{
+  "category": "skill",
+  "message": "这里应该先询问用户参数。",
+  "metadata": {
+    "artifactPath": "output/result.json"
+  }
+}
+```
+
+### Response 201
+
+```json
+{
+  "feedback": {
+    "id": "feedback_xxx",
+    "runId": "run_xxx",
+    "clientId": "lqbot",
+    "category": "skill",
+    "message": "这里应该先询问用户参数。",
+    "metadata": {
+      "artifactPath": "output/result.json"
+    },
+    "createdAt": 1760000000000
+  }
+}
+```
+
+### Common Errors
+
+| Status | Code | Meaning |
+| --- | --- | --- |
+| 400 | `BAD_REQUEST` | 请求体校验失败。 |
+| 401 | `UNAUTHORIZED` | API key 缺失或错误。 |
+| 404 | `NOT_FOUND` | run 不存在或不属于该 client。 |
+
 ## RunStatus
 
 ```text

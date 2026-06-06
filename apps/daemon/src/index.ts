@@ -4,6 +4,11 @@ import { getConfigPathFromArgs, loadDaemonConfig } from './config/config.js';
 import type { DaemonConfig } from './config/profiles.js';
 import { createArtifactService, type ArtifactService } from './core/artifact-service.js';
 import { createDaemonLogger, type DaemonLogger } from './core/daemon-logger.js';
+import {
+  createReviewBundleService,
+  type ReviewBundleService,
+} from './core/review-bundle-service.js';
+import { createRunFeedbackService, type RunFeedbackService } from './core/run-feedback-service.js';
 import { createRunLogService, type RunLogService } from './core/run-log-service.js';
 import { createRunService, type RunService } from './core/run-service.js';
 import { createUploadTempService, type UploadTempService } from './core/upload-temp-service.js';
@@ -19,6 +24,8 @@ export interface ServerContext {
   workspaceService: WorkspaceService;
   artifactService: ArtifactService;
   runLogService: RunLogService;
+  reviewBundleService: ReviewBundleService;
+  feedbackService: RunFeedbackService;
   runService: RunService;
   uploadTempService: UploadTempService;
   daemonLogger: DaemonLogger;
@@ -50,6 +57,8 @@ export function createServerContext(
   const workspaceService = createWorkspaceService({ db });
   const artifactService = createArtifactService({ config, db, clock: options.clock });
   const runLogService = createRunLogService({ config, db });
+  const reviewBundleService = createReviewBundleService({ config, db, runLogService });
+  const feedbackService = createRunFeedbackService({ db, clock: options.clock });
   const runService = createRunService({ config, db, artifactService, runLogService, clock: options.clock });
   const uploadTempService = createUploadTempService({ config });
   uploadTempService.pruneExpiredUploads({ now: startupNow });
@@ -59,6 +68,8 @@ export function createServerContext(
     workspaceService,
     runService,
     runLogService,
+    reviewBundleService,
+    feedbackService,
     artifactService,
     uploadTempService,
     daemonLogger,
@@ -75,6 +86,8 @@ export function createServerContext(
     workspaceService,
     artifactService,
     runLogService,
+    reviewBundleService,
+    feedbackService,
     runService,
     uploadTempService,
     daemonLogger,

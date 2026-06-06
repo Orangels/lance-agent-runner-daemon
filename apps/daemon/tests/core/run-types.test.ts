@@ -82,6 +82,7 @@ describe('run contract constants', () => {
       'CLAUDE_AUTH_FAILED',
       'CLAUDE_CLI_FAILED',
       'COLLECTION_MODE_NOT_ALLOWED',
+      'REVIEW_BUNDLE_TOO_LARGE',
       'INTERNAL_ERROR',
       'PATH_NOT_ALLOWED',
       'INVALID_PATH_SEGMENT',

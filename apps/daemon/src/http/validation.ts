@@ -183,6 +183,14 @@ export const eventReplayQuerySchema: z.ZodType<EventReplayQuery> = z
   })
   .strict();
 
+export const createRunFeedbackRequestSchema = z
+  .object({
+    category: z.string().min(1).max(80),
+    message: z.string().min(1).max(20_000),
+    metadata: z.unknown().optional(),
+  })
+  .strict();
+
 export function zodErrorToDaemonError(error: z.ZodError): DaemonError {
   if (
     error.issues.some((issue) =>

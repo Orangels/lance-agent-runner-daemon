@@ -24,6 +24,7 @@ import type { RunEvent } from './run-events.js';
 export interface RunLogClient {
   id: string;
   isAdmin?: boolean;
+  canReadDebugEvents?: boolean;
   canReadLogs: boolean;
 }
 
@@ -49,10 +50,24 @@ export interface PublicRunLogs {
   };
 }
 
+export type RunLogDownloadKind = 'stdout' | 'stderr' | 'debug-events';
+
+export interface RunLogDownload {
+  filePath: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+}
+
 export interface RunLogService {
   readonly dataDir: string;
   openRunLogs(input: { runId: string }): RunLogHandle;
   getRunLogs(input: { runId: string; client: RunLogClient }): PublicRunLogs;
+  getRunLogDownload(input: {
+    runId: string;
+    kind: RunLogDownloadKind;
+    client: RunLogClient;
+  }): RunLogDownload;
   pruneExpiredLogs(input: { now: number }): { pruned: number };
 }
 
@@ -132,6 +147,44 @@ export function createRunLogService(input: CreateRunLogServiceInput): RunLogServ
         },
       };
     },
+    getRunLogDownload: ({ runId, kind, client }) => {
+      if (kind === 'debug-events') {
+        if (!client.canReadDebugEvents) {
+          throw forbidden('Client is not allowed to read debug run logs');
+        }
+      } else if (!client.canReadLogs) {
+        throw forbidden('Client is not allowed to read run logs');
+      }
+
+      const record = getRunLogForRunForClient(input.db, {
+        runId,
+        clientId: client.id,
+        isAdmin: client.isAdmin,
+      });
+      if (!record) {
+        throw notFound('Run log not found');
+      }
+
+      const relativePath = logPathForKind(record, kind);
+      if (relativePath === null) {
+        throw notFound('Run log not found');
+      }
+      const absolutePath = resolveInsideDataDir(dataDir, relativePath);
+      if (!existsSync(absolutePath)) {
+        throw notFound('Run log not found');
+      }
+      const safeStat = statSync(absolutePath);
+      if (!safeStat.isFile()) {
+        throw notFound('Run log not found');
+      }
+
+      return {
+        filePath: absolutePath,
+        fileName: fileNameForKind(kind),
+        mimeType: 'text/plain; charset=utf-8',
+        size: safeStat.size,
+      };
+    },
     pruneExpiredLogs: ({ now: pruneNow }) => {
       const cutoff = pruneNow - input.config.server.logRetentionMs;
       const expired = listRunLogsFinishedBefore(input.db, {
@@ -149,6 +202,21 @@ export function createRunLogService(input: CreateRunLogServiceInput): RunLogServ
       return { pruned: deleteRunLogRows(input.db, expired.map((record) => record.runId)) };
     },
   };
+}
+
+function logPathForKind(record: RunLogRecord, kind: RunLogDownloadKind): string | null {
+  switch (kind) {
+    case 'stdout':
+      return record.stdoutLogPath;
+    case 'stderr':
+      return record.stderrLogPath;
+    case 'debug-events':
+      return record.debugEventsLogPath;
+  }
+}
+
+function fileNameForKind(kind: RunLogDownloadKind): string {
+  return kind === 'debug-events' ? 'debug-events.ndjson' : `${kind}.log`;
 }
 
 function createBoundedWriter(dataDir: string, relativePath: string, maxBytes: number) {

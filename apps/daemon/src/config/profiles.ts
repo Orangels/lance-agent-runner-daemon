@@ -20,6 +20,7 @@ export interface ServerConfig {
   maxQueueSize: number;
   logRetentionMs: number;
   maxLogBytesPerRun: number;
+  maxReviewBundleBytes: number;
   maxUploadBytesPerFile: number;
   uploadTempRetentionMs: number;
 }
@@ -83,6 +84,7 @@ const serverSchema = z
     maxQueueSize: z.number().int().min(0),
     logRetentionMs: z.number().int().min(0).default(7 * 24 * 60 * 60 * 1000),
     maxLogBytesPerRun: z.number().int().min(1).default(4 * 1024 * 1024),
+    maxReviewBundleBytes: z.number().int().min(1).default(16 * 1024 * 1024),
     maxUploadBytesPerFile: z.number().int().min(1).default(50 * 1024 * 1024),
     uploadTempRetentionMs: z.number().int().min(0).default(24 * 60 * 60 * 1000),
   })

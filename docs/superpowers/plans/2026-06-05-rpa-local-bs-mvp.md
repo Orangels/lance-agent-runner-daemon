@@ -410,9 +410,11 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 
 ---
 
-## Slice: Daemon Generic Review Bundle And Feedback
+## Slice: Daemon Generic Review Bundle And Feedback (Completed)
 
 **Purpose:** Add full generic skill review-bundle capabilities after the first RPA loop has produced real run/execution material. This slice remains business-agnostic.
+
+**Status:** Implemented and CC reviewed.
 
 **Execution plan:** `docs/superpowers/plans/2026-06-06-daemon-generic-review-bundle-feedback.md`
 
@@ -431,11 +433,11 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 
 **Tasks:**
 
-- [ ] Add complete log download or review bundle export with correct permissions.
-- [ ] Add generic `review-summary.md`, `diagnostics.json`, `large-files-manifest.json`, and manifest extension hook.
-- [ ] Add generic feedback storage where daemon stores but does not interpret business categories.
-- [ ] Add sanitizer coverage for tokens, cookies, secrets, storage state, local absolute paths, and sensitive config fields.
-- [ ] Keep production default lightweight: `collectionMode: lite` should not persist full prompt/skill/debug events by default.
+- [x] Add complete log download or review bundle export with correct permissions.
+- [x] Add generic `review-summary.md`, `diagnostics.json`, `large-files-manifest.json`, and manifest extension hook.
+- [x] Add generic feedback storage where daemon stores but does not interpret business categories.
+- [x] Add sanitizer coverage for tokens, cookies, secrets, storage state, local absolute paths, and sensitive config fields.
+- [x] Keep production default lightweight: `collectionMode: lite` should not persist full prompt/skill/debug events by default.
 
 **Acceptance:**
 
@@ -443,6 +445,10 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 - Complete stdout/stderr download requires `canReadLogs`; raw debug events or tool results require `canReadDebugEvents`.
 - Generic feedback categories can be stored and queried without daemon interpreting RPA categories.
 - `pnpm test:daemon` and `pnpm typecheck:daemon` pass.
+
+**Verification:** daemon targeted tests, `pnpm --filter @lance-agent-runner/daemon test`, `pnpm typecheck`, `pnpm build`, and `git diff --check` passed. HTTP route tests were run outside the sandbox because they listen on local ports.
+
+**CC review:** initial review found two P1 issues around shared `Content-Disposition` safety and `diagnostics.size.byteCount`. Both were fixed; follow-up review reported the P1 items resolved, no new P0/P1, and approved final verification plus commit.
 
 **Suggested commit:** `Add generic review bundle and feedback`
 

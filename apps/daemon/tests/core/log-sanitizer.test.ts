@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sanitizeLogText } from '../../src/core/log-sanitizer.js';
+import { sanitizeLogText, sanitizeReviewJsonText, sanitizeReviewValue } from '../../src/core/log-sanitizer.js';
 
 describe('log sanitizer', () => {
   it('redacts Claude config directory values', () => {
@@ -39,5 +39,47 @@ describe('log sanitizer', () => {
     expect(sanitizeLogText('wrote output/report.docx and ./work/draft.md')).toBe(
       'wrote output/report.docx and ./work/draft.md',
     );
+  });
+
+  it('redacts password, secret, private key, and storage state values in log text', () => {
+    const output = sanitizeLogText(
+      'password=hunter2 secret=hidden private_key=abc storage_state=/tmp/state.json output/report.docx',
+    );
+
+    expect(output).not.toContain('hunter2');
+    expect(output).not.toContain('hidden');
+    expect(output).not.toContain('private_key=abc');
+    expect(output).not.toContain('/tmp/state.json');
+    expect(output).toContain('output/report.docx');
+  });
+
+  it('redacts sensitive object values for review bundle JSON', () => {
+    expect(
+      sanitizeReviewValue({
+        password: 'secret',
+        nested: { token: 'abc' },
+        path: '/home/orangels/project/file.txt',
+        artifactPath: 'output/report.docx',
+      }),
+    ).toEqual({
+      password: '[redacted]',
+      nested: { token: '[redacted]' },
+      path: '[redacted-path]',
+      artifactPath: 'output/report.docx',
+    });
+  });
+
+  it('redacts sensitive JSON text after serialization', () => {
+    const output = sanitizeReviewJsonText(
+      JSON.stringify({
+        authorization: 'Bearer secret-token',
+        storage_state: '/tmp/state.json',
+        artifactPath: 'output/report.docx',
+      }),
+    );
+
+    expect(output).not.toContain('secret-token');
+    expect(output).not.toContain('/tmp/state.json');
+    expect(output).toContain('output/report.docx');
   });
 });

@@ -173,6 +173,20 @@ export function applySchema(db: RunnerDatabase): void {
       created_at INTEGER NOT NULL,
       FOREIGN KEY(run_id) REFERENCES runs(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS run_feedback (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      client_id TEXT NOT NULL,
+      category TEXT NOT NULL,
+      message TEXT NOT NULL,
+      metadata_json TEXT,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY(run_id) REFERENCES runs(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_run_feedback_run_created
+      ON run_feedback(run_id, created_at);
   `);
 
   ensureRunMessagesThinkingContentColumn(db);

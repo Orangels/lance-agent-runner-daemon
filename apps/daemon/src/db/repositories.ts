@@ -155,6 +155,16 @@ export interface RunContextSnapshotRecord {
   createdAt: number;
 }
 
+export interface RunFeedbackRecord {
+  id: string;
+  runId: string;
+  clientId: string;
+  category: string;
+  message: string;
+  metadata: unknown;
+  createdAt: number;
+}
+
 export interface CreateRunQueuedWithMessagesAndSnapshotResult {
   run: RunRecord;
   conversation: ConversationRecord;
@@ -295,6 +305,16 @@ interface RunLogRow {
   stdout_log_path: string | null;
   stderr_log_path: string | null;
   debug_events_log_path: string | null;
+  created_at: number;
+}
+
+interface RunFeedbackRow {
+  id: string;
+  run_id: string;
+  client_id: string;
+  category: string;
+  message: string;
+  metadata_json: string | null;
   created_at: number;
 }
 
@@ -1341,6 +1361,66 @@ export function deleteRunLogRows(db: RunnerDatabase, runIds: readonly string[]):
   return deleteRows();
 }
 
+export function insertRunFeedback(
+  db: RunnerDatabase,
+  input: {
+    id: string;
+    runId: string;
+    clientId: string;
+    category: string;
+    message: string;
+    metadata: unknown;
+    now: number;
+  },
+): RunFeedbackRecord {
+  db.prepare(
+    `
+    INSERT INTO run_feedback (
+      id, run_id, client_id, category, message, metadata_json, created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    input.id,
+    input.runId,
+    input.clientId,
+    input.category,
+    input.message,
+    stringifyNullable(input.metadata),
+    input.now,
+  );
+
+  const row = db.prepare('SELECT * FROM run_feedback WHERE id = ?').get(input.id) as
+    | RunFeedbackRow
+    | undefined;
+  if (!row) {
+    throw new Error(`Run feedback not found after write: ${input.id}`);
+  }
+  return mapRunFeedback(row);
+}
+
+export function listRunFeedbackForClient(
+  db: RunnerDatabase,
+  input: { runId: string; clientId: string; isAdmin?: boolean },
+): RunFeedbackRecord[] | null {
+  const run = getRunForClient(db, input);
+  if (!run) {
+    return null;
+  }
+
+  const rows = db
+    .prepare(
+      `
+      SELECT *
+      FROM run_feedback
+      WHERE run_id = ?
+      ORDER BY created_at ASC, id ASC
+      `,
+    )
+    .all(input.runId) as RunFeedbackRow[];
+  return rows.map(mapRunFeedback);
+}
+
 export function getRunDetail(
   db: RunnerDatabase,
   input: { runId: string; clientId: string; isAdmin?: boolean },
@@ -1677,6 +1757,18 @@ function mapRunLog(row: RunLogRow): RunLogRecord {
     stdoutLogPath: row.stdout_log_path,
     stderrLogPath: row.stderr_log_path,
     debugEventsLogPath: row.debug_events_log_path,
+    createdAt: row.created_at,
+  };
+}
+
+function mapRunFeedback(row: RunFeedbackRow): RunFeedbackRecord {
+  return {
+    id: row.id,
+    runId: row.run_id,
+    clientId: row.client_id,
+    category: row.category,
+    message: row.message,
+    metadata: parseNullable(row.metadata_json),
     createdAt: row.created_at,
   };
 }

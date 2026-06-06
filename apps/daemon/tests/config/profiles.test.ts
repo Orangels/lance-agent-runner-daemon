@@ -66,6 +66,7 @@ describe('daemon config parsing', () => {
     expect(config.server.port).toBe(17890);
     expect(config.server.logRetentionMs).toBe(7 * 24 * 60 * 60 * 1000);
     expect(config.server.maxLogBytesPerRun).toBe(4 * 1024 * 1024);
+    expect(config.server.maxReviewBundleBytes).toBe(16 * 1024 * 1024);
     expect(config.server.maxUploadBytesPerFile).toBe(50 * 1024 * 1024);
     expect(config.server.uploadTempRetentionMs).toBe(24 * 60 * 60 * 1000);
     expect(config.clients[0]?.apiKey).toBe('secret-key');
@@ -107,6 +108,21 @@ describe('daemon config parsing', () => {
 
     expect(config.server.logRetentionMs).toBe(3_600_000);
     expect(config.server.maxLogBytesPerRun).toBe(1024);
+  });
+
+  it('accepts explicit review bundle byte caps', () => {
+    const config = parseDaemonConfig(
+      {
+        ...validConfig,
+        server: {
+          ...validConfig.server,
+          maxReviewBundleBytes: 2048,
+        },
+      },
+      { env: { CLAUDE_RUNNER_TEST_KEY: 'secret-key' } },
+    );
+
+    expect(config.server.maxReviewBundleBytes).toBe(2048);
   });
 
   it('accepts explicit upload limits and temp retention', () => {

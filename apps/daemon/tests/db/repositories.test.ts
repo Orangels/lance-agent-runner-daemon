@@ -12,6 +12,7 @@ import {
   getRunPromptSnapshot,
   getRunSkillSnapshot,
   getWorkspaceForClient,
+  insertRunFeedback,
   listConversationMessagesForPrompt,
   insertRunMessagesForRunCreate,
   insertAssistantRunMessage,
@@ -19,6 +20,7 @@ import {
   getArtifactForRunForClient,
   listRunLogsFinishedBefore,
   listRunsForClient,
+  listRunFeedbackForClient,
   listArtifactsForRun,
   markInterruptedRunsOnStartup,
   replaceArtifactsForRun,
@@ -905,6 +907,67 @@ describe('run log repository', () => {
     expect(deleteRunLogRows(db, ['old'])).toBe(1);
     expect(getRunLogForRunForClient(db, { runId: 'old', clientId: workspace.clientId })).toBeNull();
     expect(getRunLogForRunForClient(db, { runId: 'new', clientId: workspace.clientId })?.runId).toBe('new');
+  });
+});
+
+describe('run feedback repository', () => {
+  it('stores feedback for a run and scopes reads by client unless admin', () => {
+    const { db, workspace } = insertWorkspaceFixture();
+    insertRunQueued(db, {
+      id: 'run_1',
+      workspaceId: workspace.id,
+      profileId: workspace.profileId,
+      clientId: workspace.clientId,
+      kind: 'revise',
+      prompt: 'Run.',
+      now: 5000,
+    });
+
+    insertRunFeedback(db, {
+      id: 'feedback_1',
+      runId: 'run_1',
+      clientId: workspace.clientId,
+      category: 'prompt',
+      message: 'Ask for parameters before generating.',
+      metadata: { artifactPath: 'output/result.json' },
+      now: 6000,
+    });
+    insertRunFeedback(db, {
+      id: 'feedback_2',
+      runId: 'run_1',
+      clientId: workspace.clientId,
+      category: 'custom.selector',
+      message: 'Selector looks brittle.',
+      metadata: null,
+      now: 7000,
+    });
+
+    expect(listRunFeedbackForClient(db, { runId: 'run_1', clientId: workspace.clientId })).toEqual([
+      {
+        id: 'feedback_1',
+        runId: 'run_1',
+        clientId: workspace.clientId,
+        category: 'prompt',
+        message: 'Ask for parameters before generating.',
+        metadata: { artifactPath: 'output/result.json' },
+        createdAt: 6000,
+      },
+      {
+        id: 'feedback_2',
+        runId: 'run_1',
+        clientId: workspace.clientId,
+        category: 'custom.selector',
+        message: 'Selector looks brittle.',
+        metadata: null,
+        createdAt: 7000,
+      },
+    ]);
+    expect(listRunFeedbackForClient(db, { runId: 'run_1', clientId: 'other' })).toBeNull();
+    expect(listRunFeedbackForClient(db, { runId: 'run_1', clientId: 'admin', isAdmin: true })?.[0]).toMatchObject({
+      runId: 'run_1',
+      clientId: workspace.clientId,
+      category: 'prompt',
+    });
   });
 });
 

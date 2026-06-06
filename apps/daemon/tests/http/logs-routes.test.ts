@@ -43,6 +43,14 @@ function makeConfig(root: string): DaemonConfig {
       },
       clients: [
         { id: 'lqbot', apiKey: 'secret', allowedProfileIds: ['report-docx'], canReadLogs: true },
+        {
+          id: 'debug-client',
+          apiKey: 'debug-secret',
+          allowedProfileIds: ['report-docx'],
+          canReadLogs: true,
+          canReadDebugEvents: true,
+          isAdmin: true,
+        },
         { id: 'no-logs', apiKey: 'no-logs-secret', allowedProfileIds: ['report-docx'], canReadLogs: false },
         { id: 'other', apiKey: 'other-secret', allowedProfileIds: ['report-docx'], canReadLogs: true },
       ],
@@ -105,6 +113,7 @@ async function withApp(callback: (context: { baseUrl: string; config: DaemonConf
   const logs = runLogService.openRunLogs({ runId: 'run_1' });
   logs.stdout(`authorization: Bearer secret-token ${config.profiles[0]!.sandboxRoot} output/report.docx`);
   logs.stderr('stderr tail');
+  logs.debugEvent({ type: 'stderr', text: 'debug tail' });
   logs.close();
 
   const app = createApp({
@@ -169,6 +178,52 @@ describe('logs routes', () => {
 
       expect(response.status).toBe(404);
       expect(await response.json()).toEqual({ error: expect.objectContaining({ code: 'NOT_FOUND' }) });
+    });
+  });
+
+  it('downloads complete stdout and stderr logs for authorized clients', async () => {
+    await withApp(async ({ baseUrl, config }) => {
+      const stdoutResponse = await fetch(`${baseUrl}/api/runs/run_1/logs/stdout/download`, {
+        headers: { Authorization: 'Bearer secret' },
+      });
+      const stderrResponse = await fetch(`${baseUrl}/api/runs/run_1/logs/stderr/download`, {
+        headers: { Authorization: 'Bearer secret' },
+      });
+
+      expect(stdoutResponse.status).toBe(200);
+      expect(stdoutResponse.headers.get('content-type')).toContain('text/plain');
+      expect(stdoutResponse.headers.get('content-disposition')).toContain('stdout.log');
+      expect(await stdoutResponse.text()).not.toContain(config.profiles[0]!.sandboxRoot);
+      expect(stderrResponse.status).toBe(200);
+      expect(await stderrResponse.text()).toBe('stderr tail');
+    });
+  });
+
+  it('requires debug event permission for complete debug event downloads', async () => {
+    await withApp(async ({ baseUrl }) => {
+      const denied = await fetch(`${baseUrl}/api/runs/run_1/logs/debug-events/download`, {
+        headers: { Authorization: 'Bearer secret' },
+      });
+      const allowed = await fetch(`${baseUrl}/api/runs/run_1/logs/debug-events/download`, {
+        headers: { Authorization: 'Bearer debug-secret' },
+      });
+
+      expect(denied.status).toBe(403);
+      expect(await denied.json()).toEqual({ error: expect.objectContaining({ code: 'FORBIDDEN' }) });
+      expect(allowed.status).toBe(200);
+      expect(allowed.headers.get('content-disposition')).toContain('debug-events.ndjson');
+      expect(await allowed.text()).toContain('debug tail');
+    });
+  });
+
+  it('rejects invalid complete log download kinds', async () => {
+    await withApp(async ({ baseUrl }) => {
+      const response = await fetch(`${baseUrl}/api/runs/run_1/logs/unknown/download`, {
+        headers: { Authorization: 'Bearer secret' },
+      });
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: expect.objectContaining({ code: 'BAD_REQUEST' }) });
     });
   });
 });

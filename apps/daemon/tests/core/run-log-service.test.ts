@@ -46,6 +46,7 @@ function setup(input: { maxLogBytesPerRun?: number; logRetentionMs?: number } = 
         maxQueueSize: 100,
         logRetentionMs: input.logRetentionMs ?? 60_000,
         maxLogBytesPerRun: input.maxLogBytesPerRun ?? 4 * 1024 * 1024,
+        maxReviewBundleBytes: 16 * 1024 * 1024,
         maxUploadBytesPerFile: 50 * 1024 * 1024,
         uploadTempRetentionMs: 24 * 60 * 60 * 1000,
       },
@@ -80,6 +81,7 @@ const logClient = (input: Partial<RunLogClient> = {}): RunLogClient => ({
   id: input.id ?? 'lqbot',
   isAdmin: input.isAdmin ?? false,
   canReadLogs: input.canReadLogs ?? true,
+  canReadDebugEvents: input.canReadDebugEvents ?? false,
 });
 
 describe('run log service', () => {
@@ -181,6 +183,57 @@ describe('run log service', () => {
       size: 0,
       tail: '',
     });
+  });
+
+  it('returns complete stdout and stderr download handles for authorized clients', () => {
+    const { dataDir, service } = setup();
+    const logs = service.openRunLogs({ runId: 'run_1' });
+    logs.stdout('full stdout');
+    logs.stderr('full stderr');
+    logs.close();
+
+    expect(service.getRunLogDownload({ runId: 'run_1', kind: 'stdout', client: logClient() })).toEqual({
+      filePath: path.join(dataDir, 'logs/runs/run_1/stdout.log'),
+      fileName: 'stdout.log',
+      mimeType: 'text/plain; charset=utf-8',
+      size: 'full stdout'.length,
+    });
+    expect(service.getRunLogDownload({ runId: 'run_1', kind: 'stderr', client: logClient() }).fileName).toBe(
+      'stderr.log',
+    );
+  });
+
+  it('requires debug-event permission for complete debug event downloads', () => {
+    const { service } = setup();
+    const logs = service.openRunLogs({ runId: 'run_1' });
+    logs.debugEvent({ type: 'stderr', text: 'debug line' });
+    logs.close();
+
+    expect(() =>
+      service.getRunLogDownload({ runId: 'run_1', kind: 'debug-events', client: logClient() }),
+    ).toThrow(expect.objectContaining({ code: 'FORBIDDEN', status: 403 }));
+    expect(
+      service.getRunLogDownload({
+        runId: 'run_1',
+        kind: 'debug-events',
+        client: logClient({ canReadDebugEvents: true }),
+      }).fileName,
+    ).toBe('debug-events.ndjson');
+  });
+
+  it('returns not found when a complete log file is missing or belongs to another client', () => {
+    const { service } = setup();
+    const logs = service.openRunLogs({ runId: 'run_1' });
+    logs.stdout('gone');
+    logs.close();
+    rmSync(path.join(service.dataDir, 'logs/runs/run_1/stdout.log'));
+
+    expect(() =>
+      service.getRunLogDownload({ runId: 'run_1', kind: 'stdout', client: logClient() }),
+    ).toThrow(expect.objectContaining({ code: 'NOT_FOUND', status: 404 }));
+    expect(() =>
+      service.getRunLogDownload({ runId: 'run_1', kind: 'stderr', client: logClient({ id: 'other' }) }),
+    ).toThrow(expect.objectContaining({ code: 'NOT_FOUND', status: 404 }));
   });
 
   it('prunes expired log files without deleting durable run data', () => {
