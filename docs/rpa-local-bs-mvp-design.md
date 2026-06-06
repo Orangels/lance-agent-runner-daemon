@@ -253,7 +253,7 @@ RPA 工作流编排位置：`apps/rpa-local-web`。
 
 自然语言生成中的多轮确认不是依赖 Claude Code CLI 的隐式会话续聊。每一次用户确认、补充或修订都创建新的 daemon run；RPA Web 必须把足够的业务上下文、上一轮产物路径和表单答案传给 daemon，daemon 再统一注入 skill 和 profile 约束，生成本轮最终 prompt。
 
-### 2. Playwright codegen 录制后加固
+### 2. 录制后加固
 
 ```text
 用户在 RPA Web 输入目标 URL 并点击开始录制

@@ -21,9 +21,9 @@ export interface RpaSection {
 export const rpaSections: RpaSection[] = [
   {
     id: 'codegen',
-    label: 'Codegen 加固',
-    title: 'Playwright codegen 录制后加固',
-    description: '启动本地 codegen 录制，交给 playwright-rpa-harden skill 生成 DSL、加固脚本和报告。',
+    label: '模仿加固',
+    title: '录制后加固',
+    description: '启动本地录制，交给模仿加固 skill 生成 DSL、加固脚本和报告。',
     icon: <Braces aria-hidden="true" />,
   },
   {
@@ -35,21 +35,21 @@ export const rpaSections: RpaSection[] = [
   },
   {
     id: 'flows',
-    label: 'Flows',
+    label: '流程资产',
     title: '流程资产',
     description: '查看已生成流程、执行参数、导入导出包和本地验证状态。',
     icon: <FolderKanban aria-hidden="true" />,
   },
   {
     id: 'executions',
-    label: 'Executions',
+    label: '执行与验证',
     title: '执行与验证',
     description: '后续展示 verify/run 状态、步骤截图、日志、trace、录像和下载产物。',
     icon: <PlaySquare aria-hidden="true" />,
   },
   {
     id: 'settings',
-    label: 'Settings',
+    label: '本地配置',
     title: '本地配置',
     description: '查看 daemon 地址、profile、浏览器录制命令、本地 storage root 和连接状态。',
     icon: <Settings aria-hidden="true" />,

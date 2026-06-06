@@ -14,11 +14,11 @@ describe('RPA local web app shell', () => {
     render(<App />);
 
     expect(screen.getByRole('heading', { name: 'RPA Local Web' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Codegen 加固' })).toHaveAttribute(
+    expect(screen.getByRole('tab', { name: '模仿加固' })).toHaveAttribute(
       'aria-selected',
       'true',
     );
-    expect(screen.getByText('Playwright codegen 录制后加固')).toBeInTheDocument();
+    expect(screen.getByText('录制后加固')).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('tab', { name: '自然语言生成' }));
 
@@ -28,9 +28,9 @@ describe('RPA local web app shell', () => {
     );
     expect(screen.getByText('用业务描述生成 RPA 流程')).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Executions' }));
+    await userEvent.click(screen.getByRole('tab', { name: '执行与验证' }));
 
-    expect(screen.getByRole('tab', { name: 'Executions' })).toHaveAttribute(
+    expect(screen.getByRole('tab', { name: '执行与验证' })).toHaveAttribute(
       'aria-selected',
       'true',
     );
@@ -56,7 +56,7 @@ describe('RPA local web app shell', () => {
 
     expect(await screen.findByText('Daemon connected')).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    await userEvent.click(screen.getByRole('tab', { name: '本地配置' }));
 
     expect(screen.getByText('http://127.0.0.1:17890')).toBeInTheDocument();
     expect(screen.getByText('rpa-local')).toBeInTheDocument();
@@ -78,7 +78,7 @@ describe('RPA local web app shell', () => {
 
     expect(await screen.findByText('Daemon unavailable')).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    await userEvent.click(screen.getByRole('tab', { name: '本地配置' }));
 
     expect(screen.getByText('daemon unavailable')).toBeInTheDocument();
   });
