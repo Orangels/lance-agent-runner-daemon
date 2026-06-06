@@ -625,18 +625,26 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 
 **Purpose:** Lock a low-risk demo scenario and verify the MVP works on the intended local B/S deployment shape.
 
-**Files likely touched:**
+**Execution plan:** `docs/superpowers/plans/2026-06-06-rpa-demo-flow-compatibility-gate.md`
 
-- Create: `apps/rpa-local-web/demo/` if a static/mock demo page is needed.
-- Docs: `docs/rpa-local-bs-mvp-design.md`
-- Docs: new usage doc such as `docs/rpa-local-web-usage.md`.
+**Files created:**
+
+- Create: `docs/rpa-local-web-demo-runbook.md`
+- Create: `docs/rpa-local-web-compatibility-checklist.md`
+- Create: `docs/rpa-local-web-demo-results-template.md`
+- Create: `apps/rpa-local-web/demo/prompts/google-images-codegen-handoff.md`
+- Create: `apps/rpa-local-web/demo/prompts/weather-natural-language-request.md`
+- Create: `apps/rpa-local-web/public/demo/mock-rpa-target.html`
 
 **Tasks:**
 
-- [ ] Choose one no-login, no-real-write demo flow.
-- [ ] Ensure demo covers params, navigation, input/click, wait/assert, screenshot/log, and optional download.
-- [ ] Add a local usage doc for daemon + RPA Web startup.
+- [ ] Lock two no-login, no-real-write demo flows: Google Images through codegen hardening and weather.com.cn through natural-language generation.
+- [ ] Ensure the two demos cover params, navigation, input/click, wait/assert, screenshot/log, image download artifact, and weather extraction artifact.
+- [ ] Add a local runbook for daemon + RPA Web startup and both demo flows.
 - [ ] Add compatibility checklist for Node, Python, Playwright browser install, headed mode, screenshots, trace, downloads, and local Chrome path override.
+- [ ] Add demo prompt fixtures for Google Images codegen handoff and weather.com.cn natural-language request.
+- [ ] Add local fallback mock page for repeatable product-chain verification when external sites are blocked.
+- [ ] Add demo results template for execution IDs, artifact paths, blockers, and final decision.
 - [ ] Verify codegen hardening path and natural-language path both reach local verify.
 
 **Acceptance:**
