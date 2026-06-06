@@ -11,6 +11,9 @@
 
 ## 启动原则
 
+- 必须使用当前 Claude Code 工具列表中真实存在的工具名，不要猜测 MCP 前缀。
+- RPA profile 推荐 server 名为 `cdt`，常见工具名形如 `mcp__cdt__list_pages`、`mcp__cdt__navigate_page`。
+- 如果当前工具列表中显示的是其它前缀，必须使用工具列表里的精确前缀；不要把短横线自动改成下划线。
 - 使用独立 Chrome profile，优先每个 run 使用独立 `--user-data-dir`。
 - DevTools remote debugging 只绑定 `127.0.0.1`。
 - 探索结束后关闭浏览器或清理临时 profile。
@@ -35,4 +38,3 @@
 - 生成的 DSL 标记为未验证草稿。
 - 在 `hardening-report.md` 中列出缺失探查证据。
 - 不要凭空编造选择器或页面分支。
-

@@ -68,7 +68,8 @@ notes/
 
 ### 3. 探查网页
 
-可用时使用 `chrome-devtools-mcp` 探查目标网页。执行前阅读 `references/chrome-devtools-mcp.md`。
+可用时使用当前工具列表中真实存在的 Chrome DevTools MCP 工具探查目标网页。执行前阅读 `references/chrome-devtools-mcp.md`。
+不要猜测 MCP 工具名或把短横线改成下划线；只调用当前会话工具列表里实际出现的 `mcp__...__list_pages` / `mcp__...__navigate_page` 等工具。RPA profile 推荐的 server 名是 `cdt`，对应工具前缀通常是 `mcp__cdt__`。
 
 探查重点：
 

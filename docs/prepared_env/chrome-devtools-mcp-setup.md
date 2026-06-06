@@ -63,13 +63,13 @@ CLAUDE_CONFIG_DIR=/home/orangels/.claude
 
 ```bash
 CLAUDE_CONFIG_DIR=/home/orangels/.claude \
-claude mcp add -s user chrome-dev-mcp -- \
+claude mcp add -s user cdt -- \
 npx chrome-devtools-mcp@latest --headless=true --isolated=true
 ```
 
 效果：
 
-- server 名取 `chrome-dev-mcp`，生成的工具名缩短为 `mcp__chrome-dev-mcp__list_pages`（约 20 字符），**远在 64 字符限制内** → 工具调用恢复正常。
+- server 名取 `cdt`，生成的工具名缩短为 `mcp__cdt__list_pages`，**远在 64 字符限制内** → 工具调用恢复正常。
 - 其它插件 MCP（context7、oh-my-claudecode 等）同理：用 `claude mcp add -s user` + 短名重新注册即可。
 
 参数说明：
@@ -78,8 +78,8 @@ npx chrome-devtools-mcp@latest --headless=true --isolated=true
 - `--isolated=true`：使用临时 user-data-dir，会话结束自动清理，保持环境干净。
 - `chrome-devtools-mcp@latest`：直接取最新版即可，版本不是本问题的变量。
 
-> 命名原则：server 名越短越好。工具名总长 = `mcp__` + server 名 + `__` + 工具名，
-> 务必让最长的工具名也落在 64 字符以内。
+> 命名原则：server 名越短越好，且尽量只使用简单字母数字。工具名总长 = `mcp__` + server 名 + `__` + 工具名，
+> 务必让最长的工具名也落在 64 字符以内。RPA 默认使用 `cdt`，避免模型把 `chrome-dev-mcp` 误写成 `chrome_dev_mcp`。
 
 ### RPA daemon 环境初始化脚本
 
@@ -159,8 +159,9 @@ node /opt/rpa-mcp/chrome-devtools-mcp/build/src/bin/chrome-devtools-mcp.js --hea
 - 始终检查 `claude`、`google-chrome` 是否存在。
 - `online` 模式检查 `npx`，`offline` 模式检查 `node` 和 `--bin` 文件。
 - 用 daemon 实际使用的 `CLAUDE_CONFIG_DIR` 执行 `claude mcp list`。
-- 如果 `chrome-dev-mcp` 已存在且命令与当前模式一致，只做验证，不重复写配置。
+- 如果 `cdt` 已存在且命令与当前模式一致，只做验证，不重复写配置。
 - 如果不存在，或已存在但命令与当前模式不一致，先写入/替换为当前模式对应的命令。
+- 如果检测到历史配置 `chrome-dev-mcp` 或 `chrome_dev_mcp`，脚本会自动移除它们，避免 Claude Code 同时看到多个 Chrome DevTools MCP 前缀。
 
 不要把 `claude mcp add` 放进 daemon 每次启动脚本。它是写配置动作，不是启动 MCP 服务动作；每次启动都写配置会增加排查难度，也可能在并发启动时产生配置写入竞争。启动脚本只负责启动 daemon / RPA Web，MCP 配置缺失时用本 setup 脚本修复。
 
@@ -209,7 +210,7 @@ ps aux | grep -E "chrome-devtools-mcp" | grep -v grep
 # 如有残留，按 PID kill 掉
 ```
 
-重启后，在会话中调用 `mcp__chrome-dev-mcp__list_pages` 等工具即可正常使用。RPA 自然语言生成 run 中，也应能看到 `mcp__chrome-dev-mcp__*` 工具，而不再降级到 WebFetch。
+重启后，在会话中调用 `mcp__cdt__list_pages` 等工具即可正常使用。RPA 自然语言生成 run 中，也应能看到 `mcp__cdt__*` 工具，而不再降级到 WebFetch。
 
 ## 六、验证
 
@@ -229,7 +230,7 @@ curl -sS http://127.0.0.1:9333/json/version
 pkill -f "remote-debugging-port=9333"; rm -rf /tmp/cdptest
 ```
 
-重启 Claude Code 后，在会话里调用 `mcp__chrome-dev-mcp__list_pages` 不再报 `No such tool available`，即修复成功。
+重启 Claude Code 后，在会话里调用 `mcp__cdt__list_pages` 不再报 `No such tool available`，即修复成功。
 
 > 说明：命令行用 `--dump-dom <url>` 直接抓页面在本环境会卡住超时，那是命令行等待 load 事件的行为，
 > **与 MCP 无关**。MCP 走的是 CDP 远程调试协议，验证请以 CDP 端点为准。

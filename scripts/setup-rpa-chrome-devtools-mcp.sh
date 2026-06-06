@@ -13,7 +13,7 @@ Options:
                               Defaults to RPA_CHROME_DEVTOOLS_MCP_BIN.
   --package <pkg>             Online package spec. Defaults to
                               RPA_CHROME_DEVTOOLS_MCP_PACKAGE or chrome-devtools-mcp@latest.
-  --server-name <name>        MCP server name. Defaults to RPA_CHROME_DEVTOOLS_MCP_NAME or chrome-dev-mcp.
+  --server-name <name>        MCP server name. Defaults to RPA_CHROME_DEVTOOLS_MCP_NAME or cdt.
   --claude-config-dir <path>  Claude config dir used by daemon. Defaults to CLAUDE_CONFIG_DIR or /home/orangels/.claude.
   -h, --help                  Show this help.
 
@@ -24,7 +24,7 @@ USAGE
 }
 
 claude_config_dir="${CLAUDE_CONFIG_DIR:-/home/orangels/.claude}"
-server_name="${RPA_CHROME_DEVTOOLS_MCP_NAME:-chrome-dev-mcp}"
+server_name="${RPA_CHROME_DEVTOOLS_MCP_NAME:-cdt}"
 mode="${RPA_CHROME_DEVTOOLS_MCP_MODE:-online}"
 offline_bin="${RPA_CHROME_DEVTOOLS_MCP_BIN:-}"
 online_package="${RPA_CHROME_DEVTOOLS_MCP_PACKAGE:-chrome-devtools-mcp@latest}"
@@ -134,6 +134,26 @@ join_command() {
 echo "Using CLAUDE_CONFIG_DIR=${claude_config_dir}"
 echo "Using mode=${mode}"
 echo "Using MCP command: $(join_command "${mcp_command}" "${mcp_args[@]}")"
+
+remove_legacy_server_if_present() {
+  local legacy_name="$1"
+  if [[ "${legacy_name}" == "${server_name}" ]]; then
+    return
+  fi
+
+  local legacy_line
+  legacy_line="$(
+    CLAUDE_CONFIG_DIR="${claude_config_dir}" claude mcp list 2>/tmp/rpa-chrome-devtools-mcp-list.log \
+      | grep "^${legacy_name}:" || true
+  )"
+  if [[ -n "${legacy_line}" ]]; then
+    echo "Removing legacy MCP server '${legacy_name}' to avoid ambiguous tool prefixes."
+    CLAUDE_CONFIG_DIR="${claude_config_dir}" claude mcp remove "${legacy_name}" >/dev/null
+  fi
+}
+
+remove_legacy_server_if_present "chrome-dev-mcp"
+remove_legacy_server_if_present "chrome_dev_mcp"
 
 current_line="$(
   CLAUDE_CONFIG_DIR="${claude_config_dir}" claude mcp list 2>/tmp/rpa-chrome-devtools-mcp-list.log \
