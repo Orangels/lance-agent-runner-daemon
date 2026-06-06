@@ -10,7 +10,7 @@
 
 ## Implementation Result
 
-**Status:** Completed in the current implementation commit.
+**Status:** Completed in commit `bcd71d4`.
 
 **Implemented:** flow detail API, shared browser-safe execution/flow types, browser API client execution/SSE helpers, `Executions` tab runtime workbench, control bar, step list, screenshot panel, log panel, artifact panel, responsive workbench styles, and tests.
 

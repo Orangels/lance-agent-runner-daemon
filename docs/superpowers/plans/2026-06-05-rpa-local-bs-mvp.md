@@ -46,7 +46,7 @@ Completed so far:
 - `RPA Workspace Package Skeleton` landed in commit `e75a5ef`.
 - `RPA DSL And Artifact Contract` landed in commit `b39829d`.
 - `RPA Execution Backend And Local Executor` landed in commit `30c49da`.
-- `Minimal Runtime Verification UI` completed in the current implementation commit.
+- `Minimal Runtime Verification UI` landed in commit `bcd71d4`.
 
 Next planned slice:
 
@@ -312,7 +312,7 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 
 **Purpose:** Provide the minimal verification display that codegen and natural-language loops depend on: step list, current log stream, current screenshot, and execution status.
 
-**Status:** Completed in the current implementation commit.
+**Status:** Completed in commit `bcd71d4`.
 
 **Execution plan:** `docs/superpowers/plans/2026-06-06-rpa-runtime-verification-ui.md`
 
@@ -352,6 +352,8 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 
 **Purpose:** Deliver the fastest end-to-end script production path: RPA Web starts Playwright codegen, records user actions into a single-file `flow.py`, uploads that file to daemon, runs the hardening skill, validates artifacts, and verifies locally.
 
+**Execution plan:** `docs/superpowers/plans/2026-06-06-rpa-codegen-hardening-loop.md`
+
 **Files likely touched:**
 
 - Create: `apps/rpa-local-web/src/server/codegen/codegen-types.ts`
@@ -366,17 +368,17 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 **Tasks:**
 
 - [ ] Add UI for target URL, flow name, start recording, cancel recording, and recording status.
-- [ ] Implement RPA Web backend codegen sessions with states: `idle | starting | recording | completed | cancelled | failed`.
+- [ ] Implement RPA Web backend codegen sessions with states: `starting | recording | completed | hardening | needs_input | hardened | failed | cancelled`; `idle` is UI-only before a session exists.
 - [ ] Start Playwright codegen from the RPA Web backend, not daemon core, using a command shaped like `playwright codegen --target python -o <flowInputDir>/flow.py <targetUrl>`.
 - [ ] Store codegen output in an RPA Web-owned flow input directory; do not write directly into daemon workspace and do not expose daemon absolute paths.
 - [ ] Treat the codegen session as completed when the Playwright codegen child process exits successfully.
 - [ ] Support cancel by terminating the codegen child process and marking the session `cancelled`.
 - [ ] On successful exit, verify `<flowInputDir>/flow.py` exists, is non-empty, and is the only supported codegen script input for MVP.
 - [ ] Automatically upload the generated `flow.py` to daemon workspace as `input/flow.py` using daemon file upload API.
-- [ ] Create daemon run with `kind: generate`, `skillId: playwright-rpa-harden`, and `promptMode: business-context`, using business context that includes codegen session id, `inputFiles: ["input/flow.py"]`, recording source, and stage metadata; legacy `generate + skillId + prompt` remains a compatibility fallback, not the final multi-turn workflow.
+- [ ] Create a per-session daemon workspace, then create daemon run with `profileId`, `workspaceId`, `currentPrompt`, `kind: generate`, `skillId: playwright-rpa-harden`, and `promptMode: business-context`, using business context that includes codegen session id, `inputFiles: ["input/flow.py"]`, recording source, and stage metadata; legacy `generate + skillId + prompt` remains a compatibility fallback, not the final multi-turn workflow.
 - [ ] Subscribe to daemon SSE and show user-visible assistant output and artifact progress.
 - [ ] If Claude Code outputs `<question-form>`, persist the form id/version/questions, render it, and submit answers into a follow-up run.
-- [ ] For follow-up runs, create `kind: revise`, `skillId: playwright-rpa-harden`, `promptMode: business-context`; RPA Web must pass form answers, previous daemon run id, previous artifact paths, and stage metadata through `businessContext`; it must not rely on daemon implicit history or read SKILL.md.
+- [ ] For follow-up runs, create `kind: revise`, `skillId: playwright-rpa-harden`, `promptMode: business-context`; RPA Web must pass `profileId`, `workspaceId`, `conversationId`, `currentPrompt`, form answers, previous daemon run id, previous artifact paths, and stage metadata through the request and `businessContext`; it must not rely on daemon implicit history or read SKILL.md.
 - [ ] Download required artifacts from daemon artifact API into RPA Web flow storage.
 - [ ] Validate artifacts and DSL.
 - [ ] Render `parameterization-report.md`, `hardening-report.md`, DSL steps, and generated script preview.
