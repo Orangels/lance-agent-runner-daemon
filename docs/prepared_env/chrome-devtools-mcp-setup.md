@@ -86,13 +86,13 @@ npx chrome-devtools-mcp@latest --headless=true --isolated=true
 仓库提供了幂等 setup 脚本：
 
 ```bash
-pnpm setup:rpa-chrome-devtools-mcp
+pnpm setup:rpa-chrome-devtools-mcp -- --mode online
 ```
 
 等价于：
 
 ```bash
-scripts/setup-rpa-chrome-devtools-mcp.sh
+scripts/setup-rpa-chrome-devtools-mcp.sh --mode online
 ```
 
 脚本默认使用 `CLAUDE_CONFIG_DIR=/home/orangels/.claude`，也可通过环境变量覆盖：
@@ -101,12 +101,66 @@ scripts/setup-rpa-chrome-devtools-mcp.sh
 CLAUDE_CONFIG_DIR=/path/to/claude-config pnpm setup:rpa-chrome-devtools-mcp
 ```
 
+#### 外网 / 开发环境模式
+
+`online` 模式使用 `npx` 启动 MCP，适合开发机、外网演示机或能访问 npm registry 的环境：
+
+```bash
+pnpm setup:rpa-chrome-devtools-mcp -- --mode online
+```
+
+默认写入：
+
+```bash
+npx chrome-devtools-mcp@latest --headless=true --isolated=true
+```
+
+如需固定版本，避免生产环境被 `latest` 漂移影响：
+
+```bash
+pnpm setup:rpa-chrome-devtools-mcp -- \
+  --mode online \
+  --package chrome-devtools-mcp@1.1.1
+```
+
+#### 内网 / 离线环境模式
+
+客户内网如果没有 npm registry，不要使用 `npx chrome-devtools-mcp@latest`。应在部署包里提前放好已安装的
+`chrome-devtools-mcp` 文件目录，然后用本地 JS 入口注册：
+
+```bash
+pnpm setup:rpa-chrome-devtools-mcp -- \
+  --mode offline \
+  --bin /opt/rpa-mcp/chrome-devtools-mcp/build/src/bin/chrome-devtools-mcp.js
+```
+
+等价环境变量形式：
+
+```bash
+RPA_CHROME_DEVTOOLS_MCP_MODE=offline \
+RPA_CHROME_DEVTOOLS_MCP_BIN=/opt/rpa-mcp/chrome-devtools-mcp/build/src/bin/chrome-devtools-mcp.js \
+pnpm setup:rpa-chrome-devtools-mcp
+```
+
+`offline` 模式写入：
+
+```bash
+node /opt/rpa-mcp/chrome-devtools-mcp/build/src/bin/chrome-devtools-mcp.js --headless=true --isolated=true
+```
+
+离线模式不会调用 `npx`，也不依赖公网 npm registry。它要求目标机器上已有：
+
+- `node`
+- `google-chrome`
+- 部署包随附的 `chrome-devtools-mcp` JS 入口文件
+
 脚本行为：
 
-- 检查 `claude`、`npx`、`google-chrome` 是否存在。
+- 始终检查 `claude`、`google-chrome` 是否存在。
+- `online` 模式检查 `npx`，`offline` 模式检查 `node` 和 `--bin` 文件。
 - 用 daemon 实际使用的 `CLAUDE_CONFIG_DIR` 执行 `claude mcp list`。
-- 如果 `chrome-dev-mcp` 已存在，只做验证，不重复写配置。
-- 如果不存在，执行一次 `claude mcp add -s user chrome-dev-mcp ...`。
+- 如果 `chrome-dev-mcp` 已存在且命令与当前模式一致，只做验证，不重复写配置。
+- 如果不存在，或已存在但命令与当前模式不一致，先写入/替换为当前模式对应的命令。
 
 不要把 `claude mcp add` 放进 daemon 每次启动脚本。它是写配置动作，不是启动 MCP 服务动作；每次启动都写配置会增加排查难度，也可能在并发启动时产生配置写入竞争。启动脚本只负责启动 daemon / RPA Web，MCP 配置缺失时用本 setup 脚本修复。
 
@@ -183,7 +237,7 @@ pkill -f "remote-debugging-port=9333"; rm -rf /tmp/cdptest
 ## 七、复用提示（环境变化时）
 
 - 核心原则：**所有 MCP 都用 `claude mcp add -s user` + 短 server 名注册**，不要用插件方式安装，避免 `plugin_` 长前缀触发 64 字符工具名上限。
-- 新机器准备环境：先 `apt` 装系统 Chrome（第四节），再运行 `pnpm setup:rpa-chrome-devtools-mcp`（第三节），最后重启 daemon / Claude Code（第五节）。
+- 新机器准备环境：先 `apt` 装系统 Chrome（第四节），再按外网/内网环境运行 `pnpm setup:rpa-chrome-devtools-mcp -- --mode ...`（第三节），最后重启 daemon / Claude Code（第五节）。
 - 若再次出现「server 已连接、schema 也在、调用却报 `No such tool available`」且涉及插件 MCP，优先怀疑工具名超长，先核对工具名总长是否超过 64 字符。
 
 如需清理旧短名后重建：
