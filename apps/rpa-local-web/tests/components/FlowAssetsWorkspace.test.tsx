@@ -8,15 +8,24 @@ import type { RpaFlowDetailResponse } from '../../src/shared/rpa-api-types.js';
 afterEach(() => cleanup());
 
 describe('FlowAssetsWorkspace', () => {
-  it('loads flow provenance and exposes export/verify/run controls', async () => {
+  it('lists flows with source, verify state, load, and export controls', async () => {
     const client = new FakeFlowAssetsClient();
     render(<FlowAssetsWorkspace client={client} />);
 
-    await userEvent.clear(screen.getByLabelText('Flow ID'));
-    await userEvent.type(screen.getByLabelText('Flow ID'), 'case_query');
-    await userEvent.click(screen.getByRole('button', { name: 'Load flow' }));
+    expect(await screen.findByRole('cell', { name: '案件查询' })).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: 'case_query' })).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: 'codegen' })).toBeInTheDocument();
+    expect(screen.getByText('Verify required')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Export case_query' })).toHaveAttribute(
+      'href',
+      '/api/rpa/flows/case_query/package/download',
+    );
+    expect(screen.getByText('天气查询')).toBeInTheDocument();
+    expect(screen.getByText('Ready')).toBeInTheDocument();
 
-    expect(await screen.findByText('案件查询')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Load case_query' }));
+
+    expect(await screen.findByRole('heading', { name: '案件查询' })).toBeInTheDocument();
     expect(screen.getByText('imported')).toBeInTheDocument();
     expect(screen.getByText('Verify required before run')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Export .rpa.zip' })).toHaveAttribute(
@@ -31,9 +40,8 @@ describe('FlowAssetsWorkspace', () => {
     const runtimeClient = new FakeRuntimeClient();
     render(<FlowAssetsWorkspace client={client} runtimeClient={runtimeClient} />);
 
-    await userEvent.clear(screen.getByLabelText('Flow ID'));
-    await userEvent.type(screen.getByLabelText('Flow ID'), 'case_query');
-    await userEvent.click(screen.getByRole('button', { name: 'Load flow' }));
+    await screen.findByRole('cell', { name: '案件查询' });
+    await userEvent.click(screen.getByRole('button', { name: 'Load case_query' }));
     expect(await screen.findByRole('button', { name: 'Run flow' })).toBeDisabled();
 
     client.markVerified();
@@ -64,11 +72,23 @@ describe('FlowAssetsWorkspace', () => {
 
     await waitFor(() => expect(client.importPackage).toHaveBeenCalledWith(file));
     await waitFor(() => expect(client.getFlow).toHaveBeenLastCalledWith('imported_flow'));
+    await waitFor(() => expect(client.listFlows).toHaveBeenCalledTimes(2));
   });
 });
 
 class FakeFlowAssetsClient {
   private verified = false;
+  private imported = false;
+
+  readonly listFlows = vi.fn(async () => ({
+    flows: [
+      { flowId: 'case_query', title: '案件查询', source: 'codegen' as const, requiresVerifyBeforeRun: !this.verified },
+      { flowId: 'weather_lookup', title: '天气查询', source: 'nl' as const, requiresVerifyBeforeRun: false },
+      ...(this.imported
+        ? [{ flowId: 'imported_flow', title: 'Imported flow', source: 'codegen' as const, requiresVerifyBeforeRun: true }]
+        : []),
+    ],
+  }));
 
   readonly getFlow = vi.fn(async (flowId = 'case_query'): Promise<RpaFlowDetailResponse> => {
     const dsl = { ...createMinimalRpaDsl(), flow_id: flowId };
@@ -94,15 +114,18 @@ class FakeFlowAssetsClient {
 
   readonly getPackageDownloadUrl = vi.fn((flowId: string) => `/api/rpa/flows/${flowId}/package/download`);
 
-  readonly importPackage = vi.fn(async () => ({
-    flowId: 'imported_flow',
-    title: 'Imported flow',
-    source: 'imported' as const,
-    requiresVerifyBeforeRun: true as const,
-    importedAt: '2026-06-06T00:00:00.000Z',
-    packageSha256: 'sha256:def',
-    ignoredEntries: [],
-  }));
+  readonly importPackage = vi.fn(async () => {
+    this.imported = true;
+    return {
+      flowId: 'imported_flow',
+      title: 'Imported flow',
+      source: 'imported' as const,
+      requiresVerifyBeforeRun: true as const,
+      importedAt: '2026-06-06T00:00:00.000Z',
+      packageSha256: 'sha256:def',
+      ignoredEntries: [],
+    };
+  });
 
   markVerified() {
     this.verified = true;

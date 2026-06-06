@@ -824,6 +824,7 @@ select {
 }
 
 .flow-assets-toolbar,
+.flow-assets-list,
 .flow-assets-summary {
   border: 1px solid #d7dee8;
   border-radius: 6px;
@@ -832,10 +833,63 @@ select {
 
 .flow-assets-toolbar {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) auto minmax(220px, 1fr) auto;
+  grid-template-columns: minmax(220px, 1fr) auto;
   gap: 10px;
   align-items: end;
   padding: 12px;
+}
+
+.flow-assets-list {
+  overflow: hidden;
+}
+
+.flow-assets-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.flow-assets-table th,
+.flow-assets-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #eef2f6;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.flow-assets-table th {
+  background: #f8fafc;
+  color: #526174;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.flow-assets-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.flow-assets-table th:last-child,
+.flow-assets-table td:last-child {
+  text-align: right;
+}
+
+.flow-assets-table code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+}
+
+.flow-assets-table__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.flow-assets-empty {
+  margin: 0;
+  padding: 16px;
+  color: #64748b;
+  font-size: 12px;
 }
 
 .flow-assets-summary {

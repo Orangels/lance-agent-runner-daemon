@@ -1,11 +1,17 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Download, Upload } from 'lucide-react';
 import { RpaApiClient } from '../api/rpa-api-client.js';
-import type { ImportRpaPackageResponse, RpaFlowDetailResponse } from '../shared/rpa-api-types.js';
+import type {
+  ImportRpaPackageResponse,
+  RpaFlowDetailResponse,
+  RpaFlowListResponse,
+  RpaFlowSummary,
+} from '../shared/rpa-api-types.js';
 import { RuntimeVerificationWorkspace, type RuntimeVerificationApiClient } from './RuntimeVerificationWorkspace.js';
 import { StatusBadge } from './StatusBadge.js';
 
 export interface FlowAssetsApiClient {
+  listFlows(): Promise<RpaFlowListResponse>;
   getFlow(flowId: string): Promise<RpaFlowDetailResponse>;
   getPackageDownloadUrl(flowId: string): string;
   importPackage(file: File): Promise<ImportRpaPackageResponse>;
@@ -19,7 +25,7 @@ export interface FlowAssetsWorkspaceProps {
 export function FlowAssetsWorkspace({ client: injectedClient, runtimeClient }: FlowAssetsWorkspaceProps) {
   const defaultClient = useMemo(() => new RpaApiClient(), []);
   const client = injectedClient ?? defaultClient;
-  const [flowIdInput, setFlowIdInput] = useState('case_query');
+  const [flows, setFlows] = useState<RpaFlowSummary[]>([]);
   const [flow, setFlow] = useState<RpaFlowDetailResponse | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -28,7 +34,28 @@ export function FlowAssetsWorkspace({ client: injectedClient, runtimeClient }: F
   const [verificationMode, setVerificationMode] = useState<'verify' | 'run' | null>(null);
   const [autoStartNonce, setAutoStartNonce] = useState(0);
 
-  const loadFlow = async (nextFlowId = flowIdInput) => {
+  const refreshFlows = useCallback(async () => {
+    const response = await client.listFlows();
+    setFlows(response.flows);
+  }, [client]);
+
+  useEffect(() => {
+    let active = true;
+    void client
+      .listFlows()
+      .then((response) => {
+        if (active) setFlows(response.flows);
+      })
+      .catch((listError) => {
+        if (!active) return;
+        setError(listError instanceof Error ? listError.message : 'Failed to list flows.');
+      });
+    return () => {
+      active = false;
+    };
+  }, [client]);
+
+  const loadFlow = async (nextFlowId: string) => {
     const trimmedFlowId = nextFlowId.trim();
     if (!trimmedFlowId) {
       setError('Flow ID is required.');
@@ -41,7 +68,6 @@ export function FlowAssetsWorkspace({ client: injectedClient, runtimeClient }: F
     try {
       const detail = await client.getFlow(trimmedFlowId);
       setFlow(detail);
-      setFlowIdInput(detail.flowId);
       setVerificationMode(null);
     } catch (loadError) {
       setFlow(null);
@@ -62,6 +88,7 @@ export function FlowAssetsWorkspace({ client: injectedClient, runtimeClient }: F
     try {
       const imported = await client.importPackage(selectedFile);
       setMessage(`Imported ${imported.flowId}. Verify is required before run.`);
+      await refreshFlows();
       await loadFlow(imported.flowId);
     } catch (importError) {
       setError(importError instanceof Error ? importError.message : 'Package import failed.');
@@ -79,25 +106,7 @@ export function FlowAssetsWorkspace({ client: injectedClient, runtimeClient }: F
 
   return (
     <div className="flow-assets-workspace">
-      <form
-        className="flow-assets-toolbar"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void loadFlow();
-        }}
-      >
-        <label className="field">
-          <span>Flow ID</span>
-          <input
-            aria-label="Flow ID"
-            value={flowIdInput}
-            onChange={(event) => setFlowIdInput(event.target.value)}
-            placeholder="case_query"
-          />
-        </label>
-        <button type="submit" className="command-button" disabled={busy}>
-          Load flow
-        </button>
+      <form className="flow-assets-toolbar">
         <label className="field">
           <span>Import .rpa.zip</span>
           <input
@@ -115,6 +124,63 @@ export function FlowAssetsWorkspace({ client: injectedClient, runtimeClient }: F
 
       {error ? <p className="runtime-workspace__error">{error}</p> : null}
       {message ? <p className="flow-assets-workspace__message">{message}</p> : null}
+
+      <section className="flow-assets-list" aria-label="Generated flows">
+        {flows.length > 0 ? (
+          <table className="flow-assets-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Flow ID</th>
+                <th>Source</th>
+                <th>Verify state</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {flows.map((summary) => (
+                <tr key={summary.flowId}>
+                  <td>{summary.title}</td>
+                  <td>
+                    <code>{summary.flowId}</code>
+                  </td>
+                  <td>{summary.source}</td>
+                  <td>
+                    <StatusBadge tone={summary.requiresVerifyBeforeRun ? 'warning' : 'ready'}>
+                      {summary.requiresVerifyBeforeRun ? 'Verify required' : 'Ready'}
+                    </StatusBadge>
+                  </td>
+                  <td>
+                    <div className="flow-assets-table__actions">
+                      <button
+                        type="button"
+                        className="command-button command-button--secondary"
+                        aria-label={`Load ${summary.flowId}`}
+                        disabled={busy}
+                        onClick={() => {
+                          void loadFlow(summary.flowId);
+                        }}
+                      >
+                        Load
+                      </button>
+                      <a
+                        className="command-button command-button--secondary"
+                        aria-label={`Export ${summary.flowId}`}
+                        href={client.getPackageDownloadUrl(summary.flowId)}
+                      >
+                        <Download aria-hidden="true" />
+                        <span>Export</span>
+                      </a>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className="flow-assets-empty">No flows available. Generate or import a flow first.</p>
+        )}
+      </section>
 
       {flow ? (
         <section className="flow-assets-summary">
@@ -167,7 +233,7 @@ export function FlowAssetsWorkspace({ client: injectedClient, runtimeClient }: F
           }}
           onVerifySucceeded={() => {
             setVerificationMode(null);
-            void loadFlow(flow.flowId);
+            void Promise.all([loadFlow(flow.flowId), refreshFlows()]);
           }}
           client={runtimeClient}
         />
