@@ -7,13 +7,17 @@ import type { RunService } from '../core/run-service.js';
 import type { RunLogService } from '../core/run-log-service.js';
 import type { ArtifactService } from '../core/artifact-service.js';
 import type { UploadTempService } from '../core/upload-temp-service.js';
+import type { ReviewBundleService } from '../core/review-bundle-service.js';
+import type { RunFeedbackService } from '../core/run-feedback-service.js';
 import type { RunnerDatabase } from '../db/connection.js';
 import { noopDaemonLogger, type DaemonLogger } from '../core/daemon-logger.js';
 import { zodErrorToDaemonError } from './validation.js';
 import { createArtifactsRouter } from './artifacts-routes.js';
+import { createFeedbackRouter } from './feedback-routes.js';
 import { createHealthRouter } from './health-routes.js';
 import { createProfilesRouter } from './profiles-routes.js';
 import { createLogsRouter } from './logs-routes.js';
+import { createReviewBundleRouter } from './review-bundle-routes.js';
 import { createRunsRouter } from './runs-routes.js';
 import { createWorkspaceFilesRouter } from './workspace-files-routes.js';
 import { createWorkspacesRouter } from './workspaces-routes.js';
@@ -26,6 +30,8 @@ interface CreateAppDependencies {
   runLogService?: RunLogService;
   artifactService?: ArtifactService;
   uploadTempService?: UploadTempService;
+  reviewBundleService?: ReviewBundleService;
+  feedbackService?: RunFeedbackService;
   daemonLogger?: DaemonLogger;
 }
 
@@ -52,6 +58,24 @@ export function createApp(dependencies: CreateAppDependencies): express.Express 
       createLogsRouter({
         config: dependencies.config,
         runLogService: dependencies.runLogService,
+      }),
+    );
+  }
+  if (dependencies.reviewBundleService) {
+    app.use(
+      '/api/runs/:runId/review-bundle',
+      createReviewBundleRouter({
+        config: dependencies.config,
+        reviewBundleService: dependencies.reviewBundleService,
+      }),
+    );
+  }
+  if (dependencies.feedbackService) {
+    app.use(
+      '/api/runs/:runId/feedback',
+      createFeedbackRouter({
+        config: dependencies.config,
+        feedbackService: dependencies.feedbackService,
       }),
     );
   }

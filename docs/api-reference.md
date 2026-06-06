@@ -82,8 +82,10 @@ NOT_FOUND
 MODEL_NOT_ALLOWED
 PROFILE_NOT_ALLOWED
 SKILL_NOT_ALLOWED
+COLLECTION_MODE_NOT_ALLOWED
 SKILL_UNAVAILABLE
 SKILL_STAGING_FAILED
+PROMPT_COMPOSITION_FAILED
 RUN_QUEUE_FULL
 WORKSPACE_RUN_ACTIVE
 RUN_NOT_CANCELABLE
@@ -148,6 +150,7 @@ Authorization: Bearer <api-key>
       "defaultModel": "sonnet",
       "allowedModels": ["sonnet"],
       "eventVisibility": "normal",
+      "maxCollectionMode": "lite",
       "permissionMode": "bypassPermissions",
       "profileConcurrency": 1,
       "runTimeoutMs": 600000,
@@ -163,12 +166,13 @@ Authorization: Bearer <api-key>
 | Field | Type | Notes |
 | --- | --- | --- |
 | `profiles[].id` | string | `POST /api/workspaces` 和 `POST /api/runs` 使用的 `profileId`。 |
-| `profiles[].allowedSkillIds` | string[] | `kind=generate` 可用的 `skillId`。 |
+| `profiles[].allowedSkillIds` | string[] | `legacy + generate` 以及 MVP `business-context` run 可用的 `skillId`。 |
 | `profiles[].artifactRules` | object[] | 可选择的 artifact rule。 |
 | `profiles[].defaultArtifactRuleIds` | string[] | `POST /api/runs` 不传 `artifactRuleIds` 时使用。 |
 | `profiles[].defaultModel` | string | 默认 Claude model。 |
 | `profiles[].allowedModels` | string[] | `POST /api/runs.model` 必须命中。 |
 | `profiles[].eventVisibility` | `quiet` / `normal` / `debug` | profile 允许的最大事件可见性。 |
+| `profiles[].maxCollectionMode` | `lite` / `diagnostic` / `review` | profile 允许的最大采集模式。 |
 | `profiles[].permissionMode` | `default` / `acceptEdits` / `bypassPermissions` | Claude Code permission mode，由 profile 控制。 |
 | `profiles[].profileConcurrency` | number | 该 profile 的并发上限。 |
 | `profiles[].runTimeoutMs` | number | 单 run 总运行超时。 |
@@ -344,7 +348,7 @@ Authorization: Bearer <api-key>
 Content-Type: application/json
 ```
 
-Generate 示例：
+Legacy generate 示例：
 
 ```json
 {
@@ -362,7 +366,7 @@ Generate 示例：
 }
 ```
 
-Revise 示例：
+Legacy revise 示例：
 
 ```json
 {
@@ -379,6 +383,30 @@ Revise 示例：
 }
 ```
 
+Business-context 示例：
+
+```json
+{
+  "profileId": "report-docx",
+  "workspaceId": "ws_xxx",
+  "conversationId": "conv_xxx",
+  "kind": "revise",
+  "promptMode": "business-context",
+  "collectionMode": "diagnostic",
+  "skillId": "report-writer",
+  "currentPrompt": "用户已回答参数问题，请继续更新产物。",
+  "businessContext": {
+    "previousRunId": "run_previous",
+    "artifactPaths": ["output/report.docx"],
+    "formAnswers": {
+      "dateRange": ["2026-06-01", "2026-06-05"]
+    },
+    "stage": "question-form-answers"
+  },
+  "artifactRuleIds": ["report-docx"]
+}
+```
+
 ### Request Fields
 
 | Field | Type | Required | Notes |
@@ -386,19 +414,45 @@ Revise 示例：
 | `profileId` | string | yes | 必须是当前 client 可访问 profile。1-128 字符。 |
 | `workspaceId` | string | yes | 必须是该 client 可访问 workspace。1-128 字符。 |
 | `kind` | `generate` / `revise` | yes | 生成或修改。 |
-| `prompt` | string | yes | 1 到 200000 字符。 |
-| `skillId` | string | generate yes, revise no | `generate` 必须传；`revise` 禁止传。1-128 字符。 |
+| `promptMode` | `legacy` / `business-context` / `daemon-composed` | no | 默认 `legacy`。`business-context` 由业务端传入 opaque 上下文包；`daemon-composed` 由 daemon 读取同一 conversation 的可见历史消息后组装最终 prompt。 |
+| `prompt` | string | legacy yes | legacy 模式本轮用户输入，1 到 200000 字符。`business-context` 和 `daemon-composed` 模式禁止传。 |
+| `currentPrompt` | string | business-context / daemon-composed yes | business-context / daemon-composed 模式本轮用户输入，1 到 200000 字符。legacy 模式禁止传。 |
+| `businessContext` | object | no | 业务上下文包，daemon 不解释具体语义；仅用于最终 prompt 组装和 run 级 snapshot。legacy / daemon-composed 模式禁止传。 |
+| `contextPolicy` | object | no | 仅 `daemon-composed` 可传；控制 daemon 读取历史消息的 `recentMessages`、`maxMessageChars`、`maxTotalChars` 和是否输出通用 context warnings。 |
+| `conversationId` | string | no | 复用已有 daemon conversation；如传入，必须属于同一 workspace。未传时继续使用该 workspace 的默认 conversation。 |
+| `collectionMode` | `lite` / `diagnostic` / `review` | no | 默认 `lite`。控制 prompt / skill / business context snapshot 的全文是否落盘；受 profile `maxCollectionMode` 和 client 权限封顶。 |
+| `skillId` | string | 见矩阵 | `legacy + generate` 必填；`legacy + revise` 禁止；`business-context` 必填；`daemon-composed + generate` 必填；`daemon-composed + revise` 可选。1-128 字符。 |
 | `model` | string | no | 不传使用 profile `defaultModel`；传入时必须在 `allowedModels` 内。 |
 | `artifactRuleIds` | string[] | no | 最多 32 个；不传使用 profile `defaultArtifactRuleIds`。 |
 | `eventVisibility` | `quiet` / `normal` / `debug` | no | 只能降低到 profile 可见性，不会超过 profile/client 权限。 |
 | `metadata` | object | no | 业务自定义 JSON，daemon 不解释。 |
+
+`kind × promptMode × skillId` 约束：
+
+| kind | promptMode | Required input | `skillId` |
+| --- | --- | --- | --- |
+| `generate` | `legacy` | `prompt` | required |
+| `revise` | `legacy` | `prompt` | forbidden |
+| `generate` | `business-context` | `currentPrompt` | required |
+| `revise` | `business-context` | `currentPrompt` | required |
+| `generate` | `daemon-composed` | `currentPrompt` | required |
+| `revise` | `daemon-composed` | `currentPrompt` | optional |
+
+`daemon-composed` 只读取 `conversation / run_messages` 中用户可见的 `role + content`，不读取
+prompt snapshot、skill snapshot、debug events、thinking content 或 tool/raw events。历史消息使用
+conversation 级 `conversation_seq` 排序；`contextPolicy` 默认值为
+`recentMessages = 20`、`maxMessageChars = 4000`、`maxTotalChars = 20000`、
+`includeRunWarnings = true`。
 
 ### Response 202
 
 ```json
 {
   "runId": "run_xxx",
-  "status": "queued"
+  "status": "queued",
+  "conversationId": "conv_xxx",
+  "userMessageId": "msg_user_xxx",
+  "assistantMessageId": "msg_assistant_xxx"
 }
 ```
 
@@ -406,12 +460,13 @@ Revise 示例：
 
 | Status | Code | Meaning |
 | --- | --- | --- |
-| 400 | `BAD_REQUEST` | schema 校验失败、`generate` 缺少 `skillId`、`revise` 携带 `skillId`、workspace profile 不匹配。 |
+| 400 | `BAD_REQUEST` | schema 校验失败、promptMode 字段组合错误、workspace profile 不匹配、conversationId 不属于同一 workspace。 |
 | 400 | `MODEL_NOT_ALLOWED` | model 不在 profile `allowedModels` 内。 |
 | 400 | `SKILL_NOT_ALLOWED` | skill 不在 profile `allowedSkillIds` 内。 |
 | 400 | `BAD_REQUEST` | artifact rule id 未知。 |
 | 401 | `UNAUTHORIZED` | API key 缺失或错误。 |
 | 403 | `PROFILE_NOT_ALLOWED` | client 不能使用该 profile。 |
+| 403 | `COLLECTION_MODE_NOT_ALLOWED` | 请求的 `collectionMode` 超过 profile/client 权限。 |
 | 404 | `NOT_FOUND` | workspace 不存在或不属于该 client。 |
 | 429 | `RUN_QUEUE_FULL` | 队列已满，未创建 run row。 |
 
@@ -870,6 +925,159 @@ Authorization: Bearer <api-key>
 | 403 | `FORBIDDEN` | client 没有 `canReadLogs`。 |
 | 404 | `NOT_FOUND` | run 不存在或不属于该 client。 |
 
+## GET /api/runs/:runId/logs/:kind/download
+
+下载完整 run log 文件。`:kind` 支持：
+
+```text
+stdout
+stderr
+debug-events
+```
+
+`stdout` 和 `stderr` 需要 `client.canReadLogs=true`。`debug-events` 需要
+`client.canReadDebugEvents=true`。
+
+### Request
+
+```http
+GET /api/runs/run_xxx/logs/stdout/download
+Authorization: Bearer <api-key>
+```
+
+### Response 200
+
+返回文件流。
+
+Headers:
+
+```text
+Content-Type: text/plain; charset=utf-8
+Content-Length: <log size>
+Content-Disposition: attachment; filename="stdout.log"; filename*=UTF-8''stdout.log
+```
+
+### Common Errors
+
+| Status | Code | Meaning |
+| --- | --- | --- |
+| 401 | `UNAUTHORIZED` | API key 缺失或错误。 |
+| 403 | `FORBIDDEN` | client 没有所需日志或 debug 权限。 |
+| 404 | `NOT_FOUND` | run/log 不存在、不属于该 client，或文件已不存在。 |
+
+## GET /api/runs/:runId/review-bundle/download
+
+导出通用业务 skill review bundle。bundle 是 on-demand 生成，不包含 RPA 专属诊断；业务扩展内容通过 `extensions/` hook 后续追加。
+
+调用方必须具备 `client.canReadLogs=true`。如果调用方同时具备
+`client.canReadDebugEvents=true`，bundle 会包含 debug-only 文件，例如
+`logs/debug-events.ndjson` 和 `messages.debug.json`；否则这些文件会被省略。
+
+### Request
+
+```http
+GET /api/runs/run_xxx/review-bundle/download
+Authorization: Bearer <api-key>
+```
+
+### Response 200
+
+返回 ZIP 文件流。
+
+Headers:
+
+```text
+Content-Type: application/zip
+Content-Length: <bundle size>
+Content-Disposition: attachment; filename="run_run_xxx_review_bundle.zip"; filename*=UTF-8''run_run_xxx_review_bundle.zip
+```
+
+### Common Errors
+
+| Status | Code | Meaning |
+| --- | --- | --- |
+| 401 | `UNAUTHORIZED` | API key 缺失或错误。 |
+| 403 | `FORBIDDEN` | client 没有 `canReadLogs`。 |
+| 404 | `NOT_FOUND` | run 不存在或不属于该 client。 |
+| 413 | `REVIEW_BUNDLE_TOO_LARGE` | bundle 超过 `server.maxReviewBundleBytes`。 |
+
+## GET /api/runs/:runId/feedback
+
+读取某个 run 的通用反馈记录。feedback category 是 opaque string，daemon 只保存，不解释业务含义。
+
+### Request
+
+```http
+GET /api/runs/run_xxx/feedback
+Authorization: Bearer <api-key>
+```
+
+### Response 200
+
+```json
+{
+  "feedback": [
+    {
+      "id": "feedback_xxx",
+      "runId": "run_xxx",
+      "clientId": "lqbot",
+      "category": "skill",
+      "message": "这里应该先询问用户参数。",
+      "metadata": {
+        "artifactPath": "output/result.json"
+      },
+      "createdAt": 1760000000000
+    }
+  ]
+}
+```
+
+## POST /api/runs/:runId/feedback
+
+新增某个 run 的通用反馈记录。`message` 和 `metadata` 会经过通用脱敏。
+
+### Request
+
+```http
+POST /api/runs/run_xxx/feedback
+Authorization: Bearer <api-key>
+Content-Type: application/json
+
+{
+  "category": "skill",
+  "message": "这里应该先询问用户参数。",
+  "metadata": {
+    "artifactPath": "output/result.json"
+  }
+}
+```
+
+### Response 201
+
+```json
+{
+  "feedback": {
+    "id": "feedback_xxx",
+    "runId": "run_xxx",
+    "clientId": "lqbot",
+    "category": "skill",
+    "message": "这里应该先询问用户参数。",
+    "metadata": {
+      "artifactPath": "output/result.json"
+    },
+    "createdAt": 1760000000000
+  }
+}
+```
+
+### Common Errors
+
+| Status | Code | Meaning |
+| --- | --- | --- |
+| 400 | `BAD_REQUEST` | 请求体校验失败。 |
+| 401 | `UNAUTHORIZED` | API key 缺失或错误。 |
+| 404 | `NOT_FOUND` | run 不存在或不属于该 client。 |
+
 ## RunStatus
 
 ```text
@@ -898,8 +1106,9 @@ revise
 
 规则：
 
-- `generate` 必须传 `skillId`。
-- `revise` 禁止传 `skillId`。
+- `legacy + generate` 必须传 `skillId`。
+- `legacy + revise` 禁止传 `skillId`。
+- MVP `business-context` run 必须传 `skillId`，包括 `revise`。
 
 ## PublicArtifact
 

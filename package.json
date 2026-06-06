@@ -14,17 +14,22 @@
     "dev": "pnpm dev:daemon",
     "dev:daemon": "pnpm --filter @lance-agent-runner/daemon dev",
     "dev:web": "pnpm --filter @lance-agent-runner/web dev",
+    "dev:rpa-local-web": "pnpm --filter @lance-agent-runner/rpa-local-web dev",
     "start": "pnpm start:daemon",
-    "build": "pnpm build:daemon && pnpm build:web",
+    "build": "pnpm build:daemon && pnpm build:web && pnpm build:rpa-local-web",
     "build:daemon": "pnpm --filter @lance-agent-runner/daemon build",
     "build:web": "pnpm --filter @lance-agent-runner/web build",
-    "test": "pnpm test:daemon && pnpm test:web",
+    "build:rpa-local-web": "pnpm --filter @lance-agent-runner/rpa-local-web build",
+    "test": "pnpm test:daemon && pnpm test:web && pnpm test:rpa-local-web",
     "test:daemon": "pnpm --filter @lance-agent-runner/daemon test",
     "test:web": "pnpm --filter @lance-agent-runner/web test",
-    "typecheck": "pnpm typecheck:daemon && pnpm typecheck:web",
+    "test:rpa-local-web": "pnpm --filter @lance-agent-runner/rpa-local-web test",
+    "typecheck": "pnpm typecheck:daemon && pnpm typecheck:web && pnpm typecheck:rpa-local-web",
     "typecheck:daemon": "pnpm --filter @lance-agent-runner/daemon typecheck",
     "typecheck:web": "pnpm --filter @lance-agent-runner/web typecheck",
+    "typecheck:rpa-local-web": "pnpm --filter @lance-agent-runner/rpa-local-web typecheck",
     "start:daemon": "pnpm --filter @lance-agent-runner/daemon start",
-    "start:daemon:local": "pnpm --filter @lance-agent-runner/daemon start:local"
+    "start:daemon:local": "pnpm --filter @lance-agent-runner/daemon start:local",
+    "setup:rpa-chrome-devtools-mcp": "scripts/setup-rpa-chrome-devtools-mcp.sh"
   }
 }

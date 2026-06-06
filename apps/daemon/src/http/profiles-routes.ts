@@ -25,6 +25,7 @@ function toPublicProfile(profile: ProfileConfig): Record<string, unknown> {
     defaultModel: profile.defaultModel,
     allowedModels: profile.allowedModels,
     eventVisibility: profile.eventVisibility,
+    maxCollectionMode: profile.maxCollectionMode,
     permissionMode: profile.permissionMode,
     profileConcurrency: profile.profileConcurrency,
     runTimeoutMs: profile.runTimeoutMs,

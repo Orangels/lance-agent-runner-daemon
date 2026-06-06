@@ -397,7 +397,7 @@ generate run 沿用 lanceDesign 的三段式 skill 处理：
 - `skillId` 必须在 profile 的 `allowedSkillIds` 内。
 - 只从 profile 的 `skillRoots` 查找 skill。
 - 不默认暴露用户全局 skill。
-- 如果 skill 有 `assets/`、`references/`、`scripts/` 等 side files，daemon 拷贝 active skill 到 workspace 内。
+- 如果 skill 有 `assets/`、`guides/`、`references/`、`scripts/`、`templates/` 等 side files，daemon 拷贝 active skill 到 workspace 内。
 - 拷贝路径建议使用 `.claude-runner-skills/<skill-folder>/`。
 - 不使用 symlink，避免 agent 写回原始 skill。
 - skill prompt 中应包含 staged skill 相对路径和绝对 fallback 路径，参考 lanceDesign `withSkillRootPreamble()`。

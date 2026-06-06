@@ -1,8 +1,10 @@
 import { z } from 'zod';
 import {
   artifactRoles,
+  collectionModes,
   eventVisibilityLevels,
   type ArtifactRole,
+  type CollectionMode,
   type EventVisibility,
 } from '../core/run-types.js';
 import { findDisallowedProfileEnvKeys } from './env.js';
@@ -18,6 +20,7 @@ export interface ServerConfig {
   maxQueueSize: number;
   logRetentionMs: number;
   maxLogBytesPerRun: number;
+  maxReviewBundleBytes: number;
   maxUploadBytesPerFile: number;
   uploadTempRetentionMs: number;
 }
@@ -52,6 +55,7 @@ export interface ProfileConfig {
   defaultModel: string;
   allowedModels: string[];
   eventVisibility: EventVisibility;
+  maxCollectionMode: CollectionMode;
   profileConcurrency: number;
   runTimeoutMs: number;
   inactivityTimeoutMs: number;
@@ -80,6 +84,7 @@ const serverSchema = z
     maxQueueSize: z.number().int().min(0),
     logRetentionMs: z.number().int().min(0).default(7 * 24 * 60 * 60 * 1000),
     maxLogBytesPerRun: z.number().int().min(1).default(4 * 1024 * 1024),
+    maxReviewBundleBytes: z.number().int().min(1).default(16 * 1024 * 1024),
     maxUploadBytesPerFile: z.number().int().min(1).default(50 * 1024 * 1024),
     uploadTempRetentionMs: z.number().int().min(0).default(24 * 60 * 60 * 1000),
   })
@@ -133,6 +138,7 @@ const profileSchema = z
     defaultModel: nonEmptyString,
     allowedModels: z.array(nonEmptyString).min(1),
     eventVisibility: z.enum(eventVisibilityLevels),
+    maxCollectionMode: z.enum(collectionModes).default('lite'),
     profileConcurrency: z.number().int().min(1),
     runTimeoutMs: z.number().int().min(1),
     inactivityTimeoutMs: z.number().int().min(1),

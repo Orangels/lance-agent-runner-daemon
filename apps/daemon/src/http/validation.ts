@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import { badRequest, daemonError, type DaemonError } from '../core/errors.js';
 import {
+  collectionModes,
   eventVisibilityLevels,
+  promptModes,
   runKinds,
   runStatuses,
   type CreateRunRequest,
@@ -15,6 +17,15 @@ const metadataSchema = z.record(z.string(), z.unknown());
 
 const runShortStringSchema = z.string().min(1).max(128);
 const runPromptSchema = z.string().min(1).max(200_000);
+const businessContextSchema = z.record(z.string(), z.unknown());
+const contextPolicySchema = z
+  .object({
+    recentMessages: z.number().int().min(0).max(100).optional(),
+    maxMessageChars: z.number().int().min(100).max(50_000).optional(),
+    maxTotalChars: z.number().int().min(100).max(200_000).optional(),
+    includeRunWarnings: z.boolean().optional(),
+  })
+  .strict();
 
 const safePathSegmentSchema = z
   .string()
@@ -80,7 +91,13 @@ export const createRunRequestSchema: z.ZodType<CreateRunRequest> = z
     profileId: runShortStringSchema,
     workspaceId: runShortStringSchema,
     kind: z.enum(runKinds),
-    prompt: runPromptSchema,
+    prompt: runPromptSchema.optional(),
+    currentPrompt: runPromptSchema.optional(),
+    conversationId: runShortStringSchema.optional(),
+    promptMode: z.enum(promptModes).optional(),
+    collectionMode: z.enum(collectionModes).optional(),
+    businessContext: businessContextSchema.optional(),
+    contextPolicy: contextPolicySchema.optional(),
     skillId: runShortStringSchema.optional(),
     model: runShortStringSchema.optional(),
     artifactRuleIds: z.array(runShortStringSchema).max(32).optional(),
@@ -89,22 +106,65 @@ export const createRunRequestSchema: z.ZodType<CreateRunRequest> = z
   })
   .strict()
   .superRefine((value, context) => {
-    if (value.kind === 'generate' && !value.skillId) {
-      context.addIssue({
-        code: 'custom',
-        message: 'kind=generate requires skillId',
-        path: ['skillId'],
-      });
+    const promptMode = value.promptMode ?? 'legacy';
+
+    if (promptMode === 'legacy') {
+      if (!value.prompt) {
+        addIssue(context, 'prompt', 'legacy promptMode requires prompt');
+      }
+      if (value.currentPrompt) {
+        addIssue(context, 'currentPrompt', 'legacy promptMode forbids currentPrompt');
+      }
+      if (value.businessContext !== undefined) {
+        addIssue(context, 'businessContext', 'legacy promptMode forbids businessContext');
+      }
+      if (value.contextPolicy !== undefined) {
+        addIssue(context, 'contextPolicy', 'legacy promptMode forbids contextPolicy');
+      }
+      if (value.kind === 'generate' && !value.skillId) {
+        addIssue(context, 'skillId', 'legacy generate requires skillId');
+      }
+      if (value.kind === 'revise' && value.skillId) {
+        addIssue(context, 'skillId', 'legacy revise forbids skillId');
+      }
+      return;
     }
 
-    if (value.kind === 'revise' && value.skillId) {
-      context.addIssue({
-        code: 'custom',
-        message: 'kind=revise forbids skillId',
-        path: ['skillId'],
-      });
+    if (promptMode === 'business-context') {
+      if (value.prompt) {
+        addIssue(context, 'prompt', 'business-context forbids prompt');
+      }
+      if (!value.currentPrompt) {
+        addIssue(context, 'currentPrompt', 'business-context requires currentPrompt');
+      }
+      if (!value.skillId) {
+        addIssue(context, 'skillId', 'business-context requires skillId for MVP');
+      }
+      if (value.contextPolicy !== undefined) {
+        addIssue(context, 'contextPolicy', 'business-context forbids contextPolicy');
+      }
+      return;
+    }
+
+    if (promptMode === 'daemon-composed') {
+      if (value.prompt) {
+        addIssue(context, 'prompt', 'daemon-composed forbids prompt');
+      }
+      if (!value.currentPrompt) {
+        addIssue(context, 'currentPrompt', 'daemon-composed requires currentPrompt');
+      }
+      if (value.businessContext !== undefined) {
+        addIssue(context, 'businessContext', 'daemon-composed forbids businessContext');
+      }
+      if (value.kind === 'generate' && !value.skillId) {
+        addIssue(context, 'skillId', 'daemon-composed generate requires skillId');
+      }
     }
   });
+
+function addIssue(context: z.RefinementCtx, path: string, message: string): void {
+  context.addIssue({ code: 'custom', path: [path], message });
+}
 
 export const listRunsQuerySchema: z.ZodType<ListRunsQuery> = z
   .object({
@@ -120,6 +180,14 @@ export const listRunsQuerySchema: z.ZodType<ListRunsQuery> = z
 export const eventReplayQuerySchema: z.ZodType<EventReplayQuery> = z
   .object({
     after: z.string().min(1).optional(),
+  })
+  .strict();
+
+export const createRunFeedbackRequestSchema = z
+  .object({
+    category: z.string().min(1).max(80),
+    message: z.string().min(1).max(20_000),
+    metadata: z.unknown().optional(),
   })
   .strict();
 

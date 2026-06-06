@@ -113,6 +113,19 @@ Per-run logs are separate from service logs and live under:
 .claude-runner/data/logs/runs/<runId>/
 ```
 
+### `server.maxReviewBundleBytes`
+
+Maximum total byte count for the generic run review bundle before ZIP creation.
+
+Default:
+
+```text
+16777216 = 16 MiB
+```
+
+If an on-demand review bundle would exceed this limit, the daemon returns
+`413 REVIEW_BUNDLE_TOO_LARGE`.
+
 ### `server.maxUploadBytesPerFile`
 
 Maximum size for `POST /api/workspaces/:workspaceId/files`.
@@ -169,13 +182,31 @@ Allows this client to receive `debug` event visibility when the profile and run 
 
 If false, requested `debug` visibility is capped to `normal`.
 
+It is required for:
+
+```text
+GET /api/runs/:runId/logs/debug-events/download
+```
+
+It is also required for debug-only files inside review bundles, such as
+`logs/debug-events.ndjson` and `messages.debug.json`.
+
+It is also required, together with `canReadLogs`, when a run requests
+`collectionMode: "review"`.
+
 ### `clients[].canReadLogs`
 
 Allows this client to call:
 
 ```text
 GET /api/runs/:runId/logs
+GET /api/runs/:runId/logs/stdout/download
+GET /api/runs/:runId/logs/stderr/download
+GET /api/runs/:runId/review-bundle/download
 ```
+
+It is also required when a run requests `collectionMode: "diagnostic"` or
+`collectionMode: "review"`.
 
 ### `clients[].isAdmin`
 
@@ -295,7 +326,7 @@ Example:
 "allowedSkillIds": ["report-gen"]
 ```
 
-Generate requests must use one of these ids:
+`legacy + generate` and MVP `business-context` requests must use one of these ids:
 
 ```json
 {
@@ -304,7 +335,8 @@ Generate requests must use one of these ids:
 }
 ```
 
-`kind=revise` forbids `skillId`.
+`legacy + revise` forbids `skillId`. `business-context + revise` uses `skillId`
+when continuing a skill-driven workflow.
 
 ### `profiles[].artifactRules`
 
@@ -366,6 +398,34 @@ debug
 ```
 
 Run requests may lower visibility, but cannot raise it above the profile/client ceiling.
+
+`eventVisibility` only controls SSE/API event detail. It does not decide whether
+prompt, skill, business context, logs, or review materials are persisted.
+
+### `profiles[].maxCollectionMode`
+
+Maximum collection mode this profile allows for run-level prompt/context
+snapshots.
+
+Allowed values:
+
+```text
+lite
+diagnostic
+review
+```
+
+Default: `lite`.
+
+Run requests may set `collectionMode`; the daemon rejects requests above this
+profile cap before inserting a run row. Client permissions are also checked:
+
+- `lite`: no extra log/debug permission required.
+- `diagnostic`: requires `clients[].canReadLogs = true`.
+- `review`: requires both `clients[].canReadLogs = true` and
+  `clients[].canReadDebugEvents = true`.
+
+`collectionMode` is independent from `eventVisibility`.
 
 ### `profiles[].profileConcurrency`
 

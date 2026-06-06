@@ -1,6 +1,8 @@
 import type { RunKind } from './run-types.js';
+import type { ActivePromptMode } from './run-types.js';
 import { badRequest } from './errors.js';
 import type { StagedSkill } from './skill-staging.js';
+import { stableJsonStringify } from './snapshot-service.js';
 
 export interface PromptSkill {
   id: string;
@@ -9,50 +11,97 @@ export interface PromptSkill {
   body: string;
 }
 
+export interface ConversationPromptMessage {
+  role: string;
+  content: string;
+}
+
 export interface ComposeRunPromptInput {
   kind: RunKind;
-  userPrompt: string;
+  promptMode: ActivePromptMode;
+  currentPrompt: string;
+  businessContext?: Record<string, unknown>;
+  conversationMessages?: ConversationPromptMessage[];
+  contextWarnings?: string[];
   skill?: PromptSkill;
   stagedSkill?: StagedSkill;
 }
 
 export function composeRunPrompt({
   kind,
-  userPrompt,
+  promptMode,
+  currentPrompt,
+  businessContext,
+  conversationMessages = [],
+  contextWarnings = [],
   skill,
   stagedSkill,
 }: ComposeRunPromptInput): string {
-  if (kind === 'revise') {
-    return userPrompt;
+  if (promptMode === 'legacy' && kind === 'revise') {
+    return currentPrompt;
   }
 
-  if (!skill) {
-    throw badRequest('kind=generate requires a resolved skill');
+  if (!skill && !(promptMode === 'daemon-composed' && kind === 'revise')) {
+    throw badRequest(`${promptMode} ${kind} requires a resolved skill`);
   }
 
-  const sections = [
-    '## Skill',
-    `Name: ${skill.name}`,
-    `ID: ${skill.id}`,
-  ];
+  const sections: string[] = [];
 
-  if (skill.description && skill.description.trim().length > 0) {
-    sections.push(`Description: ${skill.description}`);
+  if (skill) {
+    sections.push('## Skill', `Name: ${skill.name}`, `ID: ${skill.id}`);
+
+    if (skill.description && skill.description.trim().length > 0) {
+      sections.push(`Description: ${skill.description}`);
+    }
+
+    if (stagedSkill) {
+      sections.push(
+        '',
+        `> Skill root (relative to workspace): \`${stagedSkill.relativeRoot}/\``,
+        '>',
+        '> This skill ships side files alongside `SKILL.md`. Read them from the relative',
+        '> path above inside the current workspace.',
+      );
+
+      if (stagedSkill.sideFilesManifest.length > 0) {
+        sections.push(
+          '',
+          'Skill side files manifest:',
+          '```json',
+          stableJsonStringify(stagedSkill.sideFilesManifest, 2),
+          '```',
+        );
+      }
+    }
+
+    sections.push('', '## Skill instructions', skill.body);
   }
 
-  if (stagedSkill) {
+  if (promptMode === 'daemon-composed') {
     sections.push(
       '',
-      `> Skill root (relative to workspace): \`${stagedSkill.relativeRoot}/\``,
-      `> Skill root (absolute workspace path): \`${stagedSkill.absoluteRoot}\``,
-      '>',
-      '> This skill ships side files alongside `SKILL.md`. Prefer the relative path above',
-      '> when reading those files from the workspace. If that is not reachable, use the',
-      '> absolute workspace path above.',
+      '## Conversation context',
+      '```json',
+      stableJsonStringify(conversationMessages, 2),
+      '```',
+    );
+
+    if (contextWarnings.length > 0) {
+      sections.push('', '## Context warnings', ...contextWarnings.map((warning) => `- ${warning}`));
+    }
+  }
+
+  if (businessContext) {
+    sections.push(
+      '',
+      '## Business context',
+      '```json',
+      stableJsonStringify(businessContext, 2),
+      '```',
     );
   }
 
-  sections.push('', '## Skill instructions', skill.body, '', '## User request', userPrompt);
+  sections.push('', '## Current user request', currentPrompt);
 
   return sections.join('\n');
 }

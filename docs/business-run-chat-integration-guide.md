@@ -25,7 +25,8 @@
 - 将业务对象映射到 daemon workspace。
 - 保存 `workspaceId`、`runId`、artifact 信息和业务状态。
 - 决定何时创建 generate run，何时创建 revise run。
-- 组合面向 Claude 的业务 prompt。
+- 选择 `promptMode`，并提供 legacy `prompt` 或 `business-context` 模式下的
+  `currentPrompt` / `businessContext`。
 
 ## 关键 ID 映射
 
@@ -212,17 +213,21 @@ POST /api/runs
 ```json
 {
   "runId": "run_xxx",
-  "status": "queued"
+  "status": "queued",
+  "conversationId": "conv_xxx",
+  "userMessageId": "msg_user_xxx",
+  "assistantMessageId": "msg_assistant_xxx"
 }
 ```
 
 注意：
 
-- `generate` 必须传 `skillId`。
+- legacy `generate` 必须传 `skillId`。
 - `POST /api/runs` 只接受 `workspaceId`，不要内联 `originId/userId/projectId`。
 - `model` 必须属于 profile 的 `allowedModels`。
 - 不传 `artifactRuleIds` 时使用 profile 的 `defaultArtifactRuleIds`。
 - run 创建后可能先排队，业务端要展示 `queued` 状态。
+- daemon 会返回 `conversationId/userMessageId/assistantMessageId`，业务端可以保存它们用于后续多轮对齐。
 
 ### 5. 不订阅 SSE 的报告生成轮询
 
@@ -380,11 +385,57 @@ POST /api/runs
 
 注意：
 
-- `revise` 禁止传 `skillId`。
-- daemon 不接收 `conversationId`。
+- legacy `revise` 不接收 `skillId`；如果要继续同一个业务 skill 流程，使用
+  `promptMode: "business-context"` 并显式传 `skillId`。
+- daemon 可以接收 `conversationId`；如传入，必须属于同一 workspace。
 - daemon 不接收业务 chat 历史数组。
 - 如果需要引用历史对话，业务端应把必要上下文总结进 `prompt`。
 - 修改发生在同一个 workspace 文件状态上，因此 Claude 能看到已有 `input/`、`output/`、`work/` 文件。
+
+## Business-context 模式
+
+`business-context` 适合业务端已经维护对话历史、表单答案、artifact 路径或阶段状态，但不希望自己拼最终 prompt 的场景。
+
+业务端传：
+
+- `promptMode: "business-context"`
+- `currentPrompt`: 本轮用户可见输入或表单答案摘要。
+- `businessContext`: 结构化业务上下文包，daemon 不解释具体语义。
+- `skillId`: MVP 中必填，`generate` 和 `revise` 都可携带。
+- `conversationId`: 可选，用于复用 daemon conversation。
+
+daemon 做：
+
+- 把 `currentPrompt` 写入用户可见的 `run_messages`。
+- 按 `collectionMode` 保存 business context hash/full snapshot。
+- 在执行前注入 skill instructions、side files manifest 和 profile 约束，生成最终 prompt。
+- 按 `collectionMode` 保存最终 prompt / skill snapshot。
+
+示例：
+
+```json
+{
+  "profileId": "report-docx",
+  "workspaceId": "ws_xxx",
+  "conversationId": "conv_xxx",
+  "kind": "revise",
+  "promptMode": "business-context",
+  "collectionMode": "diagnostic",
+  "skillId": "report-writer",
+  "currentPrompt": "用户已确认参数，请继续更新产物。",
+  "businessContext": {
+    "previousRunId": "run_previous",
+    "artifactPaths": ["output/report.docx"],
+    "formAnswers": {
+      "unit": "test-unit"
+    },
+    "stage": "question-form-answers"
+  },
+  "artifactRuleIds": ["report-docx"]
+}
+```
+
+`collectionMode` 默认 `lite`。请求 `diagnostic` 或 `review` 时，必须同时满足 profile `maxCollectionMode` 和 client 权限，否则 daemon 在入队前返回 `403 COLLECTION_MODE_NOT_ALLOWED`。
 
 ### Chat UI 状态建议
 
