@@ -10,7 +10,7 @@
     "start": "node dist/server/index.js",
     "build": "tsc -p tsconfig.server.json && vite build",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.server.test.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.server.test.json --noEmit"
   },
   "dependencies": {
     "express": "^5.2.1",

@@ -121,7 +121,7 @@ src/
   index.ts
 ```
 
-Tests should live under `src/**/__tests__/*.test.ts` so `tsconfig.json` can keep `rootDir: "src"` until the project intentionally moves tests elsewhere.
+App tests live under each app's sibling `tests/` directory so `src/` stays source-only. App test TypeScript configs should include both `src/` and `tests/` as needed, while production `tsconfig.json` files remain source-focused.
 
 ## Dependency Direction
 

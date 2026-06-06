@@ -2,8 +2,9 @@
   "extends": "./tsconfig.server.json",
   "compilerOptions": {
     "noEmit": true,
+    "rootDir": ".",
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src/server/**/*.test.ts", "src/server/**/*.ts", "src/shared/**/*.ts"],
+  "include": ["src/server/**/*.ts", "src/shared/**/*.ts", "tests/server/**/*.test.ts", "tests/shared/**/*.test.ts"],
   "exclude": ["dist", "node_modules"]
 }
