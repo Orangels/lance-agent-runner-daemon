@@ -11,6 +11,27 @@
 - `context`：部署环境配置引用。
 - `steps`：业务步骤数组。
 
+## Param 类型枚举
+
+DSL v0.1 只支持以下参数类型：
+
+```text
+string | number | date | boolean | select | secret
+```
+
+禁止输出任何未列出的 `params.*.type`，包括但不限于：
+
+```text
+path | file | url | text | textarea | datetime | array | object
+```
+
+说明：
+
+- 运行时文件路径、下载目录、trace 目录、结果保存路径等部署/运行环境值，优先放到 `config.example.json` 或脚本默认值。
+- 如果确实需要用户在运行前填写某个路径，暂时使用 `"type": "string"`，不要发明 `"type": "path"`。
+- URL 如果是部署配置，放到 `context.base_url` 或 `config.example.json`；如果是业务输入，使用 `"type": "string"`。
+- `select` 参数必须提供 `options`，不要额外输出 `widget` 字段。
+
 ## Step 必填字段
 
 - `id`：稳定步骤 id；必须唯一、小写，并匹配 `^[a-z][a-z0-9_]{0,63}$`。
@@ -25,10 +46,12 @@
 ## Step / Target 规则
 
 - `navigate` uses step-level `value` for the URL or URL parameter reference, for example `"value": "${BASE_URL}"`. Do not emit `target.by = "url"`.
+- `target.by` 只能使用 DSL v0.1 支持的枚举：`role | label | placeholder | text | testid | id | css | xpath`。
+- 不要输出 `target.by = "path"`、`"url"`、`"file"`、`"download"`、`"coordinate"` 或其他未支持定位类型。
+- 本地结果文件、下载文件或 trace 文件不是页面元素，不要用 `target.by = "path"` 表达。需要记录本地文件产物时，在脚本审计日志、`hardening-report.md` 或 executor artifact 中体现。
 - Step `id` must be stable, unique, lowercase, and match `^[a-z][a-z0-9_]{0,63}$`. Semantic ids such as `open_query_page` are allowed.
 - Every step must include `write` and `manual`; use `"manual": null` when no manual intervention is needed.
 - For `write: true`, emit `idempotency_key` whenever a stable business key is known. If no idempotency key is available, document the risk in `hardening-report.md`.
-- Selectable runtime parameters must use `"type": "select"` with `options`; do not emit a separate `widget` field in DSL v0.1.
 - Wait keys supported by DSL v0.1 are `visible`, `enabled`, `url_changes`, `url_contains`, `network_idle`, `download`, `toast`, and `table_loaded`.
 
 ## 加固要求

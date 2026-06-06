@@ -108,7 +108,10 @@ notes/
 
 - `meta.source` 固定为 `nl`。
 - `params` 只放参数定义和默认值策略，不放真实敏感值。
+- `params.*.type` 只能使用 DSL v0.1 支持的枚举：`string | number | date | boolean | select | secret`。不要输出 `path`、`file`、`url`、`text`、`textarea`、`datetime`、`array`、`object` 等未列出的类型。
+- 输出文件路径、下载目录、trace 目录等运行环境路径优先放到 `config.example.json` 或脚本默认值；如果确实需要用户运行时填写路径，暂时用 `"type": "string"`，不要发明 `"type": "path"`。
 - `steps[].target.by` 优先级为 `role > label > placeholder > text > testid > id > css`。
+- `steps[].target.by` 只能使用 DSL v0.1 支持的枚举：`role | label | placeholder | text | testid | id | css | xpath`。不要输出 `target.by = "path"`、`"url"`、`"file"`、`"download"` 或坐标定位。
 - `xpath` 只能作为临时降级策略，并在 `hardening-report.md` 中说明风险。
 - 写操作必须标注 `write: true`，并尽量提供 `idempotency_key`。
 
@@ -130,6 +133,8 @@ notes/
 交付前检查：
 
 - `output/flow.dsl.json` 是合法 JSON。
+- `params.*.type` 全部属于 `string | number | date | boolean | select | secret`，不存在 `path`、`file`、`url` 等未支持类型。
+- `steps[].target.by` 全部属于 `role | label | placeholder | text | testid | id | css | xpath`，不存在 `path`、`url`、`file` 等未支持定位类型。
 - 每个 step 有 `id`、`name`、`action`。
 - 每个可操作 step 有 `target` 或明确 `manual`。
 - 每个关键业务结果有 `assert`。
@@ -144,4 +149,3 @@ notes/
 - 不输出或导出认证材料。
 - 不把 RPA 逻辑写入 daemon core。
 - 生成脚本必须能和 DSL 对齐：前端步骤列表、截图、高亮、日志都以 step id 关联。
-

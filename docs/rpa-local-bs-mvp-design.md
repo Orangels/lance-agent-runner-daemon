@@ -737,7 +737,54 @@ CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS=1
 
 ### 与 daemon 的关系
 
-`chrome-devtools-mcp` 不进入 daemon core，也不新增 daemon 专用 MCP 配置字段。它应配置在 RPA profile 所使用的 Claude Code `claudeConfigDir` 下，由 Claude Code 按自身 MCP 配置加载。
+`chrome-devtools-mcp` 不进入 daemon core，daemon core 也不理解它的 RPA 用途。但仅依赖系统默认 Claude Code 交互会话的动态 plugin / MCP 状态不够稳定：daemon 以 `claude -p` 非交互方式、临时 workspace `cwd` 和 profile 环境启动 Claude Code 时，必须能显式加载同一套 MCP 配置。
+
+后续应补一个通用 profile 能力，而不是 RPA 专属字段：
+
+```json
+{
+  "profiles": [
+    {
+      "id": "rpa-local",
+      "claudeConfigDir": "/home/orangels/.claude",
+      "mcpConfigPaths": [
+        ".claude-runner/profiles/rpa-local/mcp.chrome-devtools.json"
+      ]
+    }
+  ]
+}
+```
+
+daemon 启动 Claude Code 时把这些 profile-owned config 文件作为 `--mcp-config <file>` 传入。这样 `rpa-local` profile 可以稳定加载 `chrome-devtools-mcp`，其他业务 profile 也能复用同一机制加载自己的 MCP server。RPA Web 仍只选择 `profileId` 和 `skillId`，不向单次请求注入任意 MCP 配置。
+
+`mcp.chrome-devtools.json` 的内容由 profile/部署配置管理，例如固定版本、关闭联网统计和更新检查，并指定可用的 Chrome / Chromium：
+
+```json
+{
+  "mcpServers": {
+    "chrome-devtools": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "chrome-devtools-mcp@1.1.1",
+        "--no-usage-statistics",
+        "--no-update-checks",
+        "--no-performance-crux",
+        "--executablePath=/path/to/chrome",
+        "--chromeArg=--no-sandbox",
+        "--userDataDir=/path/to/rpa-chrome-devtools-profile"
+      ],
+      "env": {
+        "DISPLAY": ":2",
+        "CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS": "1",
+        "CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS": "1"
+      }
+    }
+  }
+}
+```
+
+实现时还应提供同环境预检：用 daemon 即将使用的 `CLAUDE_CONFIG_DIR`、`PATH`、`DISPLAY`、`--mcp-config` 和 `cwd` 验证 `chrome-devtools-mcp` 能连接成功并暴露工具；失败时 RPA Web 应显示 `chrome-devtools-mcp unavailable` 并允许按降级策略继续或终止。
 
 ```text
 rpa-local-web
@@ -745,7 +792,8 @@ rpa-local-web
      profileId: rpa-local
      skillId: rpa-script-generate
      -> daemon 按 profile 启动 Claude Code
-        -> Claude Code 读取该 claudeConfigDir 下的 MCP 配置
+        -> daemon 传入 profile.mcpConfigPaths 对应的 --mcp-config
+        -> Claude Code 读取该 claudeConfigDir / mcp-config 下的 MCP 配置
            -> chrome-devtools-mcp
               -> 本机专用 Chrome profile
                  -> 探查内网页面
@@ -1285,6 +1333,12 @@ SaaS executor = server worker / Browserless / container worker
 2. 支持 `.rpa.zip` 导出、导入和导入后重新 verify。
 3. 支持 confirmed flow 的 headless run 模式、trace/录像留痕和保留策略。
 4. 文档明确本地 B/S MVP 与 SaaS 后续分支的复用边界。
+
+## RPA Web UI 后续增强
+
+- 当前顶部 `Daemon` 状态和 `Settings` 页仍可能是静态展示或 skeleton。后续应改为真实读取 `GET /api/rpa/config` 和 `GET /api/rpa/daemon/health`。
+- `Settings` 页应展示 daemon base URL、默认 profile、本地 storage root、codegen command、浏览器/display 配置提示，以及 daemon 连接失败时的可读错误。
+- 这些 UI 增强只属于 `apps/rpa-local-web`，不得把 RPA 专属健康状态或配置语义下沉到 `apps/daemon` core。
 
 ## 已落地的 skill 草案
 

@@ -18,6 +18,14 @@
       "canReadDebugEvents": true,
       "canReadLogs": true,
       "isAdmin": false
+    },
+    {
+      "id": "rpa-local-web",
+      "apiKey": "env:RPA_DAEMON_API_KEY",
+      "allowedProfileIds": ["rpa-local"],
+      "canReadDebugEvents": true,
+      "canReadLogs": true,
+      "isAdmin": false
     }
   ],
   "profiles": [
@@ -52,6 +60,89 @@
       "defaultModel": "opus",
       "allowedModels": ["sonnet", "opus", "haiku"],
       "eventVisibility": "normal",
+      "profileConcurrency": 1,
+      "runTimeoutMs": 18000000,
+      "inactivityTimeoutMs": 18000000,
+      "cancelGraceMs": 5000,
+      "env": {
+        "DISABLE_TELEMETRY": "1",
+        "DO_NOT_TRACK": "1",
+        "DISABLE_AUTOUPDATER": "1",
+        "DISABLE_ERROR_REPORTING": "1",
+        "DISABLE_BUG_COMMAND": "1",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
+      }
+    },
+    {
+      "id": "rpa-local",
+      "sandboxRoot": ".claude-runner/workspaces/rpa-local",
+      "claudeConfigDir": "/home/orangels/.claude",
+      "claudeBin": "claude",
+      "skillRoots": [
+        "apps/daemon/skills"
+      ],
+      "allowedInputRoots": [
+        ".claude-runner/uploads"
+      ],
+      "allowedSkillIds": ["rpa-script-generate", "playwright-rpa-harden"],
+      "artifactRules": [
+        {
+          "id": "rpa-flow-dsl",
+          "pattern": "output/flow.dsl.json",
+          "role": "primary",
+          "required": false
+        },
+        {
+          "id": "rpa-hardened-script",
+          "pattern": "output/flow.hardened.py",
+          "role": "primary",
+          "required": false
+        },
+        {
+          "id": "rpa-config-example",
+          "pattern": "output/config.example.json",
+          "role": "supporting",
+          "required": false
+        },
+        {
+          "id": "rpa-parameterization-report",
+          "pattern": "output/parameterization-report.md",
+          "role": "supporting",
+          "required": false
+        },
+        {
+          "id": "rpa-hardening-report",
+          "pattern": "output/hardening-report.md",
+          "role": "supporting",
+          "required": false
+        },
+        {
+          "id": "rpa-draft-script",
+          "pattern": "output/flow.py",
+          "role": "supporting",
+          "required": false
+        },
+        {
+          "id": "rpa-other-output",
+          "pattern": "output/**/*",
+          "role": "supporting",
+          "required": false
+        }
+      ],
+      "defaultArtifactRuleIds": [
+        "rpa-flow-dsl",
+        "rpa-hardened-script",
+        "rpa-config-example",
+        "rpa-parameterization-report",
+        "rpa-hardening-report",
+        "rpa-draft-script",
+        "rpa-other-output"
+      ],
+      "permissionMode": "bypassPermissions",
+      "defaultModel": "opus",
+      "allowedModels": ["sonnet", "opus", "haiku"],
+      "eventVisibility": "normal",
+      "maxCollectionMode": "diagnostic",
       "profileConcurrency": 1,
       "runTimeoutMs": 18000000,
       "inactivityTimeoutMs": 18000000,
