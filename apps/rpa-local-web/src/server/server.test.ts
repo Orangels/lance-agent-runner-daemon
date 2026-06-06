@@ -16,6 +16,7 @@ async function withServer(callback: (baseUrl: string) => Promise<void>) {
       daemonBaseUrl: 'http://daemon.local',
       daemonApiKey: 'secret',
       defaultProfileId: 'rpa-local',
+      storageRoot: '.rpa-local-test',
       mode: 'test',
     },
     daemonFetch: vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 })),

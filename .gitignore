@@ -25,6 +25,7 @@ sandboxes/
 logs/
 runs/
 artifacts/
+.rpa-local/
 
 # Local env / secrets
 .env

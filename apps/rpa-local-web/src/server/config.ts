@@ -1,9 +1,12 @@
+import path from 'node:path';
+
 export interface RpaLocalServerConfig {
   host: string;
   port: number;
   daemonBaseUrl: string;
   daemonApiKey: string;
   defaultProfileId: string;
+  storageRoot: string;
   mode: 'development' | 'production' | 'test';
 }
 
@@ -16,6 +19,7 @@ export function readRpaLocalServerConfig(
     daemonBaseUrl: env.RPA_DAEMON_BASE_URL ?? 'http://127.0.0.1:17890',
     daemonApiKey: env.RPA_DAEMON_API_KEY ?? 'local-dev-key',
     defaultProfileId: env.RPA_DAEMON_PROFILE_ID ?? 'rpa-local',
+    storageRoot: path.resolve(env.RPA_LOCAL_STORAGE_ROOT ?? '.rpa-local'),
     mode: env.NODE_ENV === 'production' ? 'production' : env.NODE_ENV === 'test' ? 'test' : 'development',
   };
 }

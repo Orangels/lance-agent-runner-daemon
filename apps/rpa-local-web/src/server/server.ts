@@ -9,10 +9,18 @@ import type {
 } from '../shared/rpa-api-types.js';
 import { DaemonClient } from './daemon-client.js';
 import type { RpaLocalServerConfig } from './config.js';
+import {
+  createPythonPlaywrightExecutor,
+  type PythonPlaywrightExecutorOptions,
+  type RpaLocalExecutor,
+} from './executor/python-playwright-executor.js';
+import { registerExecutionRoutes } from './routes/executions.js';
 
 export interface CreateRpaLocalServerInput {
   config: RpaLocalServerConfig;
   daemonFetch?: typeof fetch;
+  executor?: RpaLocalExecutor;
+  executorOptions?: Pick<PythonPlaywrightExecutorOptions, 'pythonCommand' | 'pythonArgs' | 'defaultTimeoutMs'>;
 }
 
 export async function createRpaLocalServer(input: CreateRpaLocalServerInput): Promise<Express> {
@@ -24,6 +32,12 @@ export async function createRpaLocalServer(input: CreateRpaLocalServerInput): Pr
     apiKey: input.config.daemonApiKey,
     fetchImpl: input.daemonFetch,
   });
+  const executor =
+    input.executor ??
+    createPythonPlaywrightExecutor({
+      storageRoot: input.config.storageRoot,
+      ...input.executorOptions,
+    });
 
   app.get('/api/rpa/health', (_req, res) => {
     const payload: RpaHealthResponse = { ok: true, app: 'rpa-local-web' };
@@ -58,6 +72,8 @@ export async function createRpaLocalServer(input: CreateRpaLocalServerInput): Pr
   });
 
   app.locals.daemonClient = daemonClient;
+  app.locals.rpaExecutor = executor;
+  registerExecutionRoutes(app, executor);
 
   if (input.config.mode === 'development') {
     const vite = await createViteMiddleware();
