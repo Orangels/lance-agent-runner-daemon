@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Bot, Braces, FolderKanban, PlaySquare, Settings, WandSparkles } from 'lucide-react';
+import { CodegenWorkspace } from './CodegenWorkspace.js';
 import { RuntimeVerificationWorkspace } from './RuntimeVerificationWorkspace.js';
 import { StatusBadge } from './StatusBadge.js';
 
@@ -17,8 +18,8 @@ export const rpaSections: RpaSection[] = [
   {
     id: 'codegen',
     label: 'Codegen 加固',
-    title: '上传 Playwright codegen 录制脚本',
-    description: '选择录制产物，交给 playwright-rpa-harden skill 生成 DSL、加固脚本和报告。',
+    title: 'Playwright codegen 录制后加固',
+    description: '启动本地 codegen 录制，交给 playwright-rpa-harden skill 生成 DSL、加固脚本和报告。',
     icon: <Braces aria-hidden="true" />,
   },
   {
@@ -106,7 +107,13 @@ export function AppShell({ activeSectionId, onSectionChange }: AppShellProps) {
             </StatusBadge>
           </div>
 
-          {activeSection.id === 'executions' ? <RuntimeVerificationWorkspace /> : <PlaceholderGrid />}
+          {activeSection.id === 'codegen' ? (
+            <CodegenWorkspace />
+          ) : activeSection.id === 'executions' ? (
+            <RuntimeVerificationWorkspace />
+          ) : (
+            <PlaceholderGrid />
+          )}
         </section>
       </section>
     </main>

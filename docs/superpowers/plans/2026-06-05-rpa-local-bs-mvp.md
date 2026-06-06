@@ -47,10 +47,11 @@ Completed so far:
 - `RPA DSL And Artifact Contract` landed in commit `b39829d`.
 - `RPA Execution Backend And Local Executor` landed in commit `30c49da`.
 - `Minimal Runtime Verification UI` landed in commit `bcd71d4`.
+- `Codegen 上传加固闭环` is implemented and CC reviewed.
 
 Next planned slice:
 
-- `Codegen 上传加固闭环`.
+- `Daemon Generic Review Bundle And Feedback`.
 
 ## Implementation Dependency Map
 
@@ -348,9 +349,11 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 
 ---
 
-## Slice: Codegen 上传加固闭环
+## Slice: Codegen 上传加固闭环 (Completed)
 
 **Purpose:** Deliver the fastest end-to-end script production path: RPA Web starts Playwright codegen, records user actions into a single-file `flow.py`, uploads that file to daemon, runs the hardening skill, validates artifacts, and verifies locally.
+
+**Status:** Implemented and CC reviewed.
 
 **Execution plan:** `docs/superpowers/plans/2026-06-06-rpa-codegen-hardening-loop.md`
 
@@ -395,6 +398,10 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 - Verify uses RPA Web-owned copies of artifacts, not daemon workspace paths.
 - Codegen path supports only single-file `flow.py`; multi-file codegen package is explicitly rejected with a clear message.
 - A local mock page can be used to complete the codegen demo before the final demo page is chosen.
+
+**Verification:** `pnpm --filter @lance-agent-runner/rpa-local-web test`, `pnpm typecheck`, `pnpm build`, and `git diff --check` passed. Full RPA web tests were run outside the sandbox because server tests require local port listening and child process I/O.
+
+**CC review:** initial review found P1 issues around partial flow directory cleanup, artifact download response handling, and cancelled-session error state. These were fixed; targeted re-review reported all P1 items resolved, no new P0/P1, daemon/RPA boundary clean, and recommended commit.
 
 **Suggested commit:** `Implement RPA Web managed codegen hardening loop`
 

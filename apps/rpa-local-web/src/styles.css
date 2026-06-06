@@ -21,7 +21,8 @@ button {
 }
 
 input,
-textarea {
+textarea,
+select {
   font: inherit;
 }
 
@@ -179,7 +180,17 @@ textarea {
   gap: 12px;
 }
 
+.codegen-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .runtime-workspace__summary,
+.codegen-summary,
+.codegen-control,
+.daemon-hardening-panel,
+.question-form,
 .execution-control-bar,
 .rpa-step-list,
 .rpa-screenshot-panel,
@@ -198,7 +209,18 @@ textarea {
   padding: 12px 14px;
 }
 
+.codegen-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
 .runtime-workspace__summary h3,
+.codegen-summary h3,
+.daemon-hardening-panel h3,
+.question-form h3,
 .rpa-step-list h3,
 .rpa-screenshot-panel h3,
 .rpa-execution-log-panel h3,
@@ -213,6 +235,101 @@ textarea {
   margin: 4px 0 0;
   color: #5b6677;
   font-size: 12px;
+}
+
+.codegen-summary p {
+  margin: 4px 0 0;
+  color: #5b6677;
+  font-size: 12px;
+}
+
+.codegen-control {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.2fr) minmax(160px, .8fr) minmax(160px, .8fr) auto auto;
+  align-items: end;
+  gap: 10px;
+  padding: 12px;
+}
+
+.daemon-hardening-panel,
+.question-form {
+  padding: 12px;
+}
+
+.daemon-hardening-panel__header,
+.question-form__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.daemon-hardening-panel__header span {
+  color: #5b6677;
+  font-size: 12px;
+}
+
+.daemon-hardening-panel__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.daemon-hardening-panel h4 {
+  margin: 0 0 8px;
+  color: #526174;
+  font-size: 12px;
+}
+
+.compact-list {
+  min-height: 42px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #d7dee8;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #344254;
+  font-size: 12px;
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+
+.compact-list li + li {
+  margin-top: 5px;
+}
+
+.question-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+.choice-field {
+  min-width: 0;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #d7dee8;
+  border-radius: 6px;
+}
+
+.choice-field legend {
+  color: #526174;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.choice-field label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 14px 0 0;
+  font-size: 13px;
+}
+
+.codegen-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .runtime-workspace__error,
@@ -257,7 +374,8 @@ textarea {
 }
 
 .field input,
-.field textarea {
+.field textarea,
+.field select {
   width: 100%;
   min-width: 0;
   border: 1px solid #cfd8e5;
@@ -266,7 +384,8 @@ textarea {
   color: #1c2430;
 }
 
-.field input {
+.field input,
+.field select {
   height: 36px;
   padding: 7px 9px;
 }

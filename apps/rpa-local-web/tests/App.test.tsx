@@ -12,7 +12,7 @@ describe('RPA local web app shell', () => {
       'aria-selected',
       'true',
     );
-    expect(screen.getByText('上传 Playwright codegen 录制脚本')).toBeInTheDocument();
+    expect(screen.getByText('Playwright codegen 录制后加固')).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('tab', { name: '自然语言生成' }));
 

@@ -11,6 +11,14 @@ import type {
   StartRpaExecutionResponse,
 } from '../shared/rpa-api-types.js';
 import { rpaExecutionEventTypes } from '../shared/rpa-api-types.js';
+import type {
+  CancelCodegenSessionResponse,
+  CodegenSessionStatusResponse,
+  StartCodegenSessionRequest,
+  StartCodegenSessionResponse,
+  SubmitCodegenQuestionAnswersRequest,
+  SubmitCodegenQuestionAnswersResponse,
+} from '../shared/codegen-types.js';
 
 type FetchLike = typeof fetch;
 
@@ -59,6 +67,36 @@ export class RpaApiClient {
 
   getFlow(flowId: string): Promise<RpaFlowDetailResponse> {
     return this.requestJson(`/api/rpa/flows/${encodeURIComponent(flowId)}`);
+  }
+
+  startCodegenSession(request: StartCodegenSessionRequest): Promise<StartCodegenSessionResponse> {
+    return this.requestJson('/api/rpa/codegen/sessions', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
+  }
+
+  getCodegenSession(sessionId: string): Promise<CodegenSessionStatusResponse> {
+    return this.requestJson(`/api/rpa/codegen/sessions/${encodeURIComponent(sessionId)}`);
+  }
+
+  cancelCodegenSession(sessionId: string): Promise<CancelCodegenSessionResponse> {
+    return this.requestJson(`/api/rpa/codegen/sessions/${encodeURIComponent(sessionId)}/cancel`, {
+      method: 'POST',
+    });
+  }
+
+  submitCodegenQuestionAnswers(
+    sessionId: string,
+    request: SubmitCodegenQuestionAnswersRequest,
+  ): Promise<SubmitCodegenQuestionAnswersResponse> {
+    return this.requestJson(
+      `/api/rpa/codegen/sessions/${encodeURIComponent(sessionId)}/question-form/answers`,
+      {
+        method: 'POST',
+        body: JSON.stringify(request),
+      },
+    );
   }
 
   startExecution(request: StartRpaExecutionRequest): Promise<StartRpaExecutionResponse> {

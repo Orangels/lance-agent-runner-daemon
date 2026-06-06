@@ -26,6 +26,8 @@ async function withRpaServer(
       daemonApiKey: 'secret',
       defaultProfileId: 'rpa-local',
       storageRoot,
+      codegenCommand: 'playwright',
+      codegenArgs: ['codegen'],
       mode: 'test',
     },
     daemonFetch: vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 })),

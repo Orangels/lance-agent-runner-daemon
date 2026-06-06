@@ -99,6 +99,55 @@ describe('RPA browser API client', () => {
     );
   });
 
+  it('starts, reads, cancels, and answers codegen sessions through JSON endpoints', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ sessionId: 'cg_1', flowId: 'case_query', status: 'recording' }))
+      .mockResolvedValueOnce(jsonResponse({ sessionId: 'cg_1', flowId: 'case_query', status: 'needs_input', logs: [] }))
+      .mockResolvedValueOnce(jsonResponse({ sessionId: 'cg_1', status: 'cancelled' }))
+      .mockResolvedValueOnce(jsonResponse({ sessionId: 'cg_1', status: 'hardening' }));
+    const client = new RpaApiClient({ fetchImpl });
+
+    await client.startCodegenSession({
+      targetUrl: 'https://example.com',
+      flowId: 'case_query',
+      flowName: 'Case query',
+    });
+    await client.getCodegenSession('cg_1');
+    await client.cancelCodegenSession('cg_1');
+    await client.submitCodegenQuestionAnswers('cg_1', {
+      formId: 'qf_1',
+      answers: { date: '2026-06-06' },
+    });
+
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      1,
+      '/api/rpa/codegen/sessions',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
+      }),
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      2,
+      '/api/rpa/codegen/sessions/cg_1',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      3,
+      '/api/rpa/codegen/sessions/cg_1/cancel',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      4,
+      '/api/rpa/codegen/sessions/cg_1/question-form/answers',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ formId: 'qf_1', answers: { date: '2026-06-06' } }),
+      }),
+    );
+  });
+
   it('reads execution status, logs, and artifacts from expected endpoints', async () => {
     const fetchImpl = vi
       .fn()

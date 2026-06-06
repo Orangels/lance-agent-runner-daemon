@@ -17,6 +17,8 @@ async function withServer(callback: (baseUrl: string) => Promise<void>) {
       daemonApiKey: 'secret',
       defaultProfileId: 'rpa-local',
       storageRoot: '.rpa-local-test',
+      codegenCommand: 'playwright',
+      codegenArgs: ['codegen'],
       mode: 'test',
     },
     daemonFetch: vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 })),

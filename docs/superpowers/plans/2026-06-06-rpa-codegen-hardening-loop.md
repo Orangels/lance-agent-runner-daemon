@@ -4,6 +4,8 @@
 
 **Goal:** Build the first complete RPA script production loop for the local B/S MVP: start Playwright codegen from RPA Web, store the raw recording, send it to daemon with `playwright-rpa-harden`, handle question-form follow-ups, persist generated artifacts as a reusable flow, and hand the result to the existing verification UI.
 
+**Status:** Implemented and CC reviewed.
+
 **Architecture boundary:** RPA Web owns codegen, flow state, RPA business context, artifact download, and verification handoff. Daemon remains a generic Claude Code runner and only receives `business-context` plus `skillId`.
 
 **Not in this slice:** natural language generation, `.rpa.zip` import/export UI, multi-file codegen projects, Browserless/SaaS execution, daemon-composed transcript assembly, or daemon core knowledge of RPA DSL/Playwright.
