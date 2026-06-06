@@ -208,10 +208,61 @@ function validateTarget(
   if (target.by === 'xpath') {
     warnings.push(warningIssue('XPATH_FALLBACK', `${path}.by`, 'XPath is a fallback selector and should be hardened later.'));
   }
+  if (target.by === 'css' && typeof target.css === 'string' && hasRawNumericIdShorthand(target.css)) {
+    errors.push(
+      errorIssue(
+        'CSS_NUMERIC_ID_SHORTHAND',
+        `${path}.css`,
+        'CSS id shorthand cannot start with a digit; use an attribute selector such as [id="7d"].',
+      ),
+    );
+  }
 }
 
 function hasHighRiskManual(value: unknown): boolean {
   return isRecord(value) && value.riskLevel === 'high';
+}
+
+function hasRawNumericIdShorthand(selector: string): boolean {
+  let quote: '"' | "'" | null = null;
+  let bracketDepth = 0;
+  let escaped = false;
+
+  for (let index = 0; index < selector.length; index += 1) {
+    const char = selector[index];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === '[') {
+      bracketDepth += 1;
+      continue;
+    }
+    if (char === ']') {
+      bracketDepth = Math.max(0, bracketDepth - 1);
+      continue;
+    }
+    if (bracketDepth === 0 && char === '#' && /[0-9]/.test(selector[index + 1] ?? '')) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

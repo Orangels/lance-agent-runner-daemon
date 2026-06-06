@@ -46,9 +46,13 @@ path | file | url | text | textarea | datetime | array | object
 ## Step / Target 规则
 
 - `navigate` uses step-level `value` for the URL or URL parameter reference, for example `"value": "${BASE_URL}"`. Do not emit `target.by = "url"`.
+- `click | input | select | submit | assert` 类型 step 必须有页面元素 `target`。
+- 不要输出 `action: "assert"` 且 `target: null`；这会被 RPA Web 校验为 `STEP_TARGET_REQUIRED`。
 - `target.by` 只能使用 DSL v0.1 支持的枚举：`role | label | placeholder | text | testid | id | css | xpath`。
 - 不要输出 `target.by = "path"`、`"url"`、`"file"`、`"download"`、`"coordinate"` 或其他未支持定位类型。
 - 本地结果文件、下载文件或 trace 文件不是页面元素，不要用 `target.by = "path"` 表达。需要记录本地文件产物时，在脚本审计日志、`hardening-report.md` 或 executor artifact 中体现。
+- 本地结果保存、审计日志、截图、trace、运行时 JSON 落盘不是页面元素操作，优先不要作为 DSL step；如果确实需要留痕，使用 `action: "wait"`，省略 step-level `target`，并用 `assert: [{ "type": "download_exists", "value": "..." }]` 表达产物存在性。
+- CSS id 如果以数字开头，不能写成 `div#7d` 或 `#7d`，Playwright/CSS 会报 `not a valid selector`；必须写成属性选择器，如 `[id="7d"] ul.t`。
 - Step `id` must be stable, unique, lowercase, and match `^[a-z][a-z0-9_]{0,63}$`. Semantic ids such as `open_query_page` are allowed.
 - Every step must include `write` and `manual`; use `"manual": null` when no manual intervention is needed.
 - For `write: true`, emit `idempotency_key` whenever a stable business key is known. If no idempotency key is available, document the risk in `hardening-report.md`.

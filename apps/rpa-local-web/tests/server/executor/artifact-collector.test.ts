@@ -53,6 +53,31 @@ describe('RPA execution artifact collector', () => {
     });
   });
 
+  it('collects generic runtime outputs without relying on business-specific file names', async () => {
+    const executionDir = await mkdtemp(path.join(os.tmpdir(), 'rpa-runtime-artifacts-'));
+    await writeArtifact(executionDir, 'runtime/audit.jsonl', '{}\n');
+    await writeArtifact(executionDir, 'runtime/result-data.json', '{"ok":true}');
+    await writeArtifact(executionDir, 'runtime/screenshots/last-step.png', 'screenshot');
+    await writeArtifact(executionDir, 'runtime/downloads/export.csv', 'download');
+    await writeArtifact(executionDir, 'runtime/storage_state.json', 'sensitive');
+    await writeArtifact(executionDir, 'runtime/session.cookie', 'sensitive');
+
+    const artifacts = await listExecutionArtifacts(executionDir);
+
+    expect(artifacts.map((artifact) => artifact.relativePath)).toEqual([
+      'runtime/audit.jsonl',
+      'runtime/downloads/export.csv',
+      'runtime/result-data.json',
+      'runtime/screenshots/last-step.png',
+    ]);
+    expect(artifacts.map((artifact) => [artifact.relativePath, artifact.role])).toEqual([
+      ['runtime/audit.jsonl', 'log'],
+      ['runtime/downloads/export.csv', 'download'],
+      ['runtime/result-data.json', 'other'],
+      ['runtime/screenshots/last-step.png', 'screenshot'],
+    ]);
+  });
+
   it('resolves downloads by artifact id without exposing absolute paths in summaries', async () => {
     const executionDir = await mkdtemp(path.join(os.tmpdir(), 'rpa-artifact-download-'));
     const filePath = await writeArtifact(executionDir, 'artifacts/downloads/report.csv', 'download');

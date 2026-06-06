@@ -39,7 +39,7 @@ async function createFlow(
   return flowDir;
 }
 
-async function createFakeRunner(storageRoot: string, behavior: 'success' | 'fail' | 'sleep') {
+async function createFakeRunner(storageRoot: string, behavior: 'success' | 'runtime' | 'fail' | 'sleep') {
   const runnerPath = path.join(storageRoot, `fake-${behavior}.sh`);
   const source = `
 #!/bin/sh
@@ -83,6 +83,21 @@ fi
 if [ '${behavior}' = 'fail' ]; then
   printf 'failure at %s\\n' "$execution_dir" >&2
   exit 7
+fi
+
+if [ '${behavior}' = 'runtime' ]; then
+  mkdir -p "$execution_dir/runtime/screenshots"
+  printf 'fake screenshot 1' > "$execution_dir/runtime/screenshots/open.png"
+  printf 'fake screenshot 2' > "$execution_dir/runtime/screenshots/extract.png"
+  printf '{"rows":1}' > "$execution_dir/runtime/custom-result.json"
+  printf '%s\\n' \\
+    '{"flow_id":"case_query","step_id":"s1","step_name":"Open page","status":"start","ts":"2026-06-06T00:00:00.000Z"}' \\
+    '{"flow_id":"case_query","step_id":"s1","step_name":"Open page","status":"ok","screenshot":"'"$execution_dir"'/runtime/screenshots/open.png","ts":"2026-06-06T00:00:01.000Z"}' \\
+    '{"flow_id":"case_query","step_id":"s2","step_name":"Extract result","status":"start","ts":"2026-06-06T00:00:02.000Z"}' \\
+    '{"flow_id":"case_query","step_id":"s2","step_name":"Extract result","status":"ok","result_json":"'"$execution_dir"'/runtime/custom-result.json","screenshot":"'"$execution_dir"'/runtime/screenshots/extract.png","ts":"2026-06-06T00:00:03.000Z"}' \\
+    > "$execution_dir/runtime/audit.jsonl"
+  printf 'done\\n'
+  exit 0
 fi
 
 mkdir -p "$execution_dir/artifacts/screenshots"
@@ -133,6 +148,65 @@ describe('Python Playwright executor', () => {
     expect(logs.stdout).not.toContain(storageRoot);
     await expect(executor.listArtifacts(started.executionId)).resolves.toMatchObject({
       artifacts: [expect.objectContaining({ role: 'screenshot', fileName: 'open_query.png' })],
+    });
+  });
+
+  it('publishes script audit step events and discovers generic runtime outputs', async () => {
+    const storageRoot = await mkdtemp(path.join(os.tmpdir(), 'rpa-python-runtime-'));
+    await createFlow(storageRoot);
+    const runnerPath = await createFakeRunner(storageRoot, 'runtime');
+    const executor = createPythonPlaywrightExecutor({
+      storageRoot,
+      pythonCommand: '/bin/sh',
+      pythonArgs: [runnerPath],
+    });
+
+    const started = await executor.start({
+      flowId: 'case_query',
+      mode: 'verify',
+      dryRun: true,
+      headless: false,
+      params: { case_no: 'A123' },
+    });
+    const events = await collectUntilTerminal(executor.subscribe(started.executionId));
+
+    expect(events.map((event) => event.type)).toEqual(
+      expect.arrayContaining([
+        'run.started',
+        'step.started',
+        'step.screenshot',
+        'step.completed',
+        'artifact.created',
+        'run.completed',
+      ]),
+    );
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'step.started', stepId: 's1' }),
+        expect.objectContaining({
+          type: 'step.screenshot',
+          stepId: 's2',
+          role: 'screenshot',
+          relativePath: 'runtime/screenshots/extract.png',
+        }),
+        expect.objectContaining({
+          type: 'artifact.created',
+          role: 'other',
+          relativePath: 'runtime/custom-result.json',
+        }),
+      ]),
+    );
+    await expect(executor.listArtifacts(started.executionId)).resolves.toMatchObject({
+      artifacts: expect.arrayContaining([
+        expect.objectContaining({ role: 'other', fileName: 'custom-result.json' }),
+        expect.objectContaining({ role: 'screenshot', relativePath: 'runtime/screenshots/extract.png' }),
+      ]),
+    });
+    await expect(executor.resolveCurrentScreenshot(started.executionId)).resolves.toMatchObject({
+      artifact: expect.objectContaining({
+        role: 'screenshot',
+        relativePath: 'runtime/screenshots/extract.png',
+      }),
     });
   });
 

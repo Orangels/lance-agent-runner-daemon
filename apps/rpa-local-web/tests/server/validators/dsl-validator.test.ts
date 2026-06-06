@@ -104,6 +104,23 @@ describe('RPA DSL validator', () => {
     expect(validateRpaDsl(xpath).warnings.map((issue) => issue.code)).toContain('XPATH_FALLBACK');
   });
 
+  it('rejects raw CSS id shorthand when the id starts with a digit', () => {
+    const dsl = createMinimalRpaDsl();
+    dsl.steps[0] = {
+      id: 's1',
+      name: '确认预报加载',
+      action: 'assert',
+      target: { by: 'css', css: 'div#7d ul.t' },
+      write: false,
+      manual: null,
+    };
+
+    const result = validateRpaDsl(dsl);
+
+    expect(result.ok).toBe(false);
+    expect(result.errors.map((issue) => issue.code)).toContain('CSS_NUMERIC_ID_SHORTHAND');
+  });
+
   it('warns for actionable steps without wait or assert coverage', () => {
     const dsl = createMinimalRpaDsl();
     dsl.steps[0] = {

@@ -273,6 +273,12 @@ async function runExecution(input: {
     await waitForProcessOutputCallbacks();
     await Promise.allSettled(pendingLogWrites);
     const artifacts = await listExecutionArtifacts(executionDir);
+    await appendScriptAuditEvents({
+      store: input.store,
+      executionId: input.recordId,
+      executionDir,
+      artifacts,
+    });
     for (const artifact of artifacts) {
       await input.store.appendEvent({
         type: 'artifact.created',
@@ -414,6 +420,118 @@ function normalizeTimeout(input: number | undefined, fallback: number): number {
 
 function waitForProcessOutputCallbacks(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+async function appendScriptAuditEvents(input: {
+  store: FileExecutionStore;
+  executionId: string;
+  executionDir: string;
+  artifacts: RpaExecutionArtifactSummary[];
+}): Promise<void> {
+  const auditRows = await readScriptAuditRows(path.join(input.executionDir, 'runtime', 'audit.jsonl'));
+  if (auditRows.length === 0) return;
+
+  const artifactsByRelativePath = new Map(input.artifacts.map((artifact) => [artifact.relativePath, artifact]));
+  const seenScreenshots = new Set<string>();
+  for (const row of auditRows) {
+    const stepId = stringField(row, 'step_id') ?? stringField(row, 'stepId');
+    if (!stepId) continue;
+    const timestamp = stringField(row, 'ts') ?? stringField(row, 'timestamp') ?? new Date().toISOString();
+    const status = (stringField(row, 'status') ?? '').toLowerCase();
+    if (status === 'start' || status === 'started' || status === 'running') {
+      await input.store.appendEvent({
+        type: 'step.started',
+        executionId: input.executionId,
+        timestamp,
+        stepId,
+      });
+      continue;
+    }
+
+    const screenshotArtifact = artifactFromAuditPath(
+      input.executionDir,
+      artifactsByRelativePath,
+      stringField(row, 'screenshot') ?? stringField(row, 'screenshot_path'),
+    );
+    if (screenshotArtifact && !seenScreenshots.has(`${stepId}:${screenshotArtifact.relativePath}`)) {
+      seenScreenshots.add(`${stepId}:${screenshotArtifact.relativePath}`);
+      await input.store.appendEvent({
+        type: 'step.screenshot',
+        executionId: input.executionId,
+        timestamp,
+        stepId,
+        artifactId: screenshotArtifact.artifactId,
+        role: screenshotArtifact.role,
+        relativePath: screenshotArtifact.relativePath,
+      });
+    }
+
+    if (status === 'ok' || status === 'success' || status === 'succeeded' || status === 'done') {
+      await input.store.appendEvent({
+        type: 'step.completed',
+        executionId: input.executionId,
+        timestamp,
+        stepId,
+      });
+    } else if (status === 'failed' || status === 'fail' || status === 'error') {
+      await input.store.appendEvent({
+        type: 'step.failed',
+        executionId: input.executionId,
+        timestamp,
+        stepId,
+        message: stringField(row, 'message') ?? stringField(row, 'error'),
+      });
+    }
+  }
+}
+
+async function readScriptAuditRows(auditPath: string): Promise<Record<string, unknown>[]> {
+  let content: string;
+  try {
+    content = await readFile(auditPath, 'utf8');
+  } catch (error) {
+    if (isNodeError(error) && error.code === 'ENOENT') return [];
+    throw error;
+  }
+
+  const rows: Record<string, unknown>[] = [];
+  for (const line of content.split('\n')) {
+    if (line.trim().length === 0) continue;
+    try {
+      const parsed = JSON.parse(line) as unknown;
+      if (isRecord(parsed)) rows.push(parsed);
+    } catch {
+      // Ignore malformed audit rows. The script process status remains authoritative.
+    }
+  }
+  return rows;
+}
+
+function artifactFromAuditPath(
+  executionDir: string,
+  artifactsByRelativePath: Map<string, RpaExecutionArtifactSummary>,
+  auditPath: string | undefined,
+): RpaExecutionArtifactSummary | undefined {
+  if (!auditPath) return undefined;
+  const resolved = path.resolve(auditPath);
+  const relative = normalizeExecutionRelativePath(executionDir, resolved);
+  if (!relative) return undefined;
+  return artifactsByRelativePath.get(relative);
+}
+
+function normalizeExecutionRelativePath(executionDir: string, filePath: string): string | undefined {
+  const relative = path.relative(executionDir, filePath);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) return undefined;
+  return relative.split(path.sep).join('/');
+}
+
+function stringField(row: Record<string, unknown>, field: string): string | undefined {
+  const value = row[field];
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 async function getExecutionOrNotFound(

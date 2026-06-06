@@ -143,7 +143,9 @@ notes/
 - `params.*.type` 全部属于 `string | number | date | boolean | select | secret`，不存在 `path`、`file`、`url` 等未支持类型。
 - `steps[].target.by` 全部属于 `role | label | placeholder | text | testid | id | css | xpath`，不存在 `path`、`url`、`file` 等未支持定位类型。
 - 每个 step 有 `id`、`name`、`action`。
-- 每个可操作 step 有 `target` 或明确 `manual`。
+- `click | input | select | submit | assert` 类型 step 必须有页面元素 `target`，不得输出 `target: null`。
+- 本地结果保存、审计日志、截图、trace、下载文件落盘不是页面操作；不要输出成 `action: "assert"` + `target: null`。这类行为优先放在脚本和报告中；若必须在 DSL 步骤里留痕，使用 `action: "wait"` 并配套 `assert: [{ "type": "download_exists", "value": "..." }]`。
+- 每个可操作页面 step 有 `target` 或明确 `manual`。
 - 每个关键业务结果有 `assert`。
 - 参数引用都能在 `params`、`context` 或 `config` 中找到。
 - 写操作有 `write: true`、dry-run 行为和审计记录。

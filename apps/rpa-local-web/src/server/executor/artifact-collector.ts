@@ -9,6 +9,9 @@ type CollectedArtifact = RpaExecutionArtifactSummary & {
 };
 
 const artifactIdPattern = /^art_[a-f0-9]{16}$/;
+const runtimeAllowedExtensionPattern = /\.(csv|docx?|json|jsonl|log|pdf|png|jpe?g|txt|webm|xlsx?|zip)$/i;
+const sensitiveRuntimePathPattern =
+  /(^|[/\\])(?:storage_state|cookie|cookies|token|secret|secrets|credential|credentials|ca_|usbkey)|\.(?:env|key|pem|pfx|p12|crt|cer)$/i;
 
 function normalizeRelativePath(relativePath: string): string {
   return relativePath.split(path.sep).join('/');
@@ -19,8 +22,12 @@ function artifactIdFor(relativePath: string): string {
 }
 
 function roleFor(relativePath: string): RpaExecutionArtifactSummary['role'] {
-  const [, topLevel] = relativePath.split('/');
-  switch (topLevel) {
+  const segments = relativePath.split('/');
+  const category = segments[1] ?? segments[0] ?? '';
+  if (relativePath.endsWith('/audit.jsonl') || relativePath.endsWith('/audit.log')) {
+    return 'log';
+  }
+  switch (category) {
     case 'screenshots':
       return 'screenshot';
     case 'downloads':
@@ -34,14 +41,26 @@ function roleFor(relativePath: string): RpaExecutionArtifactSummary['role'] {
   }
 }
 
-function assertUnderArtifacts(artifactsDir: string, filePath: string): void {
-  const relative = path.relative(artifactsDir, filePath);
+function assertUnderRoot(rootDir: string, filePath: string): void {
+  const relative = path.relative(rootDir, filePath);
   if (relative.startsWith('..') || path.isAbsolute(relative)) {
-    throw new Error('Unsafe artifact path');
+    throw new Error('Unsafe execution artifact path');
   }
 }
 
-async function collectArtifactFiles(artifactsDir: string, currentDir = artifactsDir): Promise<string[]> {
+function shouldCollectFile(rootName: 'artifacts' | 'runtime', relativeToRoot: string): boolean {
+  const normalized = normalizeRelativePath(relativeToRoot);
+  if (rootName === 'artifacts') return true;
+  if (sensitiveRuntimePathPattern.test(normalized)) return false;
+  return runtimeAllowedExtensionPattern.test(normalized);
+}
+
+async function collectArtifactFiles(
+  executionDir: string,
+  rootName: 'artifacts' | 'runtime',
+  currentDir = path.resolve(executionDir, rootName),
+): Promise<string[]> {
+  const rootDir = path.resolve(executionDir, rootName);
   let entries;
   try {
     entries = await readdir(currentDir, { withFileTypes: true });
@@ -56,9 +75,9 @@ async function collectArtifactFiles(artifactsDir: string, currentDir = artifacts
   for (const entry of entries) {
     const entryPath = path.join(currentDir, entry.name);
     if (entry.isDirectory()) {
-      files.push(...(await collectArtifactFiles(artifactsDir, entryPath)));
-    } else if (entry.isFile()) {
-      assertUnderArtifacts(artifactsDir, entryPath);
+      files.push(...(await collectArtifactFiles(executionDir, rootName, entryPath)));
+    } else if (entry.isFile() && shouldCollectFile(rootName, path.relative(rootDir, entryPath))) {
+      assertUnderRoot(rootDir, entryPath);
       files.push(entryPath);
     }
   }
@@ -66,8 +85,10 @@ async function collectArtifactFiles(artifactsDir: string, currentDir = artifacts
 }
 
 async function collectExecutionArtifacts(executionDir: string): Promise<CollectedArtifact[]> {
-  const artifactsDir = path.resolve(executionDir, 'artifacts');
-  const filePaths = await collectArtifactFiles(artifactsDir);
+  const filePaths = [
+    ...(await collectArtifactFiles(executionDir, 'artifacts')),
+    ...(await collectArtifactFiles(executionDir, 'runtime')),
+  ];
   const artifacts = await Promise.all(
     filePaths.map(async (filePath) => {
       const fileStat = await stat(filePath);
@@ -112,12 +133,60 @@ export async function resolveExecutionArtifactDownload(
 }
 
 export async function findCurrentScreenshot(executionDir: string): Promise<RpaExecutionArtifactSummary | null> {
-  const screenshots = (await collectExecutionArtifacts(executionDir)).filter((artifact) => artifact.role === 'screenshot');
+  const artifacts = await collectExecutionArtifacts(executionDir);
+  const audited = await findLatestAuditScreenshot(executionDir, artifacts);
+  if (audited) return stripInternalFields(audited);
+
+  const screenshots = artifacts.filter((artifact) => artifact.role === 'screenshot');
   const latest = screenshots.sort((left, right) => right.mtimeMs - left.mtimeMs || right.relativePath.localeCompare(left.relativePath))[0];
   if (!latest) {
     return null;
   }
 
-  const { filePath: _filePath, mtimeMs: _mtimeMs, ...summary } = latest;
+  return stripInternalFields(latest);
+}
+
+async function findLatestAuditScreenshot(
+  executionDir: string,
+  artifacts: CollectedArtifact[],
+): Promise<CollectedArtifact | undefined> {
+  let content: string;
+  try {
+    content = await readFile(path.join(executionDir, 'runtime', 'audit.jsonl'), 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+
+  const artifactsByRelativePath = new Map(artifacts.map((artifact) => [artifact.relativePath, artifact]));
+  for (const line of content.split('\n').reverse()) {
+    if (line.trim().length === 0) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line) as unknown;
+    } catch {
+      continue;
+    }
+    if (!isRecord(parsed) || typeof parsed.screenshot !== 'string') continue;
+    const relativePath = normalizeExecutionRelativePath(executionDir, path.resolve(parsed.screenshot));
+    if (!relativePath) continue;
+    const artifact = artifactsByRelativePath.get(relativePath);
+    if (artifact?.role === 'screenshot') return artifact;
+  }
+  return undefined;
+}
+
+function stripInternalFields(artifact: CollectedArtifact): RpaExecutionArtifactSummary {
+  const { filePath: _filePath, mtimeMs: _mtimeMs, ...summary } = artifact;
   return summary;
+}
+
+function normalizeExecutionRelativePath(executionDir: string, filePath: string): string | undefined {
+  const relative = path.relative(executionDir, filePath);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) return undefined;
+  return normalizeRelativePath(relative);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
