@@ -23,6 +23,8 @@ import {
   createCodegenHardeningWorkflow,
   type CodegenHardeningWorkflow,
 } from './workflows/codegen-hardening-workflow.js';
+import { createRpaReviewBundleService } from './observability/rpa-review-bundle-service.js';
+import { registerReviewRoutes } from './routes/review.js';
 
 export interface CreateRpaLocalServerInput {
   config: RpaLocalServerConfig;
@@ -61,6 +63,10 @@ export async function createRpaLocalServer(input: CreateRpaLocalServerInput): Pr
       storageRoot: input.config.storageRoot,
       store: codegenStore,
     });
+  const reviewBundleService = createRpaReviewBundleService({
+    storageRoot: input.config.storageRoot,
+    daemonClient,
+  });
 
   app.get('/api/rpa/health', (_req, res) => {
     const payload: RpaHealthResponse = { ok: true, app: 'rpa-local-web' };
@@ -104,6 +110,11 @@ export async function createRpaLocalServer(input: CreateRpaLocalServerInput): Pr
     workflow: codegenWorkflow,
   });
   registerExecutionRoutes(app, executor);
+  registerReviewRoutes(app, {
+    daemonClient,
+    reviewBundleService,
+    storageRoot: input.config.storageRoot,
+  });
 
   if (input.config.mode === 'development') {
     const vite = await createViteMiddleware();

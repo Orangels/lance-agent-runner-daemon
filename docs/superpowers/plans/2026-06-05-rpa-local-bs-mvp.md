@@ -454,7 +454,7 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 
 ---
 
-## Slice: RPA Observability Extension And Skill Review Loop
+## Slice: RPA Observability Extension And Skill Review Loop (Completed)
 
 **Purpose:** Attach RPA-specific execution diagnostics to the generic review bundle so the two RPA skills can be improved from real runs.
 
@@ -470,13 +470,13 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 
 **Tasks:**
 
-- [ ] Generate `extensions/rpa/rpa-summary.md` for AI-first review.
-- [ ] Generate `extensions/rpa/rpa-diagnostics.json` with bounded lists and omitted counts.
-- [ ] Generate `dsl-validation.json` and `artifact-validation.json`.
-- [ ] Attach execution records by `executionId`, `daemonRunId`, and `flowId`.
-- [ ] Apply RPA redaction rules for `params[].mask`, common ID/phone patterns, execution logs, and feedback text.
-- [ ] Treat screenshots, trace, video, and downloads as large/high-sensitive files referenced by path/hash unless explicitly exported in review mode.
-- [ ] Record RPA feedback categories: `dsl`, `selector`, `wait`, `assert`, `parameterization`, `write-risk`, `manual-step`, `executor`.
+- [x] Generate `extensions/rpa/rpa-summary.md` for AI-first review.
+- [x] Generate `extensions/rpa/rpa-diagnostics.json` with bounded lists and omitted counts.
+- [x] Generate `dsl-validation.json` and `artifact-validation.json`.
+- [x] Attach execution records by `executionId`, `daemonRunId`, and `flowId`.
+- [x] Apply RPA redaction rules for `params[].mask`, common ID/phone patterns, execution logs, and feedback text.
+- [x] Treat screenshots, trace, video, and downloads as large/high-sensitive files referenced by path/hash unless explicitly exported in review mode.
+- [x] Record RPA feedback categories: `dsl`, `selector`, `wait`, `assert`, `parameterization`, `write-risk`, `manual-step`, `executor`.
 
 **Acceptance:**
 
@@ -484,6 +484,19 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 - Bundle summary is small enough for AI review and points to raw files only as needed.
 - `collectionMode` controls persistence/export of RPA materials; `eventVisibility` does not.
 - No secrets or storage state are exported by default.
+
+**Verification:**
+
+- `pnpm --filter @lance-agent-runner/rpa-local-web exec vitest run tests/server/observability tests/server/routes/review.test.ts`
+- `pnpm --filter @lance-agent-runner/rpa-local-web test`
+- `pnpm --filter @lance-agent-runner/rpa-local-web typecheck`
+- `pnpm --filter @lance-agent-runner/rpa-local-web build`
+- `pnpm typecheck`
+- `pnpm build`
+- `git diff --check`
+- `rg -n "RPA|Playwright|DSL|selector|screenshot|trace|video|executionId|flowId" apps/daemon/src`
+
+**CC review summary:** Opus review found no P0/P1 and confirmed daemon/RPA boundaries. P2-1 short masked-param over-redaction was fixed in this slice; P2-2 manifest logical path parsing and P2-3 largeFiles completeness can be handled later.
 
 **Suggested commit:** `Add RPA observability extension`
 

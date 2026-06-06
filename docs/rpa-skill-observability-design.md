@@ -219,6 +219,33 @@ extensions/
 }
 ```
 
+## MVP Route Mapping
+
+RPA 专属复盘导出由 RPA Web 提供，不新增 daemon 的 RPA 专属 API，也不要求 daemon core 理解 DSL、Playwright、selector 或 executor。
+
+MVP 使用这些 HTTP 边界：
+
+```text
+GET  /api/rpa/flows/:flowId/review-bundle/download?daemonRunId=run_...&executionId=exec_...&includeSensitiveFiles=false
+POST /api/rpa/feedback
+```
+
+RPA Web 的 review bundle 下载流程：
+
+1. 校验 `flowId`、必填 `daemonRunId` 和可选 `executionId`。
+2. 调用通用 daemon API：`GET /api/runs/:runId/review-bundle/download`。
+3. 在 RPA Web 本地读取对应 flow/execution 材料，生成 `extensions/rpa/*`。
+4. 合并为新的 ZIP 返回前端；所有扩展路径都是 bundle-relative logical path，不暴露 host absolute path。
+
+RPA Web 的 feedback 流程：
+
+1. 校验 RPA category 和 severity。
+2. 根据 `flow.dsl.json` 的 `params[].mask`、execution `run.params.json`、常见证件/手机号模式和本地 storage root 做 RPA 专属脱敏。
+3. 调用通用 daemon API：`POST /api/runs/:runId/feedback`，category 和 metadata 对 daemon 保持 opaque。
+4. 导出 bundle 时再调用 `GET /api/runs/:runId/feedback`，由 RPA Web 本地过滤 RPA allowlist category 和可选 `metadata.source = "rpa-local-web"`。
+
+RPA Web 不通过 `flowId` 反推 daemon run；调用方必须传入本次要复盘的 `daemonRunId`。
+
 ## RPA 诊断摘要
 
 `rpa-diagnostics.json` 用于让开发者和 AI 快速判断 skill 修改方向。

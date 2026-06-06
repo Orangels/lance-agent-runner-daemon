@@ -1094,7 +1094,7 @@ Expected: PASS.
 - Modify: `docs/rpa-skill-observability-design.md` only if implementation clarifies route names.
 - Modify: `docs/superpowers/plans/2026-06-05-rpa-local-bs-mvp.md`
 
-- [ ] **Step 1: Update RPA observability design route names**
+- [x] **Step 1: Update RPA observability design route names**
 
 If the implementation uses the planned endpoint names, add a short “MVP route mapping” section:
 
@@ -1106,7 +1106,7 @@ If the implementation uses the planned endpoint names, add a short “MVP route 
 - Daemon generic bundle source: `GET /api/runs/:runId/review-bundle/download`
 ```
 
-- [ ] **Step 2: Update main plan status after CC review**
+- [x] **Step 2: Update main plan status after CC review**
 
 Only after implementation and CC review pass, update:
 
@@ -1122,7 +1122,7 @@ Add verification commands and CC review summary. Do not mark natural-language ge
 
 - No code files beyond previous tasks.
 
-- [ ] **Step 1: Run targeted RPA observability tests**
+- [x] **Step 1: Run targeted RPA observability tests**
 
 Run:
 
@@ -1132,7 +1132,7 @@ pnpm --filter @lance-agent-runner/rpa-local-web exec vitest run tests/server/obs
 
 Expected: PASS.
 
-- [ ] **Step 2: Run RPA package validation**
+- [x] **Step 2: Run RPA package validation**
 
 Run:
 
@@ -1144,7 +1144,7 @@ pnpm --filter @lance-agent-runner/rpa-local-web build
 
 Expected: all pass. Route tests may need sandbox escalation because they listen on local ports.
 
-- [ ] **Step 3: Run repository-level validation**
+- [x] **Step 3: Run repository-level validation**
 
 Run:
 
@@ -1156,7 +1156,7 @@ git diff --check
 
 Expected: all pass.
 
-- [ ] **Step 4: Run daemon boundary grep**
+- [x] **Step 4: Run daemon boundary grep**
 
 Run:
 
@@ -1166,7 +1166,7 @@ rg -n "RPA|Playwright|DSL|selector|screenshot|trace|video|executionId|flowId" ap
 
 Expected: only generic words from existing allowed surfaces should appear. If new RPA-specific daemon core matches appear, stop and fix the boundary.
 
-- [ ] **Step 5: Request CC review**
+- [x] **Step 5: Request CC review**
 
 Review prompt should state:
 
@@ -1178,15 +1178,17 @@ Focus on P0/P1: sensitive file export, redaction, path leakage, bundle merge saf
 
 Expected: no P0/P1 before commit.
 
+CC review result: Opus review found no P0/P1 and confirmed the daemon/RPA boundaries. The P2-1 short masked-param text replacement issue was fixed before commit; P2-2 and P2-3 remain follow-up candidates.
+
 ## Review Checklist Before Implementation
 
-- [ ] Daemon core does not gain RPA-specific semantics.
-- [ ] RPA Web combined bundle includes generic daemon material plus `extensions/rpa/*`.
-- [ ] RPA extension summaries are AI-first and bounded.
-- [ ] `rpa-diagnostics.json` includes bounded lists and omitted counts.
-- [ ] DSL and artifact validation documents are exported.
-- [ ] Execution records link `flowId`, `daemonRunId`, and `executionId`.
-- [ ] Screenshots, trace, video, and downloads are referenced by default, not inlined.
-- [ ] Explicit sensitive export flag is required before high-sensitive file bodies are included.
-- [ ] RPA feedback categories are validated by RPA Web and stored by daemon as opaque categories.
-- [ ] Absolute local storage paths, masked params, phone numbers, ID-like values, tokens, cookies, and storage state do not leak into summaries, JSON, logs, feedback, headers, or route errors.
+- [x] Daemon core does not gain RPA-specific semantics.
+- [x] RPA Web combined bundle includes generic daemon material plus `extensions/rpa/*`.
+- [x] RPA extension summaries are AI-first and bounded.
+- [x] `rpa-diagnostics.json` includes bounded lists and omitted counts.
+- [x] DSL and artifact validation documents are exported.
+- [x] Execution records link `flowId`, `daemonRunId`, and `executionId`.
+- [x] Screenshots, trace, video, and downloads are referenced by default, not inlined.
+- [x] Explicit sensitive export flag is required before high-sensitive file bodies are included.
+- [x] RPA feedback categories are validated by RPA Web and stored by daemon as opaque categories.
+- [x] Absolute local storage paths, masked params, phone numbers, ID-like values, tokens, cookies, and storage state do not leak into summaries, JSON, logs, feedback, headers, or route errors.

@@ -113,3 +113,44 @@ export interface RpaExecutionArtifactsResponse {
   executionId: string;
   artifacts: RpaExecutionArtifactSummary[];
 }
+
+export const rpaFeedbackCategories = [
+  'dsl',
+  'selector',
+  'wait',
+  'assert',
+  'parameterization',
+  'write-risk',
+  'manual-step',
+  'executor',
+] as const;
+
+export type RpaFeedbackCategory = (typeof rpaFeedbackCategories)[number];
+
+export const rpaFeedbackSeverities = ['minor', 'major', 'critical'] as const;
+
+export type RpaFeedbackSeverity = (typeof rpaFeedbackSeverities)[number];
+
+export interface CreateRpaFeedbackRequest {
+  daemonRunId: string;
+  flowId?: string;
+  executionId?: string;
+  stepId?: string;
+  category: RpaFeedbackCategory;
+  severity: RpaFeedbackSeverity;
+  message: string;
+  artifactPath?: string;
+  screenshotPath?: string;
+}
+
+export interface CreateRpaFeedbackResponse {
+  feedback: unknown;
+}
+
+export function isRpaFeedbackCategory(value: string): value is RpaFeedbackCategory {
+  return rpaFeedbackCategories.includes(value as RpaFeedbackCategory);
+}
+
+export function isRpaFeedbackSeverity(value: string): value is RpaFeedbackSeverity {
+  return rpaFeedbackSeverities.includes(value as RpaFeedbackSeverity);
+}

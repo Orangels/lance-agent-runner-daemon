@@ -107,6 +107,55 @@ describe('RPA daemon client', () => {
     );
   });
 
+  it('downloads daemon review bundles and stores generic feedback', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('zip', { status: 200, headers: { 'Content-Type': 'application/zip' } }))
+      .mockResolvedValueOnce(jsonResponse({ feedback: { id: 'feedback_1' } }, { status: 201 }))
+      .mockResolvedValueOnce(jsonResponse({ feedback: [{ category: 'selector' }] }));
+    const client = new DaemonClient({
+      baseUrl: 'http://daemon.local',
+      apiKey: 'secret',
+      fetchImpl,
+    });
+
+    await expect(client.downloadReviewBundle('run_1')).resolves.toBeInstanceOf(Response);
+    await expect(
+      client.createRunFeedback({
+        runId: 'run_1',
+        category: 'selector',
+        message: 'wrong selector',
+        metadata: { executionId: 'exec_1' },
+      }),
+    ).resolves.toEqual({ feedback: { id: 'feedback_1' } });
+    await expect(client.listRunFeedback('run_1')).resolves.toEqual({
+      feedback: [expect.objectContaining({ category: 'selector' })],
+    });
+
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      1,
+      'http://daemon.local/api/runs/run_1/review-bundle/download',
+      expect.objectContaining({ headers: { Authorization: 'Bearer secret' }, method: 'GET' }),
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      2,
+      'http://daemon.local/api/runs/run_1/feedback',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer secret',
+          'Content-Type': 'application/json',
+        }),
+        method: 'POST',
+        body: expect.stringContaining('"category":"selector"'),
+      }),
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      3,
+      'http://daemon.local/api/runs/run_1/feedback',
+      expect.objectContaining({ headers: { Authorization: 'Bearer secret' }, method: 'GET' }),
+    );
+  });
+
   it('parses SSE event records from daemon event streams', async () => {
     const body = new ReadableStream<Uint8Array>({
       start(controller) {

@@ -88,6 +88,30 @@ export interface ArtifactsResponse {
   artifacts: ArtifactSummary[];
 }
 
+export interface CreateRunFeedbackRequest {
+  category: string;
+  message: string;
+  metadata?: unknown;
+}
+
+export interface RunFeedbackRecord {
+  id?: string;
+  runId?: string;
+  clientId?: string;
+  category: string;
+  message: string;
+  metadata?: unknown;
+  createdAt?: number;
+}
+
+export interface CreateRunFeedbackResponse {
+  feedback: RunFeedbackRecord;
+}
+
+export interface RunFeedbackResponse {
+  feedback: RunFeedbackRecord[];
+}
+
 export interface DaemonRunEventRecord {
   id: string;
   event: unknown;

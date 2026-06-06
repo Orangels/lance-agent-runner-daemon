@@ -1,6 +1,8 @@
 import type {
   ArtifactsResponse,
   CancelRunResponse,
+  CreateRunFeedbackRequest,
+  CreateRunFeedbackResponse,
   CreateRunRequest,
   CreateRunResponse,
   CreateWorkspaceRequest,
@@ -8,6 +10,7 @@ import type {
   ErrorResponse,
   HealthResponse,
   PublicWorkspace,
+  RunFeedbackResponse,
   UploadWorkspaceFileResponse,
 } from '../shared/daemon-types.js';
 
@@ -68,6 +71,32 @@ export class DaemonClient {
 
   listRunArtifacts(runId: string): Promise<ArtifactsResponse> {
     return this.requestJson(`/api/runs/${encodeURIComponent(runId)}/artifacts`);
+  }
+
+  createRunFeedback(input: CreateRunFeedbackRequest & { runId: string }): Promise<CreateRunFeedbackResponse> {
+    const { runId, ...body } = input;
+    return this.requestJson(`/api/runs/${encodeURIComponent(runId)}/feedback`, {
+      method: 'POST',
+      body,
+    });
+  }
+
+  listRunFeedback(runId: string): Promise<RunFeedbackResponse> {
+    return this.requestJson(`/api/runs/${encodeURIComponent(runId)}/feedback`);
+  }
+
+  async downloadReviewBundle(runId: string): Promise<Response> {
+    const response = await this.fetchImpl(
+      this.toUrl(`/api/runs/${encodeURIComponent(runId)}/review-bundle/download`),
+      {
+        headers: authHeaders(this.apiKey),
+        method: 'GET',
+      },
+    );
+    if (!response.ok) {
+      throw await toDaemonClientError(response);
+    }
+    return response;
   }
 
   async uploadWorkspaceFile(input: {
