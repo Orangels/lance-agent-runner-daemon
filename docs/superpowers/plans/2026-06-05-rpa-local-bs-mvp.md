@@ -414,6 +414,8 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 
 **Purpose:** Add full generic skill review-bundle capabilities after the first RPA loop has produced real run/execution material. This slice remains business-agnostic.
 
+**Execution plan:** `docs/superpowers/plans/2026-06-06-daemon-generic-review-bundle-feedback.md`
+
 **Files likely touched:**
 
 - Modify: `apps/daemon/src/core/run-log-service.ts`
