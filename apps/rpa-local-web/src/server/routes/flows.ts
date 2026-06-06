@@ -5,7 +5,10 @@ import type {
   RpaValidationIssueSummary,
 } from '../../shared/rpa-api-types.js';
 import type { RpaDslDocument } from '../../shared/dsl-schema.js';
+import { deriveRuntimeParamFields } from '../../shared/runtime-params.js';
 import {
+  readFlowLocalMetadata,
+  resolveFlowDir,
   resolveFlowArtifactPath,
   resolveFlowsRoot,
   safeFlowId,
@@ -47,12 +50,30 @@ export function registerFlowRoutes(app: Express, options: RegisterFlowRoutesOpti
       }
 
       const safeDsl = redactDslForBrowser(dsl as RpaDslDocument);
+      const flowDir = resolveFlowDir(options.storageRoot, flowId);
+      const metadata = await readFlowLocalMetadata(flowDir, flowId);
+      const fields = deriveRuntimeParamFields(safeDsl.params);
       const payload: RpaFlowDetailResponse = {
         flowId,
         title: safeDsl.meta.title,
         source: safeDsl.meta.source,
         dsl: safeDsl,
         warnings: validation.warnings.map(summarizeIssue),
+        runtimeParams: {
+          fields,
+          requiresUserInput: fields.some((field) => field.required),
+          maskedParamIds: fields.filter((field) => field.mask).map((field) => field.id),
+        },
+        provenance: {
+          source: metadata.source,
+          requiresVerifyBeforeRun: metadata.requiresVerifyBeforeRun,
+          importedAt: metadata.source === 'imported' ? metadata.createdAt : undefined,
+          originalFlowId: metadata.imported?.originalFlowId,
+          packageCreatedAt: metadata.imported?.packageCreatedAt,
+          packageSha256: metadata.imported?.packageSha256,
+          verifiedAt: metadata.verified?.verifiedAt,
+          verifiedExecutionId: metadata.verified?.executionId,
+        },
       };
       res.json(payload);
     } catch (error) {

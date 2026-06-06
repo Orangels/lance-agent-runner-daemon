@@ -59,6 +59,35 @@ describe('RPA browser API client', () => {
     );
   });
 
+  it('builds package download URLs and imports package bytes', async () => {
+    const file = new File([new Uint8Array([1, 2, 3])], 'case_query.rpa.zip', { type: 'application/zip' });
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({
+        flowId: 'case_query',
+        title: '案件查询',
+        source: 'imported',
+        requiresVerifyBeforeRun: true,
+        importedAt: '2026-06-06T00:00:00.000Z',
+        packageSha256: 'sha256:abc',
+        ignoredEntries: [],
+      }),
+    );
+    const client = new RpaApiClient({ fetchImpl });
+
+    expect(client.getPackageDownloadUrl('case_query')).toBe('/api/rpa/flows/case_query/package/download');
+    await expect(client.importPackage(file)).resolves.toMatchObject({ flowId: 'case_query' });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      '/api/rpa/flows/import-package',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          'Content-Type': 'application/zip',
+          'X-RPA-Package-File-Name': 'case_query.rpa.zip',
+        }),
+      }),
+    );
+  });
+
   it('starts and cancels executions through JSON endpoints', async () => {
     const fetchImpl = vi
       .fn()

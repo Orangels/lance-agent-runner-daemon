@@ -1,7 +1,6 @@
 import {
   RPA_DSL_VERSION,
   type RpaDslDocument,
-  type RpaDslParamDefinition,
   type RpaDslStep,
   rpaDslActionValues,
   rpaDslAssertTypeValues,
@@ -14,16 +13,12 @@ import {
   errorIssue,
   warningIssue,
 } from './validation-types.js';
+import {
+  deriveRuntimeParamFields,
+  type RpaRuntimeParamField,
+} from '../../shared/runtime-params.js';
 
-export interface ParameterFormField {
-  id: string;
-  label: string;
-  type: 'text' | 'number' | 'date' | 'checkbox' | 'select' | 'password';
-  required: boolean;
-  mask: boolean;
-  options?: { label: string; value: string }[];
-  defaultValue?: string | number | boolean;
-}
+export type ParameterFormField = RpaRuntimeParamField;
 
 const actionsRequiringTarget = new Set(['click', 'input', 'select', 'submit', 'assert']);
 const actionsNeedingWaitWarning = new Set(['navigate', 'click', 'input', 'select', 'submit']);
@@ -71,15 +66,7 @@ export function validateRpaDsl(input: unknown): ValidationResult {
 }
 
 export function deriveParameterFormModel(dsl: RpaDslDocument): ParameterFormField[] {
-  return Object.entries(dsl.params).map(([id, param]) => ({
-    id,
-    label: param.label ?? id,
-    type: mapParamTypeToFormType(param),
-    required: param.required === true,
-    mask: param.mask === true || param.type === 'secret',
-    options: param.options,
-    defaultValue: param.default,
-  }));
+  return deriveRuntimeParamFields(dsl.params);
 }
 
 function validateParams(params: Record<string, unknown>, errors: ValidationIssue[]) {
@@ -221,15 +208,6 @@ function validateTarget(
   if (target.by === 'xpath') {
     warnings.push(warningIssue('XPATH_FALLBACK', `${path}.by`, 'XPath is a fallback selector and should be hardened later.'));
   }
-}
-
-function mapParamTypeToFormType(param: RpaDslParamDefinition): ParameterFormField['type'] {
-  if (param.type === 'number') return 'number';
-  if (param.type === 'date') return 'date';
-  if (param.type === 'boolean') return 'checkbox';
-  if (param.type === 'select') return 'select';
-  if (param.type === 'secret') return 'password';
-  return 'text';
 }
 
 function hasHighRiskManual(value: unknown): boolean {

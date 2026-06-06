@@ -1,6 +1,7 @@
 import { RPA_DSL_VERSION } from './dsl-schema.js';
 
 export const RPA_PACKAGE_SCHEMA_VERSION = 'rpa-package.v0.1' as const;
+export const RPA_FLOW_LOCAL_METADATA_SCHEMA_VERSION = 'rpa-flow-local.v0.1' as const;
 
 export const requiredGenerationArtifactNames = [
   'flow.dsl.json',
@@ -67,6 +68,25 @@ export interface RpaPackageManifest {
     manualIntervention: string[];
   };
   checksums: Record<RequiredGenerationArtifactName, `sha256:${string}`>;
+}
+
+export interface RpaFlowLocalMetadata {
+  schemaVersion: typeof RPA_FLOW_LOCAL_METADATA_SCHEMA_VERSION;
+  flowId: string;
+  source: 'generated' | 'imported';
+  createdAt: string;
+  generator?: RpaPackageManifest['generator'];
+  requiresVerifyBeforeRun: boolean;
+  imported?: {
+    originalFlowId: string;
+    packageCreatedAt?: string;
+    packageSha256: `sha256:${string}`;
+    packageFileName?: string;
+  };
+  verified?: {
+    executionId: string;
+    verifiedAt: string;
+  };
 }
 
 export const requiredArtifactRoleByName: Record<RequiredGenerationArtifactName, GenerationArtifactRole> = {

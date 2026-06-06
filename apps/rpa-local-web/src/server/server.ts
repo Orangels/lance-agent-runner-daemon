@@ -21,6 +21,7 @@ import { registerCodegenRoutes } from './routes/codegen.js';
 import { registerExecutionRoutes } from './routes/executions.js';
 import { registerFlowRoutes } from './routes/flows.js';
 import { registerNaturalLanguageRoutes } from './routes/natural-language.js';
+import { registerPackageRoutes } from './routes/packages.js';
 import {
   createCodegenHardeningWorkflow,
   type CodegenHardeningWorkflow,
@@ -120,6 +121,7 @@ export async function createRpaLocalServer(input: CreateRpaLocalServerInput): Pr
   app.locals.daemonClient = daemonClient;
   app.locals.rpaExecutor = executor;
   registerFlowRoutes(app, { storageRoot: input.config.storageRoot });
+  registerPackageRoutes(app, { storageRoot: input.config.storageRoot });
   registerCodegenRoutes(app, {
     storageRoot: input.config.storageRoot,
     store: codegenStore,

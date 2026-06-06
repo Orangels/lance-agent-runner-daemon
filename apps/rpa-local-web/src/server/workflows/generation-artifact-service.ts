@@ -1,8 +1,12 @@
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import {
+  RPA_FLOW_LOCAL_METADATA_SCHEMA_VERSION,
+  type RpaPackageManifest,
+} from '../../shared/artifacts.js';
 import type { RpaGenerationArtifact } from '../../shared/artifacts.js';
 import type { ArtifactsResponse } from '../../shared/daemon-types.js';
-import { resolveFlowsRoot, safeFlowId } from '../flow-store.js';
+import { resolveFlowsRoot, safeFlowId, writeFlowLocalMetadata } from '../flow-store.js';
 import { validateGenerationArtifacts } from '../validators/artifact-validator.js';
 import { validateRpaDsl } from '../validators/dsl-validator.js';
 
@@ -17,6 +21,7 @@ export interface PersistRequiredGenerationArtifactsInput {
   flowId: string;
   runId: string;
   tempSuffix: string;
+  generator: RpaPackageManifest['generator'];
 }
 
 export class GenerationArtifactError extends Error {
@@ -93,6 +98,14 @@ export async function persistRequiredGenerationArtifacts(
     }
 
     await replaceFinalFlowDir(tempFlowDir, finalFlowDir);
+    await writeFlowLocalMetadata(finalFlowDir, {
+      schemaVersion: RPA_FLOW_LOCAL_METADATA_SCHEMA_VERSION,
+      flowId: input.flowId,
+      source: 'generated',
+      createdAt: new Date().toISOString(),
+      generator: input.generator,
+      requiresVerifyBeforeRun: false,
+    });
     promoted = true;
     return artifactValidation.artifacts;
   } finally {

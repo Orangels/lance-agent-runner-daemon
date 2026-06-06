@@ -1,4 +1,7 @@
 import type { RpaDslDocument } from './dsl-schema.js';
+import type { RpaRuntimeParamField } from './runtime-params.js';
+
+export type { RpaRuntimeParamField, RuntimeParamValue } from './runtime-params.js';
 
 export interface RpaHealthResponse {
   ok: true;
@@ -55,12 +58,41 @@ export interface RpaValidationIssueSummary {
   message: string;
 }
 
+export interface RpaFlowRuntimeParamsResponse {
+  fields: RpaRuntimeParamField[];
+  requiresUserInput: boolean;
+  maskedParamIds: string[];
+}
+
+export interface RpaFlowProvenanceResponse {
+  source: 'generated' | 'imported';
+  requiresVerifyBeforeRun: boolean;
+  importedAt?: string;
+  originalFlowId?: string;
+  packageCreatedAt?: string;
+  packageSha256?: string;
+  verifiedAt?: string;
+  verifiedExecutionId?: string;
+}
+
 export interface RpaFlowDetailResponse {
   flowId: string;
   title: string;
   source: RpaDslDocument['meta']['source'];
   dsl: RpaDslDocument;
   warnings: RpaValidationIssueSummary[];
+  runtimeParams: RpaFlowRuntimeParamsResponse;
+  provenance: RpaFlowProvenanceResponse;
+}
+
+export interface ImportRpaPackageResponse {
+  flowId: string;
+  title: string;
+  source: 'imported';
+  requiresVerifyBeforeRun: true;
+  importedAt: string;
+  packageSha256: string;
+  ignoredEntries: string[];
 }
 
 export interface StartRpaExecutionRequest {

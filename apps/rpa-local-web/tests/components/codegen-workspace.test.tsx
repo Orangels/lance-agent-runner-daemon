@@ -2,7 +2,8 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CodegenWorkspace } from '../../src/components/CodegenWorkspace.js';
-import { createMinimalRpaDsl } from '../../src/shared/dsl-schema.js';
+import { createMinimalRpaDsl, type RpaDslDocument } from '../../src/shared/dsl-schema.js';
+import { deriveRuntimeParamFields } from '../../src/shared/runtime-params.js';
 import type { RuntimeVerificationApiClient } from '../../src/components/RuntimeVerificationWorkspace.js';
 import type {
   RpaExecutionArtifactsResponse,
@@ -73,7 +74,7 @@ describe('CodegenWorkspace', () => {
     });
   });
 
-  it('hands hardened flows to the runtime verification workspace', async () => {
+  it('opens hardened flows in the runtime verification workspace and blocks auto-start until params are filled', async () => {
     const codegenClient = new FakeCodegenClient({
       status: {
         sessionId: 'cg_1',
@@ -93,13 +94,8 @@ describe('CodegenWorkspace', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Start recording' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Verify flow' }));
 
-    await waitFor(() => expect(runtimeClient.startExecution).toHaveBeenCalledWith(
-      expect.objectContaining({
-        flowId: 'case_query',
-        daemonRunId: 'run_1',
-        mode: 'verify',
-      }),
-    ));
+    expect(await screen.findByText('Runtime params are required before execution can start.')).toBeInTheDocument();
+    expect(runtimeClient.startExecution).not.toHaveBeenCalled();
   });
 });
 
@@ -120,13 +116,14 @@ class FakeCodegenClient {
 }
 
 class FakeRuntimeClient implements RuntimeVerificationApiClient {
-  readonly getFlow = vi.fn(async (flowId: string): Promise<RpaFlowDetailResponse> => ({
-    flowId,
-    title: '案件查询',
-    source: 'codegen',
-    dsl: createMinimalRpaDsl(),
-    warnings: [],
-  }));
+  readonly getFlow = vi.fn(async (flowId: string): Promise<RpaFlowDetailResponse> => {
+    const dsl = createMinimalRpaDsl();
+    return flowDetail({
+      flowId,
+      title: '案件查询',
+      dsl: { ...dsl, flow_id: flowId },
+    });
+  });
 
   readonly startExecution = vi.fn(async (): Promise<StartRpaExecutionResponse> => ({
     executionId: 'exec_1',
@@ -154,4 +151,33 @@ class FakeRuntimeClient implements RuntimeVerificationApiClient {
   }));
   readonly getCurrentScreenshotUrl = vi.fn(() => '/api/rpa/executions/exec_1/screenshots/current');
   readonly subscribeExecutionEvents = vi.fn(() => vi.fn());
+}
+
+function flowDetail({
+  flowId,
+  title,
+  dsl,
+}: {
+  flowId: string;
+  title: string;
+  dsl: RpaDslDocument;
+}): RpaFlowDetailResponse {
+  const fields = deriveRuntimeParamFields(dsl.params);
+
+  return {
+    flowId,
+    title,
+    source: dsl.meta.source,
+    dsl,
+    warnings: [],
+    runtimeParams: {
+      fields,
+      requiresUserInput: fields.length > 0,
+      maskedParamIds: fields.filter((field) => field.mask).map((field) => field.id),
+    },
+    provenance: {
+      source: dsl.meta.source === 'imported' ? 'imported' : 'generated',
+      requiresVerifyBeforeRun: false,
+    },
+  };
 }

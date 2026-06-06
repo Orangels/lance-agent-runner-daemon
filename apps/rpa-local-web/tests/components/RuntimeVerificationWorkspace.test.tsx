@@ -2,7 +2,8 @@ import { act, cleanup, render, screen, waitFor, within } from '@testing-library/
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RuntimeVerificationWorkspace } from '../../src/components/RuntimeVerificationWorkspace.js';
-import { createMinimalRpaDsl } from '../../src/shared/dsl-schema.js';
+import { createMinimalRpaDsl, type RpaDslDocument } from '../../src/shared/dsl-schema.js';
+import { deriveRuntimeParamFields } from '../../src/shared/runtime-params.js';
 import type {
   RpaExecutionArtifactsResponse,
   RpaExecutionEvent,
@@ -32,6 +33,7 @@ describe('RuntimeVerificationWorkspace', () => {
     render(<RuntimeVerificationWorkspace client={client} />);
     await screen.findByText('案件查询');
 
+    await userEvent.type(screen.getByLabelText('案件编号'), 'A123');
     await userEvent.click(screen.getByRole('button', { name: /Start/ }));
 
     expect(client.startExecution).toHaveBeenCalledWith({
@@ -39,7 +41,7 @@ describe('RuntimeVerificationWorkspace', () => {
       mode: 'verify',
       dryRun: true,
       headless: false,
-      params: {},
+      params: { case_no: 'A123' },
     });
     expect(client.subscribeExecutionEvents).toHaveBeenCalledWith('exec_1', expect.any(Object));
 
@@ -80,6 +82,7 @@ describe('RuntimeVerificationWorkspace', () => {
 
     render(<RuntimeVerificationWorkspace client={client} />);
     await screen.findByText('案件查询');
+    await userEvent.type(screen.getByLabelText('案件编号'), 'A123');
     await userEvent.click(screen.getByRole('button', { name: /Start/ }));
     await userEvent.click(screen.getByRole('button', { name: /Cancel/ }));
 
@@ -123,22 +126,84 @@ describe('RuntimeVerificationWorkspace', () => {
 
     rerender(<RuntimeVerificationWorkspace client={client} autoStartRequest={{ ...firstRequest }} />);
     await waitFor(() => expect(client.startExecution).toHaveBeenCalledTimes(1));
+  });
 
-    rerender(
+  it('loads the target flow before validating auto-start params', async () => {
+    const client = new FakeRuntimeClient();
+    render(
       <RuntimeVerificationWorkspace
         client={client}
-        autoStartRequest={{ requestId: 'req_2', flowId: 'report_download', mode: 'run' }}
+        autoStartRequest={{
+          requestId: 'req_target',
+          flowId: 'report_download',
+          mode: 'run',
+          params: { case_no: 'R100' },
+        }}
       />,
     );
 
-    await waitFor(() => expect(client.startExecution).toHaveBeenCalledTimes(2));
-    expect(client.startExecution).toHaveBeenLastCalledWith({
+    await waitFor(() => expect(client.getFlow).toHaveBeenCalledWith('report_download'));
+    await waitFor(() => expect(client.startExecution).toHaveBeenCalledTimes(1));
+    expect(client.startExecution).toHaveBeenCalledWith({
       flowId: 'report_download',
       mode: 'run',
       dryRun: false,
       headless: true,
-      params: {},
+      params: { case_no: 'R100' },
     });
+  });
+
+  it('does not auto-start when required runtime params are missing', async () => {
+    const client = new FakeRuntimeClient();
+
+    render(
+      <RuntimeVerificationWorkspace
+        client={client}
+        autoStartRequest={{ requestId: 'req_missing', flowId: 'case_query', mode: 'verify' }}
+      />,
+    );
+
+    expect(await screen.findByText('Runtime params are required before execution can start.')).toBeInTheDocument();
+    expect(client.startExecution).not.toHaveBeenCalled();
+  });
+
+  it('shows runtime param errors and does not start until required values are provided', async () => {
+    const client = new FakeRuntimeClient();
+
+    render(<RuntimeVerificationWorkspace client={client} />);
+    await screen.findByText('案件查询');
+
+    await userEvent.click(screen.getByRole('button', { name: /Start/ }));
+
+    expect(client.startExecution).not.toHaveBeenCalled();
+    expect(screen.getByText('案件编号 is required.')).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText('案件编号'), 'A123');
+    await userEvent.click(screen.getByRole('button', { name: /Start/ }));
+
+    expect(client.startExecution).toHaveBeenCalledWith({
+      flowId: 'case_query',
+      mode: 'verify',
+      dryRun: true,
+      headless: false,
+      params: { case_no: 'A123' },
+    });
+  });
+
+  it('notifies when verify mode succeeds', async () => {
+    const client = new FakeRuntimeClient();
+    const onVerifySucceeded = vi.fn();
+
+    render(<RuntimeVerificationWorkspace client={client} onVerifySucceeded={onVerifySucceeded} />);
+    await screen.findByText('案件查询');
+    await userEvent.type(screen.getByLabelText('案件编号'), 'A123');
+    await userEvent.click(screen.getByRole('button', { name: /Start/ }));
+
+    await act(async () => {
+      client.emit({ type: 'run.completed', executionId: 'exec_1', status: 'succeeded', exitCode: 0, sequence: 1 });
+    });
+
+    expect(onVerifySucceeded).toHaveBeenCalledWith({ flowId: 'case_query', executionId: 'exec_1' });
   });
 
   it('offers a repair callback after a failed execution', async () => {
@@ -161,6 +226,7 @@ describe('RuntimeVerificationWorkspace', () => {
 
     render(<RuntimeVerificationWorkspace client={client} onRepairRequest={onRepairRequest} />);
     await screen.findByText('案件查询');
+    await userEvent.type(screen.getByLabelText('案件编号'), 'A123');
     await userEvent.click(screen.getByRole('button', { name: /Start/ }));
 
     await act(async () => {
@@ -182,10 +248,9 @@ class FakeRuntimeClient {
   readonly getFlow = vi.fn(async (flowId: string): Promise<RpaFlowDetailResponse> => {
     const dsl = createMinimalRpaDsl();
     const title = flowId === 'report_download' ? '报表下载' : dsl.meta.title;
-    return {
+    return flowDetail({
       flowId,
       title,
-      source: dsl.meta.source,
       dsl: {
         ...dsl,
         flow_id: flowId,
@@ -194,8 +259,7 @@ class FakeRuntimeClient {
           title,
         },
       },
-      warnings: [],
-    };
+    });
   });
 
   readonly startExecution = vi.fn(
@@ -260,4 +324,33 @@ class FakeRuntimeClient {
       ...event,
     });
   }
+}
+
+function flowDetail({
+  flowId,
+  title,
+  dsl,
+}: {
+  flowId: string;
+  title: string;
+  dsl: RpaDslDocument;
+}): RpaFlowDetailResponse {
+  const fields = deriveRuntimeParamFields(dsl.params);
+
+  return {
+    flowId,
+    title,
+    source: dsl.meta.source,
+    dsl,
+    warnings: [],
+    runtimeParams: {
+      fields,
+      requiresUserInput: fields.length > 0,
+      maskedParamIds: fields.filter((field) => field.mask).map((field) => field.id),
+    },
+    provenance: {
+      source: dsl.meta.source === 'imported' ? 'imported' : 'generated',
+      requiresVerifyBeforeRun: false,
+    },
+  };
 }

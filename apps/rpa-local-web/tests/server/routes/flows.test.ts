@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { Express } from 'express';
 import { describe, expect, it, vi } from 'vitest';
 import { createMinimalRpaDsl, type RpaDslDocument } from '../../../src/shared/dsl-schema.js';
+import { writeFlowLocalMetadata } from '../../../src/server/flow-store.js';
 import { registerFlowRoutes } from '../../../src/server/routes/flows.js';
 
 async function writeFlowDsl(storageRoot: string, dsl: RpaDslDocument) {
@@ -56,7 +57,48 @@ describe('RPA flow detail routes', () => {
     expect(payload.warnings).toEqual([
       expect.objectContaining({ severity: 'warning', code: 'MISSING_WAIT', path: 'steps[1].wait' }),
     ]);
+    expect(payload.runtimeParams).toMatchObject({
+      requiresUserInput: true,
+      maskedParamIds: ['case_no'],
+      fields: [expect.objectContaining({ id: 'case_no', type: 'text', required: true, mask: true })],
+    });
+    expect(payload.provenance).toMatchObject({
+      source: 'generated',
+      requiresVerifyBeforeRun: false,
+    });
     expect(payload.dsl.context.storage_state).toBe('[configured]');
+    expect(JSON.stringify(payload)).not.toContain(storageRoot);
+  });
+
+  it('returns imported flow provenance without leaking local paths', async () => {
+    const storageRoot = await mkdtemp(path.join(os.tmpdir(), 'rpa-flow-route-imported-'));
+    const dsl = createMinimalRpaDsl();
+    await writeFlowDsl(storageRoot, dsl);
+    await writeFlowLocalMetadata(path.join(storageRoot, 'flows', dsl.flow_id), {
+      schemaVersion: 'rpa-flow-local.v0.1',
+      flowId: dsl.flow_id,
+      source: 'imported',
+      createdAt: '2026-06-06T00:00:00.000Z',
+      requiresVerifyBeforeRun: true,
+      imported: {
+        originalFlowId: 'case_query',
+        packageCreatedAt: '2026-06-05T00:00:00.000Z',
+        packageSha256: 'sha256:abc',
+        packageFileName: 'case_query.rpa.zip',
+      },
+    });
+
+    const { status, payload } = await requestFlow(storageRoot, 'case_query');
+
+    expect(status).toBe(200);
+    expect(payload.provenance).toMatchObject({
+      source: 'imported',
+      requiresVerifyBeforeRun: true,
+      importedAt: '2026-06-06T00:00:00.000Z',
+      originalFlowId: 'case_query',
+      packageCreatedAt: '2026-06-05T00:00:00.000Z',
+      packageSha256: 'sha256:abc',
+    });
     expect(JSON.stringify(payload)).not.toContain(storageRoot);
   });
 

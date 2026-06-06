@@ -8,8 +8,15 @@ import type {
   StartRpaExecutionResponse,
 } from '../../shared/rpa-api-types.js';
 import type { RpaDslDocument } from '../../shared/dsl-schema.js';
+import { normalizeRuntimeParams } from '../../shared/runtime-params.js';
 import { requiredGenerationArtifactNames } from '../../shared/artifacts.js';
-import { resolveFlowArtifactPath, resolveFlowsRoot, safeFlowId } from '../flow-store.js';
+import {
+  markFlowVerified,
+  readFlowLocalMetadata,
+  resolveFlowArtifactPath,
+  resolveFlowsRoot,
+  safeFlowId,
+} from '../flow-store.js';
 import { validateRpaDsl } from '../validators/dsl-validator.js';
 import {
   findCurrentScreenshot,
@@ -97,7 +104,23 @@ export function createPythonPlaywrightExecutor(options: PythonPlaywrightExecutor
       const timeoutMs = normalizeTimeout(input.timeoutMs, defaultTimeoutMs);
       const dryRun = input.dryRun ?? input.mode === 'verify';
       const headless = input.headless ?? input.mode === 'run';
-      const params = input.params ?? {};
+      const paramValidation = normalizeRuntimeParams(flow.dsl.params, input.params ?? {});
+      if (!paramValidation.ok) {
+        throw new RpaExecutorError(
+          'PARAMS_INVALID',
+          `Runtime params failed validation: ${paramValidation.errors
+            .map((error) => `${error.paramId}:${error.code}`)
+            .join(', ')}.`,
+        );
+      }
+      const metadata = await readFlowLocalMetadata(flow.flowDir, flow.flowId);
+      if (input.mode === 'run' && metadata.requiresVerifyBeforeRun) {
+        throw new RpaExecutorError(
+          'FLOW_VERIFY_REQUIRED',
+          'Imported flow must complete a successful local verify before production run.',
+        );
+      }
+      const normalizedParams = paramValidation.value;
 
       const record = await store.createExecution({
         flowId: flow.flowId,
@@ -106,7 +129,7 @@ export function createPythonPlaywrightExecutor(options: PythonPlaywrightExecutor
         dryRun,
         headless,
         timeoutMs,
-        params,
+        params: normalizedParams,
         maskedParamIds,
       });
 
@@ -115,6 +138,7 @@ export function createPythonPlaywrightExecutor(options: PythonPlaywrightExecutor
         activeProcesses,
         pendingCancelRequests,
         recordId: record.executionId,
+        flowId: flow.flowId,
         mode: input.mode,
         dryRun,
         headless,
@@ -197,6 +221,7 @@ async function runExecution(input: {
   activeProcesses: Map<string, ManagedProcessHandle>;
   pendingCancelRequests: Set<string>;
   recordId: string;
+  flowId: string;
   mode: RpaExecutionMode;
   dryRun: boolean;
   headless: boolean;
@@ -245,6 +270,7 @@ async function runExecution(input: {
     }
 
     const result = await handle.done;
+    await waitForProcessOutputCallbacks();
     await Promise.allSettled(pendingLogWrites);
     const artifacts = await listExecutionArtifacts(executionDir);
     for (const artifact of artifacts) {
@@ -271,6 +297,22 @@ async function runExecution(input: {
         error: { code: 'PROCESS_CANCELED', message: 'Execution was canceled.' },
       });
     } else if (result.exitCode === 0) {
+      if (input.mode === 'verify') {
+        await markFlowVerified({
+          storageRoot: input.storageRoot,
+          flowId: input.flowId,
+          executionId: input.recordId,
+        }).catch((error) => {
+          return input.store.appendLog(
+            input.recordId,
+            'stderr',
+            `FLOW_VERIFY_MARK_FAILED: ${sanitizeStorageRoot(
+              error instanceof Error ? error.message : 'Failed to mark flow verified.',
+              input.storageRoot,
+            )}`,
+          );
+        });
+      }
       await input.store.finishExecution(input.recordId, { status: 'succeeded', exitCode: result.exitCode });
     } else {
       await input.store.finishExecution(input.recordId, {
@@ -300,7 +342,7 @@ async function loadFlow(
   storageRoot: string,
   flowsRoot: string,
   flowIdInput: string,
-): Promise<{ flowId: string; dsl: RpaDslDocument; scriptPath: string }> {
+): Promise<{ flowId: string; flowDir: string; dsl: RpaDslDocument; scriptPath: string }> {
   let flowId: string;
   try {
     flowId = safeFlowId(flowIdInput);
@@ -334,6 +376,7 @@ async function loadFlow(
 
   return {
     flowId,
+    flowDir: path.join(flowsRoot, flowId),
     dsl: dsl as RpaDslDocument,
     scriptPath: resolveRequiredArtifactPath(flowsRoot, flowId, 'flow.hardened.py'),
   };
@@ -367,6 +410,10 @@ function normalizeTimeout(input: number | undefined, fallback: number): number {
     throw new RpaExecutorError('INVALID_TIMEOUT', 'timeoutMs must be a positive number.');
   }
   return Math.floor(input);
+}
+
+function waitForProcessOutputCallbacks(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 async function getExecutionOrNotFound(

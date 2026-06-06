@@ -10,7 +10,8 @@ import type {
   StartNaturalLanguageSessionRequest,
   SubmitNaturalLanguageQuestionAnswersRequest,
 } from '../../src/shared/natural-language-types.js';
-import { createMinimalRpaDsl } from '../../src/shared/dsl-schema.js';
+import { createMinimalRpaDsl, type RpaDslDocument } from '../../src/shared/dsl-schema.js';
+import { deriveRuntimeParamFields } from '../../src/shared/runtime-params.js';
 import type {
   RpaExecutionArtifactsResponse,
   RpaExecutionEvent,
@@ -123,6 +124,7 @@ describe('NaturalLanguageWorkspace', () => {
     render(<NaturalLanguageWorkspace client={nlClient} runtimeClient={runtimeClient} />);
     await userEvent.click(screen.getByRole('button', { name: 'Generate flow' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Verify flow' }));
+    await userEvent.type(screen.getByLabelText('案件编号'), 'A123');
     await userEvent.click(screen.getByRole('button', { name: /Start/ }));
     await act(async () => {
       runtimeClient.emit({ type: 'run.completed', executionId: 'exec_failed', status: 'failed', sequence: 1 });
@@ -178,13 +180,14 @@ class FakeNaturalLanguageClient {
 class FakeRuntimeClient implements RuntimeVerificationApiClient {
   private handler?: (event: RpaExecutionEvent) => void;
 
-  readonly getFlow = vi.fn(async (flowId: string): Promise<RpaFlowDetailResponse> => ({
-    flowId,
-    title: '案件查询',
-    source: 'nl',
-    dsl: { ...createMinimalRpaDsl(), flow_id: flowId, meta: { ...createMinimalRpaDsl().meta, source: 'nl' } },
-    warnings: [],
-  }));
+  readonly getFlow = vi.fn(async (flowId: string): Promise<RpaFlowDetailResponse> => {
+    const dsl = createMinimalRpaDsl();
+    return flowDetail({
+      flowId,
+      title: '案件查询',
+      dsl: { ...dsl, flow_id: flowId, meta: { ...dsl.meta, source: 'nl' } },
+    });
+  });
   readonly startExecution = vi.fn(async (): Promise<StartRpaExecutionResponse> => ({
     executionId: 'exec_1',
     flowId: 'case_query',
@@ -222,4 +225,33 @@ class FakeRuntimeClient implements RuntimeVerificationApiClient {
       ...event,
     });
   }
+}
+
+function flowDetail({
+  flowId,
+  title,
+  dsl,
+}: {
+  flowId: string;
+  title: string;
+  dsl: RpaDslDocument;
+}): RpaFlowDetailResponse {
+  const fields = deriveRuntimeParamFields(dsl.params);
+
+  return {
+    flowId,
+    title,
+    source: dsl.meta.source,
+    dsl,
+    warnings: [],
+    runtimeParams: {
+      fields,
+      requiresUserInput: fields.length > 0,
+      maskedParamIds: fields.filter((field) => field.mask).map((field) => field.id),
+    },
+    provenance: {
+      source: dsl.meta.source === 'imported' ? 'imported' : 'generated',
+      requiresVerifyBeforeRun: false,
+    },
+  };
 }

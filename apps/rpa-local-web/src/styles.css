@@ -199,6 +199,7 @@ select {
 .daemon-hardening-panel,
 .question-form,
 .execution-control-bar,
+.runtime-params-form,
 .rpa-step-list,
 .rpa-screenshot-panel,
 .rpa-execution-log-panel,
@@ -228,6 +229,7 @@ select {
 .codegen-summary h3,
 .daemon-hardening-panel h3,
 .question-form h3,
+.runtime-params-form h3,
 .rpa-step-list h3,
 .rpa-screenshot-panel h3,
 .rpa-execution-log-panel h3,
@@ -370,10 +372,53 @@ select {
 
 .execution-control-bar {
   display: grid;
-  grid-template-columns: minmax(160px, 1.1fr) minmax(170px, auto) auto auto minmax(220px, 1.4fr) auto;
+  grid-template-columns: minmax(160px, 1.1fr) minmax(170px, auto) auto auto auto;
   align-items: end;
   gap: 10px;
   padding: 12px;
+}
+
+.runtime-params-form {
+  padding: 12px;
+}
+
+.runtime-params-form--empty {
+  padding: 10px 12px;
+}
+
+.runtime-params-form--empty p {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.runtime-params-form__header {
+  margin-bottom: 10px;
+}
+
+.runtime-params-form__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.runtime-param-field b {
+  margin-left: 3px;
+  color: #8d2b1f;
+}
+
+.runtime-param-field input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+}
+
+.runtime-param-field__description {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.runtime-param-field__error {
+  padding: 6px 8px;
 }
 
 .field,
@@ -772,6 +817,74 @@ select {
   white-space: nowrap;
 }
 
+.flow-assets-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.flow-assets-toolbar,
+.flow-assets-summary {
+  border: 1px solid #d7dee8;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.flow-assets-toolbar {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto minmax(220px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+}
+
+.flow-assets-summary {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.flow-assets-summary h3 {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.flow-assets-summary p,
+.flow-assets-workspace__message {
+  margin: 4px 0 0;
+  color: #5b6677;
+  font-size: 12px;
+}
+
+.flow-assets-summary dl {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.flow-assets-summary dt {
+  color: #526174;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.flow-assets-summary dd {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.flow-assets-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .status-badge {
   display: inline-flex;
   align-items: center;
@@ -834,7 +947,8 @@ select {
   }
 
   .runtime-workspace__summary,
-  .execution-control-bar {
+  .execution-control-bar,
+  .runtime-params-form__grid {
     grid-template-columns: 1fr;
   }
 

@@ -1,4 +1,5 @@
 import type {
+  ImportRpaPackageResponse,
   RpaConfigResponse,
   RpaDaemonHealthResponse,
   RpaExecutionArtifactsResponse,
@@ -75,6 +76,21 @@ export class RpaApiClient {
 
   getFlow(flowId: string): Promise<RpaFlowDetailResponse> {
     return this.requestJson(`/api/rpa/flows/${encodeURIComponent(flowId)}`);
+  }
+
+  getPackageDownloadUrl(flowId: string): string {
+    return `/api/rpa/flows/${encodeURIComponent(flowId)}/package/download`;
+  }
+
+  async importPackage(file: File): Promise<ImportRpaPackageResponse> {
+    return this.requestJson('/api/rpa/flows/import-package', {
+      method: 'POST',
+      headers: {
+        'Content-Type': file.type || 'application/zip',
+        'X-RPA-Package-File-Name': file.name,
+      },
+      body: await readFileBytes(file),
+    });
   }
 
   startCodegenSession(request: StartCodegenSessionRequest): Promise<StartCodegenSessionResponse> {
@@ -218,4 +234,20 @@ export class RpaApiClient {
     }
     return response.json() as Promise<T>;
   }
+}
+
+async function readFileBytes(file: File): Promise<ArrayBuffer> {
+  if (typeof file.arrayBuffer === 'function') return file.arrayBuffer();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read package file.'));
+    reader.onload = () => {
+      if (reader.result instanceof ArrayBuffer) {
+        resolve(reader.result);
+        return;
+      }
+      reject(new Error('Package file reader returned text instead of bytes.'));
+    };
+    reader.readAsArrayBuffer(file);
+  });
 }

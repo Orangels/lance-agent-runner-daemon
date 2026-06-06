@@ -1,13 +1,18 @@
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createMinimalRpaDsl } from '../../../src/shared/dsl-schema.js';
-import { requiredGenerationArtifactNames } from '../../../src/shared/artifacts.js';
+import { requiredGenerationArtifactNames, type RpaFlowLocalMetadata } from '../../../src/shared/artifacts.js';
 import { createPythonPlaywrightExecutor } from '../../../src/server/executor/python-playwright-executor.js';
 import type { RpaExecutionEvent } from '../../../src/server/executor/execution-types.js';
+import { writeFlowLocalMetadata } from '../../../src/server/flow-store.js';
 
-async function createFlow(storageRoot: string, flowId = 'case_query') {
+async function createFlow(
+  storageRoot: string,
+  flowId = 'case_query',
+  metadata?: Partial<RpaFlowLocalMetadata>,
+) {
   const flowDir = path.join(storageRoot, 'flows', flowId);
   await mkdir(flowDir, { recursive: true });
   for (const name of requiredGenerationArtifactNames) {
@@ -18,6 +23,18 @@ async function createFlow(storageRoot: string, flowId = 'case_query') {
     } else {
       await writeFile(path.join(flowDir, name), `${name}\n`);
     }
+  }
+  if (metadata) {
+    await writeFlowLocalMetadata(flowDir, {
+      schemaVersion: 'rpa-flow-local.v0.1',
+      flowId,
+      source: metadata.source ?? 'generated',
+      createdAt: metadata.createdAt ?? '2026-06-06T00:00:00.000Z',
+      requiresVerifyBeforeRun: metadata.requiresVerifyBeforeRun ?? false,
+      generator: metadata.generator,
+      imported: metadata.imported,
+      verified: metadata.verified,
+    });
   }
   return flowDir;
 }
@@ -103,7 +120,7 @@ describe('Python Playwright executor', () => {
       pythonArgs: [runnerPath],
     });
 
-    const started = await executor.start({ flowId: 'case_query', mode: 'verify', params: {} });
+    const started = await executor.start({ flowId: 'case_query', mode: 'verify', params: { case_no: 'A123' } });
     await collectUntilTerminal(executor.subscribe(started.executionId));
 
     const status = await executor.getStatus(started.executionId);
@@ -128,7 +145,7 @@ describe('Python Playwright executor', () => {
       flowId: 'case_query',
       mode: 'verify',
       timeoutMs: 50,
-      params: {},
+      params: { case_no: 'A123' },
     });
     await collectUntilTerminal(timeoutExecutor.subscribe(timed.executionId));
     await expect(timeoutExecutor.getStatus(timed.executionId)).resolves.toMatchObject({ status: 'timed_out' });
@@ -142,7 +159,7 @@ describe('Python Playwright executor', () => {
       flowId: 'case_query',
       mode: 'verify',
       timeoutMs: 5000,
-      params: {},
+      params: { case_no: 'A123' },
     });
     await cancelExecutor.cancel(canceled.executionId);
     await collectUntilTerminal(cancelExecutor.subscribe(canceled.executionId));
@@ -187,5 +204,75 @@ describe('Python Playwright executor', () => {
       code: 'FLOW_ARTIFACT_MISSING',
       message: expect.not.stringContaining(storageRoot),
     });
+  });
+
+  it('rejects missing required runtime params before creating an execution', async () => {
+    const storageRoot = await mkdtemp(path.join(os.tmpdir(), 'rpa-python-param-validation-'));
+    await createFlow(storageRoot);
+    const runnerPath = await createFakeRunner(storageRoot, 'success');
+    const executor = createPythonPlaywrightExecutor({
+      storageRoot,
+      pythonCommand: process.execPath,
+      pythonArgs: [runnerPath],
+    });
+
+    await expect(executor.start({ flowId: 'case_query', mode: 'verify', params: {} })).rejects.toMatchObject({
+      code: 'PARAMS_INVALID',
+    });
+    await expect(readdir(path.join(storageRoot, 'executions'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('rejects imported production run until local verify succeeds', async () => {
+    const storageRoot = await mkdtemp(path.join(os.tmpdir(), 'rpa-python-imported-gate-'));
+    await createFlow(storageRoot, 'case_query', {
+      source: 'imported',
+      requiresVerifyBeforeRun: true,
+      imported: {
+        originalFlowId: 'case_query',
+        packageSha256: 'sha256:abc',
+      },
+    });
+    const runnerPath = await createFakeRunner(storageRoot, 'success');
+    const executor = createPythonPlaywrightExecutor({
+      storageRoot,
+      pythonCommand: process.execPath,
+      pythonArgs: [runnerPath],
+    });
+
+    await expect(
+      executor.start({ flowId: 'case_query', mode: 'run', params: { case_no: 'A123' } }),
+    ).rejects.toMatchObject({ code: 'FLOW_VERIFY_REQUIRED' });
+    await expect(readdir(path.join(storageRoot, 'executions'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('marks imported flow verified after successful verify', async () => {
+    const storageRoot = await mkdtemp(path.join(os.tmpdir(), 'rpa-python-imported-verify-'));
+    await createFlow(storageRoot, 'case_query', {
+      source: 'imported',
+      requiresVerifyBeforeRun: true,
+      imported: {
+        originalFlowId: 'case_query',
+        packageSha256: 'sha256:abc',
+      },
+    });
+    const runnerPath = await createFakeRunner(storageRoot, 'success');
+    const executor = createPythonPlaywrightExecutor({
+      storageRoot,
+      pythonCommand: process.execPath,
+      pythonArgs: [runnerPath],
+    });
+
+    const started = await executor.start({
+      flowId: 'case_query',
+      mode: 'verify',
+      params: { case_no: 'A123' },
+    });
+    await collectUntilTerminal(executor.subscribe(started.executionId));
+
+    const metadata = JSON.parse(
+      await readFile(path.join(storageRoot, 'flows', 'case_query', 'flow.local.json'), 'utf8'),
+    );
+    expect(metadata.requiresVerifyBeforeRun).toBe(false);
+    expect(metadata.verified.executionId).toBe(started.executionId);
   });
 });

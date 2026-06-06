@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Bot, Braces, FolderKanban, PlaySquare, Settings, WandSparkles } from 'lucide-react';
 import { CodegenWorkspace } from './CodegenWorkspace.js';
+import { FlowAssetsWorkspace } from './FlowAssetsWorkspace.js';
 import { NaturalLanguageWorkspace } from './NaturalLanguageWorkspace.js';
 import { RuntimeVerificationWorkspace } from './RuntimeVerificationWorkspace.js';
 import { StatusBadge } from './StatusBadge.js';
@@ -34,7 +35,7 @@ export const rpaSections: RpaSection[] = [
     id: 'flows',
     label: 'Flows',
     title: '流程资产',
-    description: '后续展示已生成流程、参数表单、导入导出包和版本记录。',
+    description: '查看已生成流程、执行参数、导入导出包和本地验证状态。',
     icon: <FolderKanban aria-hidden="true" />,
   },
   {
@@ -104,7 +105,7 @@ export function AppShell({ activeSectionId, onSectionChange }: AppShellProps) {
               <p>{activeSection.description}</p>
             </div>
             <StatusBadge tone={activeSection.id === 'executions' ? 'ready' : 'warning'}>
-              {activeSection.id === 'executions' ? 'Workbench' : 'Skeleton'}
+              {activeSection.id === 'executions' || activeSection.id === 'flows' ? 'Workbench' : 'Skeleton'}
             </StatusBadge>
           </div>
 
@@ -112,6 +113,8 @@ export function AppShell({ activeSectionId, onSectionChange }: AppShellProps) {
             <CodegenWorkspace />
           ) : activeSection.id === 'natural-language' ? (
             <NaturalLanguageWorkspace />
+          ) : activeSection.id === 'flows' ? (
+            <FlowAssetsWorkspace />
           ) : activeSection.id === 'executions' ? (
             <RuntimeVerificationWorkspace />
           ) : (

@@ -26,6 +26,7 @@ describe('generation artifact service', () => {
       flowId: 'case_query',
       runId: 'run_1',
       tempSuffix: 'cg_abc123',
+      generator: { mode: 'codegen', skillId: 'playwright-rpa-harden', daemonRunId: 'run_1' },
     });
 
     expect(persisted.map((artifact) => artifact.fileName)).toEqual([
@@ -40,6 +41,9 @@ describe('generation artifact service', () => {
     expect(daemonClient.downloadArtifact.mock.calls.map(([input]) => input.artifactId)).toEqual(
       [...requiredGenerationArtifactNames, ...optionalGenerationArtifactNames].map((name) => `art_${name}`),
     );
+    await expect(
+      readFile(path.join(storageRoot, 'flows', 'case_query', 'flow.local.json'), 'utf8'),
+    ).resolves.toContain('"source": "generated"');
     await expect(readdir(`${resolveFinalFlowDir(storageRoot, 'case_query')}.tmp-cg_abc123`)).rejects.toMatchObject({
       code: 'ENOENT',
     });
@@ -62,6 +66,7 @@ describe('generation artifact service', () => {
         flowId: 'case_query',
         runId: 'run_1',
         tempSuffix: 'bad_dsl',
+        generator: { mode: 'codegen', skillId: 'playwright-rpa-harden', daemonRunId: 'run_1' },
       }),
     ).rejects.toMatchObject({ code: 'DSL_INVALID' });
 
@@ -87,6 +92,7 @@ describe('generation artifact service', () => {
         flowId: 'case_query',
         runId: 'run_1',
         tempSuffix: 'missing_required',
+        generator: { mode: 'codegen', skillId: 'playwright-rpa-harden', daemonRunId: 'run_1' },
       }),
     ).rejects.toMatchObject({ code: 'ARTIFACT_VALIDATION_FAILED' });
 

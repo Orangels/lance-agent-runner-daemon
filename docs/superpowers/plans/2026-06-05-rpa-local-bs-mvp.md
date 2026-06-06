@@ -568,35 +568,54 @@ Note: this slice originally left `daemon-composed` deferred. `daemon-composed` w
 
 ---
 
-## Slice: 流程复用与执行闭环
+## Slice: 流程复用与执行闭环 (Completed)
 
 **Purpose:** Prove generated flows are reusable across users/machines through parameter forms and `.rpa.zip` import/export.
 
 **Execution plan:** `docs/superpowers/plans/2026-06-06-rpa-flow-reuse-execution-loop.md`
 
-**Files likely created:**
+**Status:** Implemented and CC reviewed.
+
+**Files created:**
 
 - Create: `apps/rpa-local-web/src/server/packages/rpa-package.ts`
 - Create: `apps/rpa-local-web/src/server/packages/manifest-schema.ts`
+- Create: `apps/rpa-local-web/src/server/routes/packages.ts`
+- Create: `apps/rpa-local-web/src/server/zip/uncompressed-zip.ts`
+- Create: `apps/rpa-local-web/src/shared/runtime-params.ts`
 - Create: `apps/rpa-local-web/src/components/RuntimeParamsForm.tsx`
-- Create: `apps/rpa-local-web/src/components/ImportExportPanel.tsx`
+- Create: `apps/rpa-local-web/src/components/FlowAssetsWorkspace.tsx`
 - Tests: package import/export and parameter form tests.
 
 **Tasks:**
 
-- [ ] Render runtime parameter form directly from `flow.dsl.json.params`.
-- [ ] Save user runtime values to `run.params.json` per execution.
-- [ ] Validate required params and type constraints before starting executor.
-- [ ] Export `.rpa.zip` containing `manifest.json`, `flow.dsl.json`, `flow.hardened.py`, `config.example.json`, `parameterization-report.md`, and `hardening-report.md`.
-- [ ] Do not export secrets, storage state, cookies, tokens, CA/USB-Key files, trace/video by default.
-- [ ] Import `.rpa.zip`, validate manifest and DSL, require local config/params confirmation before verify/run.
-- [ ] Preserve flow identity and show imported package provenance.
+- [x] Render runtime parameter form directly from `flow.dsl.json.params`.
+- [x] Save user runtime values to `run.params.json` per execution.
+- [x] Validate required params and type constraints before starting executor.
+- [x] Export `.rpa.zip` containing `manifest.json`, `flow.dsl.json`, `flow.hardened.py`, `config.example.json`, `parameterization-report.md`, and `hardening-report.md`.
+- [x] Do not export secrets, storage state, cookies, tokens, CA/USB-Key files, trace/video by default.
+- [x] Import `.rpa.zip`, validate manifest and DSL, require local config/params confirmation before verify/run.
+- [x] Preserve flow identity and show imported package provenance.
 
 **Acceptance:**
 
 - A flow produced by one local session can be exported and imported into another local session without carrying secrets.
 - Imported flow cannot run until required params/config are supplied.
 - Export manifest records schema versions, artifact hashes, generatedAt, source mode, and required params summary.
+
+**Validation:**
+
+- `pnpm --filter @lance-agent-runner/rpa-local-web test`
+- `pnpm typecheck`
+- `pnpm build`
+- `git diff --check`
+- Daemon boundary grep for RPA/Playwright/DSL/executor/chrome-devtools terms returned no matches under `apps/daemon/src`.
+
+**CC Review Summary:**
+
+- First opus review: no P0; one P1 on duplicate auto-start verify after successful verify.
+- Fix: replaced render-time `Date.now()` request id with click-time nonce, unmounted runtime workspace before flow reload, and added a regression assertion that verify starts once.
+- Second opus review: prior P1 resolved, no new P0/P1, proceed to commit.
 
 **Suggested commit:** `Add RPA flow import export and runtime params`
 

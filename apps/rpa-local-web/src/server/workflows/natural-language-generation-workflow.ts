@@ -285,6 +285,11 @@ export function createNaturalLanguageGenerationWorkflow(
       flowId: session.flowId,
       runId,
       tempSuffix: session.sessionId,
+      generator: {
+        mode: 'nl',
+        skillId: 'rpa-script-generate',
+        daemonRunId: runId,
+      },
     });
     await store.setArtifacts(sessionId, toArtifactSummaries(artifacts));
     await store.transition(sessionId, 'generated');

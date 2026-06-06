@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useState } from 'react';
@@ -20,7 +20,6 @@ function Harness({
   const [mode, setMode] = useState<RpaExecutionMode>('verify');
   const [dryRun, setDryRun] = useState(true);
   const [headless, setHeadless] = useState(false);
-  const [paramsText, setParamsText] = useState('{}');
 
   return (
     <ExecutionControlBar
@@ -29,13 +28,11 @@ function Harness({
       flowId={flowId}
       headless={headless}
       mode={mode}
-      paramsText={paramsText}
       onCancel={onCancel}
       onDryRunChange={setDryRun}
       onFlowIdChange={setFlowId}
       onHeadlessChange={setHeadless}
       onModeChange={setMode}
-      onParamsTextChange={setParamsText}
       onStart={onStart}
     />
   );
@@ -61,24 +58,16 @@ describe('ExecutionControlBar', () => {
     expect(screen.getByLabelText('Headless')).toBeChecked();
   });
 
-  it('disables start and shows an inline error for invalid params JSON', async () => {
-    const onStart = vi.fn();
-    render(<Harness onStart={onStart} />);
+  it('does not render a free-form params JSON textarea', () => {
+    render(<Harness />);
 
-    fireEvent.change(screen.getByLabelText('Params JSON'), { target: { value: '{bad json' } });
-
-    expect(screen.getByRole('button', { name: /Start/ })).toBeDisabled();
-    expect(screen.getByText('Params must be a JSON object.')).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole('button', { name: /Start/ }));
-    expect(onStart).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText('Params JSON')).not.toBeInTheDocument();
   });
 
-  it('passes parsed params when starting', async () => {
+  it('passes execution settings when starting', async () => {
     const onStart = vi.fn();
     render(<Harness onStart={onStart} />);
 
-    fireEvent.change(screen.getByLabelText('Params JSON'), { target: { value: '{"case_no":"A123"}' } });
     await userEvent.click(screen.getByRole('button', { name: /Start/ }));
 
     expect(onStart).toHaveBeenCalledWith({
@@ -86,7 +75,6 @@ describe('ExecutionControlBar', () => {
       mode: 'verify',
       dryRun: true,
       headless: false,
-      params: { case_no: 'A123' },
     });
   });
 

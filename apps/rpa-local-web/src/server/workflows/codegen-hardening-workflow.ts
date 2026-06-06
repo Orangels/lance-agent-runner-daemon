@@ -222,6 +222,11 @@ export function createCodegenHardeningWorkflow(options: CodegenHardeningWorkflow
       flowId: session.flowId,
       runId,
       tempSuffix: session.sessionId,
+      generator: {
+        mode: 'codegen',
+        skillId: 'playwright-rpa-harden',
+        daemonRunId: runId,
+      },
     });
     await store.setArtifacts(
       sessionId,

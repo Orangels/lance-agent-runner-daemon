@@ -9,9 +9,11 @@ import type {
   StartRpaExecutionRequest,
   StartRpaExecutionResponse,
 } from '../shared/rpa-api-types.js';
+import { normalizeRuntimeParams, type RuntimeParamValue } from '../shared/runtime-params.js';
 import { ArtifactPanel } from './ArtifactPanel.js';
 import { ExecutionControlBar, type ExecutionControlBarStartInput } from './ExecutionControlBar.js';
 import { ExecutionLogPanel } from './ExecutionLogPanel.js';
+import { RuntimeParamsForm } from './RuntimeParamsForm.js';
 import { ScreenshotPanel } from './ScreenshotPanel.js';
 import { StatusBadge } from './StatusBadge.js';
 import { StepList } from './StepList.js';
@@ -30,14 +32,12 @@ export interface RuntimeVerificationApiClient {
   ): () => void;
 }
 
-type RuntimeVerificationParamValue = string | number | boolean | null;
-
 export interface RuntimeVerificationAutoStartRequest {
   requestId: string;
   flowId: string;
   mode: RpaExecutionMode;
   daemonRunId?: string;
-  params?: Record<string, RuntimeVerificationParamValue>;
+  params?: Record<string, RuntimeParamValue>;
 }
 
 export interface RuntimeVerificationWorkspaceProps {
@@ -45,6 +45,7 @@ export interface RuntimeVerificationWorkspaceProps {
   flowId?: string;
   onFlowIdChange?: (flowId: string) => void;
   autoStartRequest?: RuntimeVerificationAutoStartRequest;
+  onVerifySucceeded?: (input: { flowId: string; executionId: string }) => void;
   onRepairRequest?: (input: { executionId: string; failedStepId?: string }) => void;
   client?: RuntimeVerificationApiClient;
 }
@@ -57,11 +58,18 @@ type ScreenshotState =
 
 const terminalStatuses = new Set<RpaExecutionStatus>(['succeeded', 'failed', 'canceled', 'timed_out']);
 
+interface CurrentExecutionContext {
+  executionId: string;
+  flowId: string;
+  mode: RpaExecutionMode;
+}
+
 export function RuntimeVerificationWorkspace({
   initialFlowId = 'case_query',
   flowId: controlledFlowId,
   onFlowIdChange,
   autoStartRequest,
+  onVerifySucceeded,
   onRepairRequest,
   client: injectedClient,
 }: RuntimeVerificationWorkspaceProps) {
@@ -71,13 +79,15 @@ export function RuntimeVerificationWorkspace({
   const loadRequestIdRef = useRef(0);
   const seenEventSequencesRef = useRef(new Set<number>());
   const lastAutoStartRequestIdRef = useRef<string | null>(null);
+  const currentExecutionRef = useRef<CurrentExecutionContext | null>(null);
 
   const [uncontrolledFlowId, setUncontrolledFlowId] = useState(initialFlowId);
   const flowId = controlledFlowId ?? uncontrolledFlowId;
   const [mode, setMode] = useState<RpaExecutionMode>('verify');
   const [dryRun, setDryRun] = useState(true);
   const [headless, setHeadless] = useState(false);
-  const [paramsText, setParamsText] = useState('{}');
+  const [paramValues, setParamValues] = useState<Record<string, RuntimeParamValue>>({});
+  const [paramErrors, setParamErrors] = useState<Record<string, string>>({});
 
   const [flow, setFlow] = useState<RpaFlowDetailResponse | null>(null);
   const [flowError, setFlowError] = useState<string | null>(null);
@@ -157,6 +167,23 @@ export function RuntimeVerificationWorkspace({
     return () => unsubscribeRef.current?.();
   }, []);
 
+  useEffect(() => {
+    if (!flow) {
+      setParamValues({});
+      setParamErrors({});
+      return;
+    }
+
+    const defaultValues: Record<string, RuntimeParamValue> = {};
+    for (const field of flow.runtimeParams.fields) {
+      if (field.defaultValue !== undefined) {
+        defaultValues[field.id] = field.defaultValue;
+      }
+    }
+    setParamValues(defaultValues);
+    setParamErrors({});
+  }, [flow?.flowId]);
+
   const refreshLogs = useCallback(async (nextExecutionId: string) => {
     const logResponse = await client.getExecutionLogs(nextExecutionId);
     setStdout(logResponse.stdout);
@@ -210,13 +237,21 @@ export function RuntimeVerificationWorkspace({
     if (event.type === 'run.completed') {
       if (event.status) setExecutionStatus(event.status);
       refreshScreenshot(event.executionId, event.sequence ?? event.timestamp);
+      const currentExecution = currentExecutionRef.current;
+      if (
+        event.status === 'succeeded' &&
+        currentExecution?.executionId === event.executionId &&
+        currentExecution.mode === 'verify'
+      ) {
+        onVerifySucceeded?.({ flowId: currentExecution.flowId, executionId: event.executionId });
+      }
       void Promise.all([
         refreshStatus(event.executionId),
         refreshLogs(event.executionId),
         refreshArtifacts(event.executionId),
       ]).catch(handleRuntimeError);
     }
-  }, [handleRuntimeError, refreshArtifacts, refreshLogs, refreshScreenshot, refreshStatus]);
+  }, [handleRuntimeError, onVerifySucceeded, refreshArtifacts, refreshLogs, refreshScreenshot, refreshStatus]);
 
   const startExecutionRequest = useCallback(async (input: StartRpaExecutionRequest) => {
     setBusy(true);
@@ -230,13 +265,31 @@ export function RuntimeVerificationWorkspace({
     seenEventSequencesRef.current.clear();
     unsubscribeRef.current?.();
     unsubscribeRef.current = null;
+    currentExecutionRef.current = null;
 
     try {
-      if (flow?.flowId !== input.flowId) {
-        const loadedFlow = await loadFlow(input.flowId);
-        if (!loadedFlow) return;
+      const targetFlow = flow?.flowId === input.flowId ? flow : await loadFlow(input.flowId);
+      if (!targetFlow) return;
+
+      const normalizedParams = normalizeRuntimeParams(targetFlow.dsl.params, input.params ?? {});
+      if (!normalizedParams.ok) {
+        setParamErrors(Object.fromEntries(normalizedParams.errors.map((error) => [error.paramId, error.message])));
+        if (normalizedParams.errors.some((error) => error.code === 'PARAM_REQUIRED')) {
+          setRuntimeError('Runtime params are required before execution can start.');
+        }
+        return;
       }
-      const started = await client.startExecution(input);
+
+      setParamErrors({});
+      const started = await client.startExecution({
+        ...input,
+        params: normalizedParams.value,
+      });
+      currentExecutionRef.current = {
+        executionId: started.executionId,
+        flowId: input.flowId,
+        mode: input.mode,
+      };
       setExecutionId(started.executionId);
       setExecutionStatus(started.status);
       unsubscribeRef.current = client.subscribeExecutionEvents(started.executionId, {
@@ -248,14 +301,26 @@ export function RuntimeVerificationWorkspace({
     } finally {
       setBusy(false);
     }
-  }, [client, flow?.flowId, handleExecutionEvent, handleRuntimeError, loadFlow]);
+  }, [client, flow, handleExecutionEvent, handleRuntimeError, loadFlow]);
 
   const startExecution = useCallback(
     async (input: ExecutionControlBarStartInput) => {
-      await startExecutionRequest(input);
+      await startExecutionRequest({
+        ...input,
+        params: paramValues,
+      });
     },
-    [startExecutionRequest],
+    [paramValues, startExecutionRequest],
   );
+
+  const updateRuntimeParam = useCallback((paramId: string, value: RuntimeParamValue) => {
+    setParamValues((current) => ({ ...current, [paramId]: value }));
+    setParamErrors((current) => {
+      if (!current[paramId]) return current;
+      const { [paramId]: _removed, ...nextErrors } = current;
+      return nextErrors;
+    });
+  }, []);
 
   useEffect(() => {
     if (!autoStartRequest || lastAutoStartRequestIdRef.current === autoStartRequest.requestId) return;
@@ -267,7 +332,8 @@ export function RuntimeVerificationWorkspace({
     setMode(autoStartRequest.mode);
     setDryRun(dryRunDefault);
     setHeadless(headlessDefault);
-    setParamsText(JSON.stringify(autoStartRequest.params ?? {}, null, 2));
+    setParamValues(autoStartRequest.params ?? {});
+    setParamErrors({});
 
     void startExecutionRequest({
       flowId: autoStartRequest.flowId,
@@ -315,14 +381,19 @@ export function RuntimeVerificationWorkspace({
         flowId={flowId}
         headless={headless}
         mode={mode}
-        paramsText={paramsText}
         onCancel={cancelExecution}
         onDryRunChange={setDryRun}
         onFlowIdChange={updateFlowId}
         onHeadlessChange={setHeadless}
         onModeChange={setMode}
-        onParamsTextChange={setParamsText}
         onStart={startExecution}
+      />
+
+      <RuntimeParamsForm
+        errors={paramErrors}
+        fields={flow?.runtimeParams.fields ?? []}
+        values={paramValues}
+        onChange={updateRuntimeParam}
       />
 
       {flowError ? <p className="runtime-workspace__error">{flowError}</p> : null}

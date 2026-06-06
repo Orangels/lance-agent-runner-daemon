@@ -1,6 +1,6 @@
 # RPA Flow Reuse And Execution Loop Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Add the `流程复用与执行闭环` slice: DSL-driven runtime parameter forms, per-execution param validation, `.rpa.zip` export/import, imported-flow provenance, and verify-before-run enforcement.
 
@@ -154,7 +154,7 @@ Modify:
 - Test: `apps/rpa-local-web/tests/shared/runtime-params.test.ts`
 - Test: `apps/rpa-local-web/tests/server/validators/dsl-validator.test.ts`
 
-- [ ] **Step 1: Write failing runtime-param tests**
+- [x] **Step 1: Write failing runtime-param tests**
 
 Create `apps/rpa-local-web/tests/shared/runtime-params.test.ts`:
 
@@ -242,7 +242,7 @@ describe('runtime params', () => {
 });
 ```
 
-- [ ] **Step 2: Run the failing test**
+- [x] **Step 2: Run the failing test**
 
 Run:
 
@@ -252,7 +252,7 @@ pnpm --filter @lance-agent-runner/rpa-local-web exec vitest run tests/shared/run
 
 Expected: FAIL because `runtime-params.ts` does not exist.
 
-- [ ] **Step 3: Implement shared runtime-param helpers**
+- [x] **Step 3: Implement shared runtime-param helpers**
 
 Create `apps/rpa-local-web/src/shared/runtime-params.ts`:
 
@@ -406,7 +406,7 @@ function mapParamTypeToFieldType(param: RpaDslParamDefinition): RpaRuntimeParamF
 }
 ```
 
-- [ ] **Step 4: Re-export shared param model through API types**
+- [x] **Step 4: Re-export shared param model through API types**
 
 Modify `apps/rpa-local-web/src/shared/rpa-api-types.ts`:
 
@@ -448,7 +448,7 @@ export interface RpaFlowDetailResponse {
 }
 ```
 
-- [ ] **Step 5: Keep server validator deriving from shared helper**
+- [x] **Step 5: Keep server validator deriving from shared helper**
 
 Modify `apps/rpa-local-web/src/server/validators/dsl-validator.ts`:
 
@@ -467,7 +467,7 @@ export function deriveParameterFormModel(dsl: RpaDslDocument): ParameterFormFiel
 
 Remove the old local `mapParamTypeToFormType` helper from this file.
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 Run:
 
@@ -492,7 +492,7 @@ Expected: PASS.
 - Test: `apps/rpa-local-web/tests/server/packages/manifest-schema.test.ts`
 - Existing workflow tests for codegen/NL.
 
-- [ ] **Step 1: Add failing flow metadata and manifest parser tests**
+- [x] **Step 1: Add failing flow metadata and manifest parser tests**
 
 Extend `apps/rpa-local-web/tests/server/flow-store.test.ts` with:
 
@@ -591,7 +591,7 @@ describe('RPA package manifest schema', () => {
 });
 ```
 
-- [ ] **Step 2: Run failing tests**
+- [x] **Step 2: Run failing tests**
 
 Run:
 
@@ -601,7 +601,7 @@ pnpm --filter @lance-agent-runner/rpa-local-web exec vitest run tests/server/flo
 
 Expected: FAIL because metadata helpers and manifest parser do not exist.
 
-- [ ] **Step 3: Add flow local metadata types**
+- [x] **Step 3: Add flow local metadata types**
 
 Modify `apps/rpa-local-web/src/shared/artifacts.ts`:
 
@@ -628,7 +628,7 @@ export interface RpaFlowLocalMetadata {
 }
 ```
 
-- [ ] **Step 4: Add metadata helpers to flow store**
+- [x] **Step 4: Add metadata helpers to flow store**
 
 Modify `apps/rpa-local-web/src/server/flow-store.ts`:
 
@@ -708,7 +708,7 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
 
 If `isNodeError` already exists in `flow-store.ts`, keep a single copy.
 
-- [ ] **Step 5: Write generated-flow metadata when artifacts are promoted**
+- [x] **Step 5: Write generated-flow metadata when artifacts are promoted**
 
 Modify `apps/rpa-local-web/src/server/workflows/generation-artifact-service.ts` input:
 
@@ -762,7 +762,7 @@ generator: {
 }
 ```
 
-- [ ] **Step 6: Implement manifest parser**
+- [x] **Step 6: Implement manifest parser**
 
 Create `apps/rpa-local-web/src/server/packages/manifest-schema.ts`:
 
@@ -833,7 +833,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 ```
 
-- [ ] **Step 7: Run focused tests**
+- [x] **Step 7: Run focused tests**
 
 Run:
 
@@ -855,7 +855,7 @@ Expected: PASS.
 - Test: `apps/rpa-local-web/tests/server/observability/review-zip.test.ts`
 - Test: `apps/rpa-local-web/tests/server/packages/rpa-package.test.ts`
 
-- [ ] **Step 1: Move ZIP helper to neutral server utility**
+- [x] **Step 1: Move ZIP helper to neutral server utility**
 
 Create `apps/rpa-local-web/src/server/zip/uncompressed-zip.ts` by moving the implementation currently in `apps/rpa-local-web/src/server/observability/review-zip.ts`.
 
@@ -879,7 +879,7 @@ pnpm --filter @lance-agent-runner/rpa-local-web exec vitest run tests/server/obs
 
 Expected: PASS, proving observability ZIP behavior did not change.
 
-- [ ] **Step 2: Write failing package service tests**
+- [x] **Step 2: Write failing package service tests**
 
 Create `apps/rpa-local-web/tests/server/packages/rpa-package.test.ts`:
 
@@ -983,7 +983,7 @@ describe('RPA package service', () => {
 });
 ```
 
-- [ ] **Step 3: Run failing tests**
+- [x] **Step 3: Run failing tests**
 
 Run:
 
@@ -993,7 +993,7 @@ pnpm --filter @lance-agent-runner/rpa-local-web exec vitest run tests/server/pac
 
 Expected: FAIL because `rpa-package.ts` does not exist.
 
-- [ ] **Step 4: Implement package service**
+- [x] **Step 4: Implement package service**
 
 Create `apps/rpa-local-web/src/server/packages/rpa-package.ts`:
 
@@ -1199,7 +1199,7 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
 
 Remove unused imports during implementation if TypeScript reports them.
 
-- [ ] **Step 5: Run focused tests**
+- [x] **Step 5: Run focused tests**
 
 Run:
 
@@ -1222,7 +1222,7 @@ Expected: PASS.
 - Test: `apps/rpa-local-web/tests/server/server.test.ts`
 - Test: `apps/rpa-local-web/tests/api/rpa-api-client.test.ts`
 
-- [ ] **Step 1: Add shared import response types**
+- [x] **Step 1: Add shared import response types**
 
 Modify `apps/rpa-local-web/src/shared/rpa-api-types.ts`:
 
@@ -1238,7 +1238,7 @@ export interface ImportRpaPackageResponse {
 }
 ```
 
-- [ ] **Step 2: Write failing route tests**
+- [x] **Step 2: Write failing route tests**
 
 Create `apps/rpa-local-web/tests/server/routes/packages.test.ts`:
 
@@ -1329,7 +1329,7 @@ describe('RPA package routes', () => {
 });
 ```
 
-- [ ] **Step 3: Run failing route tests**
+- [x] **Step 3: Run failing route tests**
 
 Run:
 
@@ -1339,7 +1339,7 @@ pnpm --filter @lance-agent-runner/rpa-local-web exec vitest run tests/server/rou
 
 Expected: FAIL because package routes are not registered.
 
-- [ ] **Step 4: Implement package routes**
+- [x] **Step 4: Implement package routes**
 
 Create `apps/rpa-local-web/src/server/routes/packages.ts`:
 
@@ -1409,7 +1409,7 @@ function sendError(res: Response, error: unknown, storageRoot: string): void {
 }
 ```
 
-- [ ] **Step 5: Register package routes**
+- [x] **Step 5: Register package routes**
 
 Modify `apps/rpa-local-web/src/server/server.ts`:
 
@@ -1423,7 +1423,7 @@ Register before Vite/static serving:
 registerPackageRoutes(app, { storageRoot: input.config.storageRoot });
 ```
 
-- [ ] **Step 6: Add browser API client methods**
+- [x] **Step 6: Add browser API client methods**
 
 Modify `apps/rpa-local-web/src/api/rpa-api-client.ts`:
 
@@ -1446,7 +1446,7 @@ async importPackage(file: File): Promise<ImportRpaPackageResponse> {
 }
 ```
 
-- [ ] **Step 7: Add API client tests**
+- [x] **Step 7: Add API client tests**
 
 Extend `apps/rpa-local-web/tests/api/rpa-api-client.test.ts`:
 
@@ -1479,7 +1479,7 @@ it('builds package download URLs and imports package bytes', async () => {
 });
 ```
 
-- [ ] **Step 8: Run focused route/client tests**
+- [x] **Step 8: Run focused route/client tests**
 
 Run route tests with sandbox escalation if local port binding is blocked:
 
@@ -1497,7 +1497,7 @@ Expected: PASS.
 - Modify: `apps/rpa-local-web/src/server/routes/flows.ts`
 - Test: `apps/rpa-local-web/tests/server/routes/flows.test.ts`
 
-- [ ] **Step 1: Add failing route assertion**
+- [x] **Step 1: Add failing route assertion**
 
 Extend `apps/rpa-local-web/tests/server/routes/flows.test.ts` success test:
 
@@ -1523,7 +1523,7 @@ expect(payload.provenance).toMatchObject({
 });
 ```
 
-- [ ] **Step 2: Run failing test**
+- [x] **Step 2: Run failing test**
 
 Run:
 
@@ -1533,7 +1533,7 @@ pnpm --filter @lance-agent-runner/rpa-local-web exec vitest run tests/server/rou
 
 Expected: FAIL because `runtimeParams` and `provenance` are absent.
 
-- [ ] **Step 3: Add runtime params and provenance to route response**
+- [x] **Step 3: Add runtime params and provenance to route response**
 
 Modify `apps/rpa-local-web/src/server/routes/flows.ts`:
 
@@ -1572,7 +1572,7 @@ const payload: RpaFlowDetailResponse = {
 };
 ```
 
-- [ ] **Step 4: Run focused test**
+- [x] **Step 4: Run focused test**
 
 Run:
 
@@ -1593,7 +1593,7 @@ Expected: PASS.
 - Test: `apps/rpa-local-web/tests/server/executor/execution-store.test.ts`
 - Test: `apps/rpa-local-web/tests/server/routes/executions.test.ts`
 
-- [ ] **Step 1: Add failing executor tests**
+- [x] **Step 1: Add failing executor tests**
 
 Extend `apps/rpa-local-web/tests/server/executor/python-playwright-executor.test.ts`:
 
@@ -1626,7 +1626,7 @@ it('rejects imported production run until a successful local verify is recorded'
 
 Use the existing test helper style in that file; `writeFlow` should write `flow.local.json` when metadata is supplied.
 
-- [ ] **Step 2: Run failing executor tests**
+- [x] **Step 2: Run failing executor tests**
 
 Run:
 
@@ -1636,7 +1636,7 @@ pnpm --filter @lance-agent-runner/rpa-local-web exec vitest run tests/server/exe
 
 Expected: FAIL because executor accepts `{}` and does not read flow metadata.
 
-- [ ] **Step 3: Validate params before execution creation**
+- [x] **Step 3: Validate params before execution creation**
 
 Modify `apps/rpa-local-web/src/server/executor/python-playwright-executor.ts` imports:
 
@@ -1682,7 +1682,7 @@ flowDir: path.join(flowsRoot, flowId),
 
 Pass `normalizedParams` into `store.createExecution` as `params`.
 
-- [ ] **Step 4: Mark verify success in flow metadata**
+- [x] **Step 4: Mark verify success in flow metadata**
 
 Add `flowId` to `runExecution` input:
 
@@ -1713,7 +1713,7 @@ In the successful exit branch:
 }
 ```
 
-- [ ] **Step 5: Preserve masked `run.params.json` behavior**
+- [x] **Step 5: Preserve masked `run.params.json` behavior**
 
 Add an execution-store test:
 
@@ -1738,7 +1738,7 @@ it('writes normalized run params and masks summaries', async () => {
 });
 ```
 
-- [ ] **Step 6: Add route-level validation coverage**
+- [x] **Step 6: Add route-level validation coverage**
 
 Extend `apps/rpa-local-web/tests/server/routes/executions.test.ts`:
 
@@ -1760,7 +1760,7 @@ it('rejects missing required params before spawning a runner', async () => {
 });
 ```
 
-- [ ] **Step 7: Run focused executor tests**
+- [x] **Step 7: Run focused executor tests**
 
 Run:
 
@@ -1783,7 +1783,7 @@ Expected: PASS. Route tests may need sandbox escalation because they bind local 
 - Test: `apps/rpa-local-web/tests/components/ExecutionControlBar.test.tsx`
 - Test: `apps/rpa-local-web/tests/components/RuntimeVerificationWorkspace.test.tsx`
 
-- [ ] **Step 1: Write failing RuntimeParamsForm tests**
+- [x] **Step 1: Write failing RuntimeParamsForm tests**
 
 Create `apps/rpa-local-web/tests/components/RuntimeParamsForm.test.tsx`:
 
@@ -1852,7 +1852,7 @@ describe('RuntimeParamsForm', () => {
 });
 ```
 
-- [ ] **Step 2: Run failing form test**
+- [x] **Step 2: Run failing form test**
 
 Run:
 
@@ -1862,7 +1862,7 @@ pnpm --filter @lance-agent-runner/rpa-local-web exec vitest run tests/components
 
 Expected: FAIL because component does not exist.
 
-- [ ] **Step 3: Implement RuntimeParamsForm**
+- [x] **Step 3: Implement RuntimeParamsForm**
 
 Create `apps/rpa-local-web/src/components/RuntimeParamsForm.tsx`:
 
@@ -1944,7 +1944,7 @@ export function RuntimeParamsForm({ fields, values, errors, onChange }: RuntimeP
 }
 ```
 
-- [ ] **Step 4: Simplify ExecutionControlBar**
+- [x] **Step 4: Simplify ExecutionControlBar**
 
 Modify `apps/rpa-local-web/src/components/ExecutionControlBar.tsx`:
 
@@ -1959,7 +1959,7 @@ export interface ExecutionControlBarStartInput {
 
 Remove `paramsText`, `onParamsTextChange`, JSON textarea, `parseParams`, and `isParamRecord`. `onStart` should receive only flow/mode/dryRun/headless.
 
-- [ ] **Step 5: Wire param state in RuntimeVerificationWorkspace**
+- [x] **Step 5: Wire param state in RuntimeVerificationWorkspace**
 
 Modify `apps/rpa-local-web/src/components/RuntimeVerificationWorkspace.tsx`:
 
@@ -2064,7 +2064,7 @@ if (event.type === 'run.completed') {
 }
 ```
 
-- [ ] **Step 6: Update component tests**
+- [x] **Step 6: Update component tests**
 
 Update `RuntimeVerificationWorkspace` start assertion to fill required `case_no` first:
 
@@ -2122,7 +2122,7 @@ it('notifies the parent when a verify execution succeeds', async () => {
 
 Update `ExecutionControlBar` tests by removing Params JSON cases and asserting it passes flow/mode/dryRun/headless only.
 
-- [ ] **Step 7: Add CSS**
+- [x] **Step 7: Add CSS**
 
 Modify `apps/rpa-local-web/src/styles.css`:
 
@@ -2167,7 +2167,7 @@ Adjust `.execution-control-bar` columns after removing params textarea:
 }
 ```
 
-- [ ] **Step 8: Run component tests**
+- [x] **Step 8: Run component tests**
 
 Run:
 
@@ -2188,7 +2188,7 @@ Expected: PASS.
 - Test: `apps/rpa-local-web/tests/components/FlowAssetsWorkspace.test.tsx`
 - Test: `apps/rpa-local-web/tests/App.test.tsx`
 
-- [ ] **Step 1: Write failing FlowAssetsWorkspace tests**
+- [x] **Step 1: Write failing FlowAssetsWorkspace tests**
 
 Create `apps/rpa-local-web/tests/components/FlowAssetsWorkspace.test.tsx`:
 
@@ -2341,7 +2341,7 @@ describe('FlowAssetsWorkspace', () => {
 });
 ```
 
-- [ ] **Step 2: Run failing UI test**
+- [x] **Step 2: Run failing UI test**
 
 Run:
 
@@ -2351,7 +2351,7 @@ pnpm --filter @lance-agent-runner/rpa-local-web exec vitest run tests/components
 
 Expected: FAIL because component does not exist.
 
-- [ ] **Step 3: Implement FlowAssetsWorkspace**
+- [x] **Step 3: Implement FlowAssetsWorkspace**
 
 Create `apps/rpa-local-web/src/components/FlowAssetsWorkspace.tsx`:
 
@@ -2488,7 +2488,7 @@ export function FlowAssetsWorkspace({ client: injectedClient, runtimeClient }: F
 }
 ```
 
-- [ ] **Step 4: Wire Flows tab**
+- [x] **Step 4: Wire Flows tab**
 
 Modify `apps/rpa-local-web/src/components/AppShell.tsx`:
 
@@ -2518,7 +2518,7 @@ Update `rpaSections` flow description to remove “后续” wording:
 description: '查看已生成流程、执行参数、导入导出包和本地验证状态。',
 ```
 
-- [ ] **Step 5: Add CSS**
+- [x] **Step 5: Add CSS**
 
 Modify `apps/rpa-local-web/src/styles.css`:
 
@@ -2592,7 +2592,7 @@ Modify `apps/rpa-local-web/src/styles.css`:
 }
 ```
 
-- [ ] **Step 6: Run UI tests**
+- [x] **Step 6: Run UI tests**
 
 Run:
 
@@ -2609,7 +2609,7 @@ Expected: PASS.
 **Files:**
 - Existing tests across RPA Web.
 
-- [ ] **Step 1: Run package and executor route tests**
+- [x] **Step 1: Run package and executor route tests**
 
 Run:
 
@@ -2619,7 +2619,7 @@ pnpm --filter @lance-agent-runner/rpa-local-web exec vitest run tests/server/rou
 
 Expected: PASS. Use sandbox escalation if local port binding fails.
 
-- [ ] **Step 2: Run component and API tests**
+- [x] **Step 2: Run component and API tests**
 
 Run:
 
@@ -2629,7 +2629,7 @@ pnpm --filter @lance-agent-runner/rpa-local-web exec vitest run tests/api/rpa-ap
 
 Expected: PASS.
 
-- [ ] **Step 3: Run full RPA Web validation**
+- [x] **Step 3: Run full RPA Web validation**
 
 Run:
 
@@ -2641,7 +2641,7 @@ pnpm --filter @lance-agent-runner/rpa-local-web build
 
 Expected: all PASS.
 
-- [ ] **Step 4: Run repo-level validation**
+- [x] **Step 4: Run repo-level validation**
 
 Run:
 
@@ -2653,7 +2653,7 @@ pnpm test
 
 Expected: all PASS. Use sandbox escalation if tests need local ports.
 
-- [ ] **Step 5: Verify daemon boundary**
+- [x] **Step 5: Verify daemon boundary**
 
 Run:
 
@@ -2663,7 +2663,7 @@ rg -n "RPA|Playwright|DSL|selector|screenshot|trace|video|executionId|flowId|rpa
 
 Expected: no matches.
 
-- [ ] **Step 6: Verify diff hygiene**
+- [x] **Step 6: Verify diff hygiene**
 
 Run:
 
@@ -2680,7 +2680,7 @@ Expected: no whitespace errors.
 **Files:**
 - Modify: `docs/superpowers/plans/2026-06-05-rpa-local-bs-mvp.md`
 
-- [ ] **Step 1: Update main plan status**
+- [x] **Step 1: Update main plan status**
 
 In `docs/superpowers/plans/2026-06-05-rpa-local-bs-mvp.md`, change the current slice from planned checklist to completed after implementation and CC review:
 
@@ -2694,7 +2694,7 @@ In `docs/superpowers/plans/2026-06-05-rpa-local-bs-mvp.md`, change the current s
 
 Keep the checklist items and mark them `[x]` only after implementation is actually complete.
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 Run:
 
