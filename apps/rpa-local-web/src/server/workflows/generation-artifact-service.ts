@@ -6,6 +6,7 @@ import {
 } from '../../shared/artifacts.js';
 import type { RpaGenerationArtifact } from '../../shared/artifacts.js';
 import type { ArtifactsResponse } from '../../shared/daemon-types.js';
+import { isKnownToolStateArtifactPath } from '../../shared/artifact-paths.js';
 import { resolveFlowsRoot, safeFlowId, writeFlowLocalMetadata } from '../flow-store.js';
 import { validateGenerationArtifacts } from '../validators/artifact-validator.js';
 import { validateRpaDsl } from '../validators/dsl-validator.js';
@@ -85,7 +86,9 @@ export async function persistRequiredGenerationArtifacts(
           `Failed to download generation artifact: ${artifact.fileName}.`,
         );
       }
-      await writeFile(path.join(tempFlowDir, artifact.fileName), await response.text(), 'utf8');
+      const flowRelativePath = flowRelativePathForGenerationArtifact(artifact);
+      await mkdir(path.dirname(path.join(tempFlowDir, flowRelativePath)), { recursive: true });
+      await writeFile(path.join(tempFlowDir, flowRelativePath), await response.text(), 'utf8');
     }
 
     const dsl = JSON.parse(await readFile(path.join(tempFlowDir, 'flow.dsl.json'), 'utf8')) as unknown;
@@ -116,12 +119,23 @@ export async function persistRequiredGenerationArtifacts(
 }
 
 function isKnownToolStateArtifact(relativePath: string): boolean {
-  return (
-    relativePath.startsWith('output/.omc/') ||
-    relativePath.startsWith('output/.config/') ||
-    relativePath.startsWith('output/.claude/') ||
-    relativePath.startsWith('output/.cache/')
-  );
+  return isKnownToolStateArtifactPath(relativePath, { outputPrefix: true });
+}
+
+function flowRelativePathForGenerationArtifact(artifact: RpaGenerationArtifact): string {
+  if (!artifact.relativePath.startsWith('output/')) {
+    throw new GenerationArtifactError('ARTIFACT_PATH_UNSAFE', `Unsafe generation artifact path: ${artifact.relativePath}.`);
+  }
+  const relativePath = artifact.relativePath.slice('output/'.length);
+  if (
+    relativePath.length === 0 ||
+    relativePath.includes('..') ||
+    relativePath.startsWith('/') ||
+    relativePath.includes('\\')
+  ) {
+    throw new GenerationArtifactError('ARTIFACT_PATH_UNSAFE', `Unsafe generation artifact path: ${artifact.relativePath}.`);
+  }
+  return relativePath;
 }
 
 async function replaceFinalFlowDir(tempFlowDir: string, finalFlowDir: string): Promise<void> {

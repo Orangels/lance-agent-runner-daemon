@@ -77,6 +77,52 @@ describe('RPA package service', () => {
     });
   });
 
+  it('exports and imports optional and supporting json, python, and markdown artifacts', async () => {
+    const sourceRoot = await createStorageRoot();
+    await writeFlow(sourceRoot, dslFixture());
+    const sourceFlowDir = path.join(sourceRoot, 'flows', 'case_query');
+    await writeFile(path.join(sourceFlowDir, 'flow.py'), '# recorded source\n');
+    await mkdir(path.join(sourceFlowDir, 'helpers'), { recursive: true });
+    await mkdir(path.join(sourceFlowDir, 'schemas'), { recursive: true });
+    await mkdir(path.join(sourceFlowDir, 'notes'), { recursive: true });
+    await writeFile(path.join(sourceFlowDir, 'helpers', 'weather_parser.py'), '# helper\n');
+    await writeFile(path.join(sourceFlowDir, 'schemas', 'weather.schema.json'), '{"type":"object"}\n');
+    await writeFile(path.join(sourceFlowDir, 'notes', 'selector-notes.md'), '# notes\n');
+
+    const exported = await exportRpaPackage({ storageRoot: sourceRoot, flowId: 'case_query' });
+    const entries = readUncompressedZipEntries(exported.content);
+
+    expect(entries.map((entry) => entry.path)).toEqual([
+      'manifest.json',
+      ...requiredGenerationArtifactNames,
+      'flow.py',
+      'helpers/weather_parser.py',
+      'notes/selector-notes.md',
+      'schemas/weather.schema.json',
+    ]);
+
+    const targetRoot = await createStorageRoot();
+    const imported = await importRpaPackage({
+      storageRoot: targetRoot,
+      packageFileName: exported.fileName,
+      content: exported.content,
+    });
+
+    expect(imported.ignoredEntries).toEqual([]);
+    await expect(
+      readFile(path.join(targetRoot, 'flows', 'case_query', 'flow.py'), 'utf8'),
+    ).resolves.toContain('recorded source');
+    await expect(
+      readFile(path.join(targetRoot, 'flows', 'case_query', 'helpers', 'weather_parser.py'), 'utf8'),
+    ).resolves.toContain('helper');
+    await expect(
+      readFile(path.join(targetRoot, 'flows', 'case_query', 'schemas', 'weather.schema.json'), 'utf8'),
+    ).resolves.toContain('object');
+    await expect(
+      readFile(path.join(targetRoot, 'flows', 'case_query', 'notes', 'selector-notes.md'), 'utf8'),
+    ).resolves.toContain('notes');
+  });
+
   it('rejects duplicate flow ids', async () => {
     const sourceRoot = await createStorageRoot();
     await writeFlow(sourceRoot, dslFixture());

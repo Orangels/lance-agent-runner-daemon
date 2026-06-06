@@ -1,15 +1,22 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
   RPA_FLOW_LOCAL_METADATA_SCHEMA_VERSION,
+  optionalGenerationArtifactNames,
   requiredGenerationArtifactNames,
+  type OptionalGenerationArtifactName,
   type RequiredGenerationArtifactName,
   type RpaFlowLocalMetadata,
   type RpaPackageManifest,
 } from '../../shared/artifacts.js';
+import {
+  isKnownToolStateArtifactPath,
+  isSensitiveArtifactPath,
+} from '../../shared/artifact-paths.js';
 import type { RpaDslDocument } from '../../shared/dsl-schema.js';
 import {
+  FLOW_LOCAL_METADATA_FILE,
   buildRpaPackageManifest,
   readFlowLocalMetadata,
   resolveFlowArtifactPath,
@@ -86,6 +93,7 @@ export async function exportRpaPackage(input: ExportRpaPackageInput): Promise<Ex
       content: await readFile(resolveFlowArtifactPath(flowsRoot, flowId, artifactName)),
     });
   }
+  entries.push(...(await collectExportablePackageArtifacts(flowDir)));
 
   return {
     fileName: `${flowId}.rpa.zip`,
@@ -101,10 +109,10 @@ export async function importRpaPackage(input: ImportRpaPackageInput): Promise<Im
   const entryMap = new Map(entries.map((entry) => [entry.path, entry]));
   const ignoredEntries = entries
     .map((entry) => entry.path)
-    .filter((entryPath) => entryPath !== 'manifest.json' && !isRequiredArtifactName(entryPath));
+    .filter((entryPath) => entryPath !== 'manifest.json' && !isImportablePackageArtifact(entryPath));
 
   for (const entry of entries) {
-    if (isSensitiveEntryPath(entry.path)) {
+    if (isSensitiveArtifactPath(entry.path)) {
       throw new RpaPackageError('PACKAGE_SENSITIVE_ENTRY', `Package contains sensitive entry: ${entry.path}.`);
     }
   }
@@ -149,8 +157,10 @@ export async function importRpaPackage(input: ImportRpaPackageInput): Promise<Im
   await mkdir(tempFlowDir, { recursive: true });
   let promoted = false;
   try {
-    for (const artifactName of requiredGenerationArtifactNames) {
-      await writeFile(path.join(tempFlowDir, artifactName), entryMap.get(artifactName)!.content);
+    for (const entry of entries.filter((candidate) => isImportablePackageArtifact(candidate.path))) {
+      const target = path.join(tempFlowDir, entry.path);
+      await mkdir(path.dirname(target), { recursive: true });
+      await writeFile(target, entry.content);
     }
     const importedAt = new Date().toISOString();
     const metadata: RpaFlowLocalMetadata = {
@@ -231,14 +241,65 @@ function isRequiredArtifactName(entryPath: string): entryPath is RequiredGenerat
   return requiredGenerationArtifactNames.includes(entryPath as RequiredGenerationArtifactName);
 }
 
-function isSensitiveEntryPath(entryPath: string): boolean {
-  const normalized = entryPath.toLowerCase();
-  if (/\.(env|pem|key|pfx|p12|crt|cer)$/i.test(normalized)) return true;
-  return normalized
-    .split('/')
-    .some((part) =>
-      /(^|[._-])(storage_state|trace|video|downloads?|cookies?|tokens?|secrets?|passwords?|ca_|usbkey)([._-]|$)/.test(part),
-    );
+function isOptionalArtifactName(entryPath: string): entryPath is OptionalGenerationArtifactName {
+  return optionalGenerationArtifactNames.includes(entryPath as OptionalGenerationArtifactName);
+}
+
+async function collectExportablePackageArtifacts(flowDir: string): Promise<ReviewZipEntry[]> {
+  const filePaths = await collectFlowFiles(flowDir);
+  const entries = await Promise.all(
+    filePaths
+      .map((filePath) => normalizeFlowEntryPath(flowDir, filePath))
+      .filter(isDefined)
+      .filter((entryPath) => !isRequiredArtifactName(entryPath))
+      .filter((entryPath) => isImportablePackageArtifact(entryPath))
+      .sort((left, right) => left.localeCompare(right))
+      .map(async (entryPath) => ({
+        path: entryPath,
+        content: await readFile(path.join(flowDir, entryPath)),
+      })),
+  );
+  return entries;
+}
+
+async function collectFlowFiles(flowDir: string, currentDir = flowDir): Promise<string[]> {
+  const entries = await readdir(currentDir, { withFileTypes: true });
+  const files: string[] = [];
+  for (const entry of entries) {
+    const entryPath = path.join(currentDir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...(await collectFlowFiles(flowDir, entryPath)));
+    } else if (entry.isFile()) {
+      files.push(entryPath);
+    }
+  }
+  return files;
+}
+
+function normalizeFlowEntryPath(flowDir: string, filePath: string): string | undefined {
+  const relative = path.relative(flowDir, filePath);
+  if (!isSafePackageEntryPath(relative)) return undefined;
+  return relative.split(path.sep).join('/');
+}
+
+function isDefined<T>(value: T | undefined): value is T {
+  return value !== undefined;
+}
+
+function isImportablePackageArtifact(entryPath: string): boolean {
+  return isRequiredArtifactName(entryPath) || isOptionalArtifactName(entryPath) || isSupportingPackageArtifact(entryPath);
+}
+
+function isSupportingPackageArtifact(entryPath: string): boolean {
+  if (!isSafePackageEntryPath(entryPath)) return false;
+  if (isRequiredArtifactName(entryPath) || isOptionalArtifactName(entryPath)) return false;
+  if (entryPath === 'manifest.json' || entryPath === FLOW_LOCAL_METADATA_FILE) return false;
+  if (isSensitiveArtifactPath(entryPath) || isKnownToolStateArtifactPath(entryPath)) return false;
+  return /\.(json|md|py)$/i.test(entryPath);
+}
+
+function isSafePackageEntryPath(entryPath: string): boolean {
+  return entryPath.length > 0 && !entryPath.includes('..') && !entryPath.startsWith('/') && !entryPath.includes('\\');
 }
 
 function sanitizePackageFileName(fileName: string): string {

@@ -88,6 +88,106 @@ describe('generation artifact service', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('ignores Python bytecode cache files created while generating artifacts', async () => {
+    const storageRoot = await createStorageRoot();
+    const daemonClient = createDaemonClient({
+      artifacts: {
+        artifacts: [
+          ...generationArtifacts(),
+          {
+            ...artifact('flow.hardened.cpython-313.pyc'),
+            id: 'art_python_cache',
+            ruleId: 'rpa-other-output',
+            role: 'supporting',
+            relativePath: 'output/__pycache__/flow.hardened.cpython-313.pyc',
+            fileName: 'flow.hardened.cpython-313.pyc',
+          },
+        ],
+      },
+    });
+
+    const persisted = await persistRequiredGenerationArtifacts({
+      daemonClient,
+      storageRoot,
+      flowId: 'weather_lookup',
+      runId: 'run_pyc',
+      tempSuffix: 'nl_pyc',
+      generator: { mode: 'nl', skillId: 'rpa-script-generate', daemonRunId: 'run_pyc' },
+    });
+
+    expect(persisted.map((artifact) => artifact.fileName)).toEqual([
+      ...requiredGenerationArtifactNames,
+      ...optionalGenerationArtifactNames,
+    ]);
+    expect(daemonClient.downloadArtifact).not.toHaveBeenCalledWith(
+      expect.objectContaining({ artifactId: 'art_python_cache' }),
+    );
+    await expect(
+      readFile(path.join(storageRoot, 'flows', 'weather_lookup', 'flow.hardened.cpython-313.pyc'), 'utf8'),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('downloads allowed supporting artifacts while preserving their relative paths', async () => {
+    const storageRoot = await createStorageRoot();
+    const daemonClient = createDaemonClient({
+      artifacts: {
+        artifacts: [
+          ...generationArtifacts(),
+          {
+            ...artifact('weather_parser.py'),
+            id: 'art_helper',
+            ruleId: 'rpa-supporting-output',
+            role: 'supporting',
+            relativePath: 'output/helpers/weather_parser.py',
+            fileName: 'weather_parser.py',
+          },
+          {
+            ...artifact('weather.schema.json'),
+            id: 'art_schema',
+            ruleId: 'rpa-supporting-output',
+            role: 'supporting',
+            relativePath: 'output/schemas/weather.schema.json',
+            fileName: 'weather.schema.json',
+          },
+          {
+            ...artifact('selector-notes.md'),
+            id: 'art_notes',
+            ruleId: 'rpa-supporting-output',
+            role: 'supporting',
+            relativePath: 'output/notes/selector-notes.md',
+            fileName: 'selector-notes.md',
+          },
+        ],
+      },
+    });
+
+    const persisted = await persistRequiredGenerationArtifacts({
+      daemonClient,
+      storageRoot,
+      flowId: 'weather_lookup',
+      runId: 'run_support',
+      tempSuffix: 'nl_support',
+      generator: { mode: 'nl', skillId: 'rpa-script-generate', daemonRunId: 'run_support' },
+    });
+
+    expect(persisted.map((artifact) => artifact.relativePath)).toEqual([
+      ...requiredGenerationArtifactNames.map((name) => `output/${name}`),
+      ...optionalGenerationArtifactNames.map((name) => `output/${name}`),
+      'output/helpers/weather_parser.py',
+      'output/notes/selector-notes.md',
+      'output/schemas/weather.schema.json',
+    ]);
+    await expect(
+      readFile(path.join(storageRoot, 'flows', 'weather_lookup', 'helpers', 'weather_parser.py'), 'utf8'),
+    ).resolves.toContain('helper');
+    await expect(
+      readFile(path.join(storageRoot, 'flows', 'weather_lookup', 'schemas', 'weather.schema.json'), 'utf8'),
+    ).resolves.toContain('schema');
+    await expect(
+      readFile(path.join(storageRoot, 'flows', 'weather_lookup', 'notes', 'selector-notes.md'), 'utf8'),
+    ).resolves.toContain('notes');
+  });
+
   it('removes temp artifacts and does not leave a final flow when generated DSL is invalid', async () => {
     const storageRoot = await createStorageRoot();
     const finalFlowDir = resolveFinalFlowDir(storageRoot, 'case_query');

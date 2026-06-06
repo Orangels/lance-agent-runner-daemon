@@ -4,6 +4,7 @@ import {
   optionalGenerationArtifactNames,
   requiredGenerationArtifactNames,
 } from '../../shared/artifacts.js';
+import { isSensitiveArtifactPath } from '../../shared/artifact-paths.js';
 import {
   type ValidationIssue,
   errorIssue,
@@ -18,6 +19,7 @@ export interface GenerationArtifactValidationResult {
 }
 
 const allowedNameSet = new Set<string>(allowedGenerationArtifactNames);
+const supportingArtifactExtensionPattern = /\.(json|md|py)$/i;
 
 export function validateGenerationArtifacts(
   artifacts: RpaGenerationArtifact[],
@@ -37,7 +39,10 @@ export function validateGenerationArtifacts(
         ),
       );
     }
-    if (!allowedNameSet.has(artifact.fileName)) {
+    if (isSensitiveArtifactPath(artifact.relativePath)) {
+      errors.push(errorIssue('ARTIFACT_SENSITIVE', path, `Artifact path looks sensitive: ${artifact.relativePath}.`));
+    }
+    if (!isAllowedGenerationArtifact(artifact)) {
       errors.push(errorIssue('UNEXPECTED_ARTIFACT', path, `Unexpected generation artifact: ${artifact.fileName}.`));
     }
     if (artifact.size <= 0) {
@@ -48,7 +53,9 @@ export function validateGenerationArtifacts(
     } else if (!/^[a-f0-9]{64}$/i.test(artifact.sha256)) {
       errors.push(errorIssue('ARTIFACT_HASH_INVALID', path, `Artifact ${artifact.fileName} has an invalid sha256 hash.`));
     }
-    byFileName.set(artifact.fileName, artifact);
+    if (isCoreGenerationArtifact(artifact)) {
+      byFileName.set(artifact.fileName, artifact);
+    }
   }
 
   for (const requiredName of requiredGenerationArtifactNames) {
@@ -65,13 +72,33 @@ export function validateGenerationArtifacts(
 
   return {
     ok: errors.length === 0,
-    artifacts: [...requiredGenerationArtifactNames, ...optionalGenerationArtifactNames].flatMap((name) => {
-      const artifact = byFileName.get(name);
-      return artifact ? [artifact] : [];
-    }),
+    artifacts: [
+      ...[...requiredGenerationArtifactNames, ...optionalGenerationArtifactNames].flatMap((name) => {
+        const artifact = byFileName.get(name);
+        return artifact ? [artifact] : [];
+      }),
+      ...artifacts
+        .filter(isSupportingGenerationArtifact)
+        .sort((left, right) => left.relativePath.localeCompare(right.relativePath)),
+    ],
     errors,
     warnings,
   };
+}
+
+function isAllowedGenerationArtifact(artifact: RpaGenerationArtifact): boolean {
+  return isCoreGenerationArtifact(artifact) || isSupportingGenerationArtifact(artifact);
+}
+
+function isCoreGenerationArtifact(artifact: RpaGenerationArtifact): boolean {
+  return allowedNameSet.has(artifact.fileName) && artifact.relativePath === `output/${artifact.fileName}`;
+}
+
+function isSupportingGenerationArtifact(artifact: RpaGenerationArtifact): boolean {
+  if (!isSafeOutputArtifactPath(artifact.relativePath)) return false;
+  if (isCoreGenerationArtifact(artifact)) return false;
+  if (isSensitiveArtifactPath(artifact.relativePath)) return false;
+  return supportingArtifactExtensionPattern.test(artifact.relativePath);
 }
 
 function isSafeOutputArtifactPath(relativePath: string): boolean {
