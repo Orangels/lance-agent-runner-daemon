@@ -8,7 +8,7 @@ argument-hint: "[input/flow.py 或 input/flow.dsl.json]"
 
 将 codegen 录制脚本或已有 DSL 加固为适合本地 B/S RPA MVP 执行的流程包产物。
 
-本 skill 不改变业务意图，只做结构化、泛化、加固和留痕。daemon 仍然只负责运行 Claude Code 和管理 artifacts，不解释 RPA DSL。
+本 skill 不擅自改变用户录制的可行页面路径，只做结构化、泛化、加固和留痕。codegen 模式下，`input/flow.py` 是页面操作证据；如果 `businessContext.userRequirement.text` 存在，最终业务目标和产物要求以该说明为准。daemon 仍然只负责运行 Claude Code 和管理 artifacts，不解释 RPA DSL。
 
 ## 输入
 
@@ -17,9 +17,34 @@ argument-hint: "[input/flow.py 或 input/flow.dsl.json]"
 - `input/flow.py`：Playwright codegen 录制得到的 Python 脚本。
 - `input/flow.dsl.json`：已经存在的步骤 DSL。
 - `input/config.example.json`：可选的配置样例。
+- `businessContext.userRequirement.text`：用户在录制完成后补充的任务目标、泛化要求和最终产物说明；codegen 加固模式下视为必填业务输入。
 - 用户补充的业务说明、参数化要求、人工介入说明。
 
 如果同时存在 DSL 和脚本，优先以 DSL 为主，原始脚本作为定位和顺序证据。
+
+## 录制脚本叠加需求
+
+加固时必须同时使用两类信息：
+
+- `input/flow.py`：确认用户真实走通的页面、点击顺序、输入位置和可达路径。
+- `businessContext.userRequirement.text`：确认最终脚本要实现的业务目标、可变参数、输出字段和输出文件。
+
+当两者不完全一致时：
+
+- 不要直接丢弃录制步骤；先判断它是否只是到达目标页面的导航路径。
+- 以用户补充需求决定最终 DSL、脚本和产物；在 `hardening-report.md` 中区分“录制步骤保留”“按需求新增/调整”“无法确认需用户确认”。
+- 如果用户需求要求导出、提取 JSON、写入文件或新增字段，必须在 DSL、脚本和报告中体现，不要只复刻 codegen 动作。
+
+## 可选 cdt 探查
+
+如果当前 Claude Code 会话提供了 chrome-devtools MCP（通常 server name 为 `cdt`，工具名可能形如 `mcp__cdt__...`），可以用它做只读页面探查，辅助确认 DOM、选择器、文本和输出字段。
+
+使用规则：
+
+- cdt 只作为辅助证据；`input/flow.py` 与 `businessContext.userRequirement.text` 仍是主要输入。
+- 只使用当前工具列表中真实存在的 cdt 工具，不要臆造工具名。
+- 如果 cdt 不可用、连接失败或页面无法访问，不要因此失败；继续基于录制脚本和用户需求加固，并在 `hardening-report.md` 记录风险。
+- 不要用 cdt 执行不可逆写操作；需要写操作确认时使用 `<question-form>`。
 
 ## 产物
 
@@ -59,6 +84,7 @@ RPA Web 通常没有真实 AskQuestion 工具；此时使用 RPA Web 的 `<quest
 
 - 如果只有 `flow.py`，从脚本中反抽步骤并生成 `flow.dsl.json`。
 - 如果已有 `flow.dsl.json`，校验 schema、参数引用、步骤顺序和 step id。
+- 读取 `businessContext.userRequirement.text`，把任务目标、参数化要求和最终产物要求纳入 DSL 与脚本设计。
 - 记录原始脚本中的固定延时、坐标点击、xpath、脆弱 css、缺失断言、缺失等待。
 
 ### 2. 归一化 DSL

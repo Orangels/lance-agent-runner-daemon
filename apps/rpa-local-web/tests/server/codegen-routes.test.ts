@@ -42,7 +42,7 @@ async function withCodegenServer(
 }
 
 describe('RPA codegen routes', () => {
-  it('starts a codegen session, records flow.py, and triggers hardening', async () => {
+  it('starts a codegen session, records flow.py, and waits for a hardening requirement', async () => {
     const storageRoot = await mkdtemp(path.join(os.tmpdir(), 'rpa-codegen-routes-'));
     const runnerPath = await createFakeCodegen(storageRoot, 'success');
     const workflow = fakeWorkflow();
@@ -67,9 +67,137 @@ describe('RPA codegen routes', () => {
       });
       expect(JSON.stringify(payload)).not.toContain(storageRoot);
 
-      await vi.waitFor(() => expect(workflow.startHardening).toHaveBeenCalledWith(payload.sessionId));
+      await vi.waitFor(async () => {
+        const status = await fetch(`${baseUrl}/api/rpa/codegen/sessions/${payload.sessionId}`).then((res) => res.json());
+        expect(status.status).toBe('completed');
+      });
+      expect(workflow.startHardening).not.toHaveBeenCalled();
       const status = await fetch(`${baseUrl}/api/rpa/codegen/sessions/${payload.sessionId}`).then((res) => res.json());
       expect(JSON.stringify(status)).not.toContain(storageRoot);
+    });
+  });
+
+  it('requires a post-recording requirement before triggering hardening', async () => {
+    const storageRoot = await mkdtemp(path.join(os.tmpdir(), 'rpa-codegen-routes-harden-'));
+    const runnerPath = await createFakeCodegen(storageRoot, 'success');
+    const workflow = fakeWorkflow();
+
+    await withCodegenServer({ storageRoot, runnerPath, workflow }, async (baseUrl) => {
+      const started = await fetch(`${baseUrl}/api/rpa/codegen/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetUrl: 'https://example.com/start',
+          flowId: 'case_query',
+          flowName: 'Case query',
+        }),
+      }).then((res) => res.json());
+
+      await vi.waitFor(async () => {
+        const status = await fetch(`${baseUrl}/api/rpa/codegen/sessions/${started.sessionId}`).then((res) => res.json());
+        expect(status.status).toBe('completed');
+      });
+
+      const missingRequirement = await fetch(`${baseUrl}/api/rpa/codegen/sessions/${started.sessionId}/harden`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requirement: '   ' }),
+      });
+      expect(missingRequirement.status).toBe(400);
+
+      const response = await fetch(`${baseUrl}/api/rpa/codegen/sessions/${started.sessionId}/harden`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requirement: '查询北京天气并保存为 JSON。',
+        }),
+      });
+
+      expect(response.status).toBe(202);
+      expect(workflow.startHardening).toHaveBeenCalledWith(started.sessionId);
+      const hardening = await response.json();
+      expect(hardening).toMatchObject({
+        status: 'hardening',
+        requirement: '查询北京天气并保存为 JSON。',
+      });
+    });
+  });
+
+  it('rejects hardening before recording completes', async () => {
+    const storageRoot = await mkdtemp(path.join(os.tmpdir(), 'rpa-codegen-routes-early-harden-'));
+    const runnerPath = await createFakeCodegen(storageRoot, 'sleep');
+    const workflow = fakeWorkflow();
+
+    await withCodegenServer({ storageRoot, runnerPath, workflow }, async (baseUrl) => {
+      const started = await fetch(`${baseUrl}/api/rpa/codegen/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetUrl: 'https://example.com/start',
+          flowId: 'case_query',
+          flowName: 'Case query',
+        }),
+      }).then((res) => res.json());
+
+      const response = await fetch(`${baseUrl}/api/rpa/codegen/sessions/${started.sessionId}/harden`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requirement: '查询北京天气并保存为 JSON。' }),
+      });
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({ error: { code: 'SESSION_NOT_READY' } });
+      expect(workflow.startHardening).not.toHaveBeenCalled();
+    });
+  });
+
+  it('rejects repeated hardening submissions without failing the active session', async () => {
+    const storageRoot = await mkdtemp(path.join(os.tmpdir(), 'rpa-codegen-routes-repeat-harden-'));
+    const runnerPath = await createFakeCodegen(storageRoot, 'success');
+    const workflow = fakeWorkflow({
+      startHardening: vi.fn(async () => {
+        await new Promise(() => undefined);
+      }),
+    });
+
+    await withCodegenServer({ storageRoot, runnerPath, workflow }, async (baseUrl) => {
+      const started = await fetch(`${baseUrl}/api/rpa/codegen/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetUrl: 'https://example.com/start',
+          flowId: 'case_query',
+          flowName: 'Case query',
+        }),
+      }).then((res) => res.json());
+
+      await vi.waitFor(async () => {
+        const status = await fetch(`${baseUrl}/api/rpa/codegen/sessions/${started.sessionId}`).then((res) => res.json());
+        expect(status.status).toBe('completed');
+      });
+
+      const first = await fetch(`${baseUrl}/api/rpa/codegen/sessions/${started.sessionId}/harden`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requirement: '查询北京天气并保存为 JSON。' }),
+      });
+      expect(first.status).toBe(202);
+
+      const second = await fetch(`${baseUrl}/api/rpa/codegen/sessions/${started.sessionId}/harden`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requirement: '重复提交。' }),
+      });
+      expect(second.status).toBe(400);
+      await expect(second.json()).resolves.toMatchObject({ error: { code: 'SESSION_NOT_READY' } });
+      expect(workflow.startHardening).toHaveBeenCalledTimes(1);
+
+      const status = await fetch(`${baseUrl}/api/rpa/codegen/sessions/${started.sessionId}`).then((res) => res.json());
+      expect(status).toMatchObject({
+        status: 'hardening',
+        error: null,
+        requirement: '查询北京天气并保存为 JSON。',
+      });
     });
   });
 
@@ -128,11 +256,12 @@ describe('RPA codegen routes', () => {
   });
 });
 
-function fakeWorkflow(): CodegenHardeningWorkflow {
+function fakeWorkflow(overrides: Partial<CodegenHardeningWorkflow> = {}): CodegenHardeningWorkflow {
   return {
     startHardening: vi.fn(async () => undefined),
     submitQuestionAnswers: vi.fn(async () => undefined),
     cancel: vi.fn(async () => undefined),
+    ...overrides,
   };
 }
 

@@ -9,6 +9,7 @@ import type {
 } from '../../shared/daemon-types.js';
 import type {
   CodegenQuestionAnswers,
+  StartCodegenHardeningRequest,
   SubmitCodegenQuestionAnswersRequest,
 } from '../../shared/codegen-types.js';
 import type { CodegenSessionStore } from '../codegen/codegen-session-store.js';
@@ -39,20 +40,34 @@ export interface CodegenHardeningWorkflowOptions {
 }
 
 export interface CodegenHardeningWorkflow {
-  startHardening(sessionId: string): Promise<void>;
+  startHardening(sessionId: string, request?: StartCodegenHardeningRequest): Promise<void>;
   submitQuestionAnswers(sessionId: string, request: SubmitCodegenQuestionAnswersRequest): Promise<void>;
   cancel(sessionId: string): Promise<void>;
 }
 
-const initialPrompt = 'Harden the recorded Playwright codegen script at input/flow.py into the required RPA MVP artifacts.';
+const initialPrompt =
+  'Harden the recorded Playwright codegen script at input/flow.py into the required RPA MVP artifacts while satisfying businessContext.userRequirement.';
 const followUpPrompt = "Continue hardening the RPA flow after the user's question-form answers.";
 
 export function createCodegenHardeningWorkflow(options: CodegenHardeningWorkflowOptions): CodegenHardeningWorkflow {
   const { daemonClient, defaultProfileId, store } = options;
 
-  async function startHardening(sessionId: string): Promise<void> {
+  async function requireClaimedHardeningSession(sessionId: string) {
     const session = await store.getSession(sessionId);
-    await store.transition(sessionId, 'hardening');
+    if (session.status !== 'hardening') {
+      throw new Error(`Codegen session is not ready for hardening: ${session.status}.`);
+    }
+    if (!session.requirement) {
+      throw new Error('Codegen session is missing user requirement.');
+    }
+    return session;
+  }
+
+  async function startHardening(sessionId: string, request?: StartCodegenHardeningRequest): Promise<void> {
+    const session = request
+      ? await store.claimHardening(sessionId, normalizeRequirement(request.requirement))
+      : await requireClaimedHardeningSession(sessionId);
+    const requirement = session.requirement;
     await store.appendLog(sessionId, 'Creating daemon workspace for codegen hardening.');
 
     const workspace = await daemonClient.createWorkspace({
@@ -89,6 +104,14 @@ export function createCodegenHardeningWorkflow(options: CodegenHardeningWorkflow
         codegenSessionId: session.sessionId,
         flowId: session.flowId,
         targetUrl: session.targetUrl,
+        userRequirement: {
+          text: requirement,
+          required: true,
+        },
+        exploration: {
+          chromeDevtoolsMcp: 'profile-provided',
+          preferredServerName: 'cdt',
+        },
         inputFiles: ['input/flow.py'],
         recording: {
           source: 'playwright-codegen',
@@ -125,6 +148,9 @@ export function createCodegenHardeningWorkflow(options: CodegenHardeningWorkflow
     if (!session.workspaceId || !session.daemonRunId) {
       throw new Error('Codegen session is missing daemon run metadata.');
     }
+    if (!session.requirement) {
+      throw new Error('Codegen session is missing user requirement.');
+    }
 
     await store.transition(sessionId, 'hardening');
     await store.setQuestionForm(sessionId, null);
@@ -144,6 +170,10 @@ export function createCodegenHardeningWorkflow(options: CodegenHardeningWorkflow
         codegenSessionId: session.sessionId,
         flowId: session.flowId,
         previousRunId: session.daemonRunId,
+        userRequirement: {
+          text: session.requirement,
+          required: true,
+        },
         artifactPaths: ['input/flow.py', ...session.artifacts.map((artifact) => artifact.relativePath)],
         formAnswers: request.answers as CodegenQuestionAnswers,
       },
@@ -249,6 +279,14 @@ export function createCodegenHardeningWorkflow(options: CodegenHardeningWorkflow
   }
 
   return { startHardening, submitQuestionAnswers, cancel };
+}
+
+function normalizeRequirement(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error('Codegen hardening requirement is required.');
+  }
+  return trimmed;
 }
 
 async function uploadRecordedScript(input: {

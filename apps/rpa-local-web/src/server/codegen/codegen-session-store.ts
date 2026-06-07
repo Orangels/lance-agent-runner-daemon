@@ -32,6 +32,7 @@ export interface CodegenSessionRecord {
   flowId: string;
   flowName?: string;
   targetUrl: string;
+  requirement?: string;
   status: CodegenSessionStatus;
   createdAt: string;
   updatedAt: string;
@@ -67,6 +68,7 @@ export interface CodegenSessionStore {
   getSession(sessionId: string): Promise<CodegenSessionRecord>;
   getPublicSession(sessionId: string): Promise<PublicCodegenSession>;
   setRecording(sessionId: string): Promise<CodegenSessionRecord>;
+  claimHardening(sessionId: string, requirement: string): Promise<CodegenSessionRecord>;
   transition(sessionId: string, nextStatus: CodegenSessionStatus): Promise<CodegenSessionRecord>;
   setDaemonRun(sessionId: string, metadata: CodegenDaemonRunMetadata): Promise<CodegenSessionRecord>;
   setQuestionForm(sessionId: string, questionForm: CodegenQuestionForm | null): Promise<CodegenSessionRecord>;
@@ -150,6 +152,7 @@ export function createCodegenSessionStore(options: CodegenSessionStoreOptions): 
       flowId: session.flowId,
       flowName: session.flowName,
       targetUrl: session.targetUrl,
+      requirement: session.requirement,
       status: session.status,
       recording: { inputPath },
       workspaceId: session.workspaceId,
@@ -211,6 +214,18 @@ export function createCodegenSessionStore(options: CodegenSessionStoreOptions): 
 
     async setRecording(sessionId) {
       return this.transition(sessionId, 'recording');
+    },
+
+    async claimHardening(sessionId, requirement) {
+      const session = requireSession(sessionId);
+      if (session.status !== 'completed') {
+        throw new Error(`Codegen session must be completed before hardening: ${session.status}`);
+      }
+      return updateSession(session, {
+        status: 'hardening',
+        requirement,
+        error: null,
+      });
     },
 
     async transition(sessionId, nextStatus) {
