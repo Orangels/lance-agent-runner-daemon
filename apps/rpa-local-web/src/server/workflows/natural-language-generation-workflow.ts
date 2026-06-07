@@ -163,6 +163,7 @@ export function createNaturalLanguageGenerationWorkflow(
           stage: 'nl-generation-follow-up',
           naturalLanguageSessionId: session.sessionId,
           flowId: session.flowId,
+          flowName: session.flowName,
           previousRunId: session.daemonRunId,
           artifactPaths: expectedArtifacts,
           formAnswers: request.answers,
@@ -216,6 +217,7 @@ export function createNaturalLanguageGenerationWorkflow(
           stage: 'nl-generation-repair',
           naturalLanguageSessionId: session.sessionId,
           flowId: session.flowId,
+          flowName: session.flowName,
           previousRunId: session.daemonRunId,
           executionFailure,
           currentArtifacts: currentArtifactPaths(session),
@@ -283,6 +285,7 @@ export function createNaturalLanguageGenerationWorkflow(
       daemonClient,
       storageRoot,
       flowId: session.flowId,
+      flowName: session.flowName,
       runId,
       tempSuffix: session.sessionId,
       generator: {

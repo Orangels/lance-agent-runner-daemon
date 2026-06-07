@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { Express } from 'express';
@@ -161,6 +161,23 @@ describe('RPA flow detail routes', () => {
     expect(JSON.stringify(payload)).not.toContain(storageRoot);
   });
 
+  it('deletes a flow directory without deleting execution history', async () => {
+    const storageRoot = await mkdtemp(path.join(os.tmpdir(), 'rpa-flow-route-delete-'));
+    const dsl = createMinimalRpaDsl();
+    await writeFlowDsl(storageRoot, dsl);
+    const executionDir = path.join(storageRoot, 'executions', 'exec_1');
+    await mkdir(executionDir, { recursive: true });
+    await writeFile(path.join(executionDir, 'execution.json'), '{"flowId":"case_query"}\n');
+
+    const deleted = await requestDeleteFlow(storageRoot, 'case_query');
+
+    expect(deleted.status).toBe(200);
+    expect(deleted.payload).toEqual({ flowId: 'case_query', deleted: true });
+    await expect(readdir(path.join(storageRoot, 'flows', 'case_query'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(path.join(executionDir, 'execution.json'), 'utf8')).resolves.toContain('case_query');
+    await expect(requestFlowList(storageRoot)).resolves.toMatchObject({ payload: { flows: [] } });
+  });
+
   it('returns structured errors for missing flows and invalid flow ids without leaking storage root', async () => {
     const storageRoot = await mkdtemp(path.join(os.tmpdir(), 'rpa-flow-route-errors-'));
 
@@ -173,6 +190,16 @@ describe('RPA flow detail routes', () => {
     expect(invalid.status).toBeGreaterThanOrEqual(400);
     expect(invalid.payload).toMatchObject({ error: { code: 'INVALID_FLOW_ID' } });
     expect(JSON.stringify(invalid.payload)).not.toContain(storageRoot);
+
+    const missingDelete = await requestDeleteFlow(storageRoot, 'case_query');
+    expect(missingDelete.status).toBe(404);
+    expect(missingDelete.payload).toMatchObject({ error: { code: 'FLOW_NOT_FOUND' } });
+    expect(JSON.stringify(missingDelete.payload)).not.toContain(storageRoot);
+
+    const invalidDelete = await requestDeleteFlow(storageRoot, '../secret');
+    expect(invalidDelete.status).toBeGreaterThanOrEqual(400);
+    expect(invalidDelete.payload).toMatchObject({ error: { code: 'INVALID_FLOW_ID' } });
+    expect(JSON.stringify(invalidDelete.payload)).not.toContain(storageRoot);
   });
 
   it('returns DSL validation failures as structured browser-safe errors', async () => {
@@ -196,6 +223,10 @@ async function requestFlow(storageRoot: string, flowId: string): Promise<{ statu
       routes.set(route, handler);
       return app;
     }),
+    delete: vi.fn((route: string, handler: RouteHandler) => {
+      routes.set(`DELETE ${route}`, handler);
+      return app;
+    }),
   } as unknown as Express;
   registerFlowRoutes(app, { storageRoot });
 
@@ -211,11 +242,34 @@ async function requestFlowList(storageRoot: string): Promise<{ status: number; p
       routes.set(route, handler);
       return app;
     }),
+    delete: vi.fn((route: string, handler: RouteHandler) => {
+      routes.set(`DELETE ${route}`, handler);
+      return app;
+    }),
   } as unknown as Express;
   registerFlowRoutes(app, { storageRoot });
 
   const res = createMockResponse();
   await routes.get('/api/rpa/flows')?.({ params: {} }, res);
+  return { status: res.statusCode, payload: res.payload };
+}
+
+async function requestDeleteFlow(storageRoot: string, flowId: string): Promise<{ status: number; payload: any }> {
+  const routes = new Map<string, RouteHandler>();
+  const app = {
+    get: vi.fn((route: string, handler: RouteHandler) => {
+      routes.set(route, handler);
+      return app;
+    }),
+    delete: vi.fn((route: string, handler: RouteHandler) => {
+      routes.set(`DELETE ${route}`, handler);
+      return app;
+    }),
+  } as unknown as Express;
+  registerFlowRoutes(app, { storageRoot });
+
+  const res = createMockResponse();
+  await routes.get('DELETE /api/rpa/flows/:flowId')?.({ params: { flowId } }, res);
   return { status: res.statusCode, payload: res.payload };
 }
 

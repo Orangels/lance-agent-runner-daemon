@@ -101,6 +101,11 @@ export interface RpaFlowListResponse {
   flows: RpaFlowSummary[];
 }
 
+export interface DeleteRpaFlowResponse {
+  flowId: string;
+  deleted: true;
+}
+
 export interface ImportRpaPackageResponse {
   flowId: string;
   title: string;

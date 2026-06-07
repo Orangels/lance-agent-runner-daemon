@@ -74,6 +74,35 @@ describe('CodegenWorkspace', () => {
     });
   });
 
+  it('waits for a required hardening requirement after recording completes', async () => {
+    const client = new FakeCodegenClient({
+      status: {
+        sessionId: 'cg_1',
+        flowId: 'case_query',
+        status: 'completed',
+        targetUrl: 'https://example.com',
+        logs: [],
+        questionForm: null,
+        artifacts: [],
+        error: null,
+      },
+    });
+
+    render(<CodegenWorkspace client={client} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Start recording' }));
+
+    const submit = await screen.findByRole('button', { name: '生成脚本' });
+    expect(submit).toBeDisabled();
+
+    await userEvent.type(screen.getByLabelText('任务需求 / 最终产物'), '提取天气并保存 JSON。');
+    expect(submit).toBeEnabled();
+    await userEvent.click(submit);
+
+    expect(client.startCodegenHardening).toHaveBeenCalledWith('cg_1', {
+      requirement: '提取天气并保存 JSON。',
+    });
+  });
+
   it('opens hardened flows in the runtime verification workspace and blocks auto-start until params are filled', async () => {
     const codegenClient = new FakeCodegenClient({
       status: {
@@ -110,6 +139,7 @@ class FakeCodegenClient {
 
   readonly getCodegenSession = vi.fn(async () => this.response.status);
   readonly cancelCodegenSession = vi.fn(async () => ({ sessionId: 'cg_1', status: 'cancelled' as const }));
+  readonly startCodegenHardening = vi.fn(async () => ({ sessionId: 'cg_1', status: 'hardening' as const }));
   readonly submitCodegenQuestionAnswers = vi.fn(async () => ({ sessionId: 'cg_1', status: 'hardening' as const }));
 
   constructor(private readonly response: { status: Awaited<ReturnType<FakeCodegenClient['getCodegenSession']>> }) {}

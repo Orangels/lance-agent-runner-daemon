@@ -32,7 +32,7 @@ argument-hint: "[目标系统URL] [业务流程描述]"
 
 不得输出真实密码、cookie、storage_state、CA/USB-Key 文件、真实业务数据样本。
 
-`output/` 只放 daemon 生成/加固 artifacts。脚本运行时产生的审计日志、截图、trace、下载文件属于 executor executionId 产物，默认写入 `runtime/`，不要写入 `output/`。
+`output/` 只放 daemon 生成/加固 artifacts。脚本运行时产生的审计日志、截图、trace、下载文件属于 executor executionId 产物，默认写入 `runtime/`，不要写入 `output/`。用户最终要下载、查看或复用的业务结果文件，例如 JSON、CSV、XLSX、PDF、TXT，必须写入 `config["downloads"]["dir"]`，默认是 `<executionDir>/runtime/downloads/`，不要直接写入 `<executionDir>/` 根目录。
 
 ## AskQuestion / question-form 约束
 
@@ -59,6 +59,7 @@ RPA Web 通常没有真实 AskQuestion 工具；此时使用 RPA Web 的 `<quest
 优先从用户输入中提取：
 
 - 目标系统入口 URL。
+- `businessContext.flowName`：用户在 RPA Web 中填写的流程显示名称；生成 DSL 时必须作为 `meta.title`。
 - 业务目标和完成标准。
 - 登录、验证码、CA、USB-Key、人工确认等前置条件。
 - 查询、下载、提交、删除、导入等写操作风险。
@@ -119,6 +120,7 @@ notes/
 
 要求：
 
+- `meta.title` 必须优先使用 `businessContext.flowName`；只有该字段缺失或为空时，才根据业务目标生成简短标题。
 - `meta.source` 固定为 `nl`。
 - `params` 只放参数定义和默认值策略，不放真实敏感值。
 - `params.*.type` 只能使用 DSL v0.1 支持的枚举：`string | number | date | boolean | select | secret`。不要输出 `path`、`file`、`url`、`text`、`textarea`、`datetime`、`array`、`object` 等未列出的类型。
@@ -139,6 +141,7 @@ notes/
   `flow.hardened.py --mode verify|run --params <executionDir>/run.params.json --execution-dir <executionDir> [--dry-run] [--headed|--headless]`。
 - `--mode verify|dry-run|run`，其中 executor 只传 `verify|run`，脚本可额外兼容 `dry-run`。
 - `--execution-dir <executionDir>`，所有审计日志、截图、trace、录像、下载等执行期产物必须写入该目录下。
+- 业务结果文件必须写入 `config["downloads"]["dir"]`，例如 `Path(config["downloads"]["dir"]) / "result.json"`；不要写到 `Path(execution_dir) / "result.json"` 这类 execution 根目录路径。
 - `--dry-run`，即使 `--mode run` 也必须强制跳过或暂停不可逆写操作。
 - `--headed` / `--headless`，覆盖配置文件和 mode 默认值。
 - 可选 `--config <path>`；未传时默认读取脚本同目录的 `config.example.json`，不要假设执行目录里有 `config.json`。
@@ -154,6 +157,7 @@ notes/
 - `output/flow.dsl.json` 是合法 JSON。
 - `params.*.type` 全部属于 `string | number | date | boolean | select | secret`，不存在 `path`、`file`、`url` 等未支持类型。
 - `steps[].target.by` 全部属于 `role | label | placeholder | text | testid | id | css | xpath`，不存在 `path`、`url`、`file` 等未支持定位类型。
+- `steps[].assert[].type` 全部属于 `visible | hidden | text_contains | url_contains | download_exists | row_count_gt`，不存在 `min_count`、`date_in_range`、`url_matches` 等未支持断言类型。
 - 每个 step 有 `id`、`name`、`action`。
 - `click | input | select | submit | assert` 类型 step 必须有页面元素 `target`，不得输出 `target: null`。
 - 本地结果保存、审计日志、截图、trace、下载文件落盘不是页面操作；不要输出成 `action: "assert"` + `target: null`。这类行为优先放在脚本和报告中；若必须在 DSL 步骤里留痕，使用 `action: "wait"` 并配套 `assert: [{ "type": "download_exists", "value": "..." }]`。

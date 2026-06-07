@@ -23,6 +23,16 @@ describe('RPA DSL validator', () => {
     );
   });
 
+  it('rejects DSL documents without a non-empty meta title', () => {
+    const dsl = createMinimalRpaDsl();
+    dsl.meta.title = '';
+
+    const result = validateRpaDsl(dsl);
+
+    expect(result.ok).toBe(false);
+    expect(result.errors.map((issue) => issue.code)).toContain('META_TITLE_REQUIRED');
+  });
+
   it('rejects invalid step ids, unsupported assert types, and invalid manual blocks', () => {
     const dsl = createMinimalRpaDsl();
     dsl.steps = [

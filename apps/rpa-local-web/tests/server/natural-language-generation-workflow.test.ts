@@ -128,6 +128,7 @@ describe('natural-language generation workflow', () => {
         businessContext: expect.objectContaining({
           stage: 'nl-generation-follow-up',
           previousRunId: 'run_1',
+          flowName: 'Case query',
           formAnswers: { date: '2026-06-06' },
           artifactPaths: expect.arrayContaining(['output/flow.dsl.json', 'output/flow.hardened.py']),
         }),
@@ -177,6 +178,7 @@ describe('natural-language generation workflow', () => {
         businessContext: expect.objectContaining({
           stage: 'nl-generation-repair',
           previousRunId: 'run_1',
+          flowName: 'Case query',
           executionFailure: expect.objectContaining({
             executionId: 'exec_1',
             failedStepId: 'step_003',

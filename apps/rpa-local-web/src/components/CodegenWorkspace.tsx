@@ -3,6 +3,7 @@ import { RpaApiClient } from '../api/rpa-api-client.js';
 import type {
   CodegenSessionStatus,
   CodegenSessionStatusResponse,
+  StartCodegenHardeningRequest,
   StartCodegenSessionRequest,
   SubmitCodegenQuestionAnswersRequest,
 } from '../shared/codegen-types.js';
@@ -15,6 +16,10 @@ export interface CodegenApiClient {
   startCodegenSession(request: StartCodegenSessionRequest): Promise<{ sessionId: string; flowId: string; status: CodegenSessionStatus; targetUrl: string }>;
   getCodegenSession(sessionId: string): Promise<CodegenSessionStatusResponse>;
   cancelCodegenSession(sessionId: string): Promise<{ sessionId: string; status: CodegenSessionStatus }>;
+  startCodegenHardening(
+    sessionId: string,
+    request: StartCodegenHardeningRequest,
+  ): Promise<{ sessionId: string; status: CodegenSessionStatus; daemonRunId?: string }>;
   submitCodegenQuestionAnswers(
     sessionId: string,
     request: SubmitCodegenQuestionAnswersRequest,
@@ -36,6 +41,7 @@ export function CodegenWorkspace({ client: injectedClient, runtimeClient }: Code
   const [flowId, setFlowId] = useState('case_query');
   const [flowName, setFlowName] = useState('');
   const [session, setSession] = useState<CodegenSessionStatusResponse | null>(null);
+  const [hardeningRequirement, setHardeningRequirement] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [verifyRequestId, setVerifyRequestId] = useState<string | null>(null);
@@ -44,9 +50,12 @@ export function CodegenWorkspace({ client: injectedClient, runtimeClient }: Code
     async (sessionId: string) => {
       const next = await client.getCodegenSession(sessionId);
       setSession(next);
+      if (next.requirement && !hardeningRequirement) {
+        setHardeningRequirement(next.requirement);
+      }
       return next;
     },
-    [client],
+    [client, hardeningRequirement],
   );
 
   useEffect(() => {
@@ -71,6 +80,7 @@ export function CodegenWorkspace({ client: injectedClient, runtimeClient }: Code
     setBusy(true);
     setError(null);
     setVerifyRequestId(null);
+    setHardeningRequirement('');
     try {
       const started = await client.startCodegenSession({ targetUrl, flowId, flowName });
       setSession({
@@ -86,6 +96,25 @@ export function CodegenWorkspace({ client: injectedClient, runtimeClient }: Code
       await refreshSession(started.sessionId);
     } catch (startError) {
       setError(startError instanceof Error ? startError.message : 'Codegen session failed to start.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const startHardening = async () => {
+    if (!session) return;
+    const requirement = hardeningRequirement.trim();
+    if (!requirement) {
+      setError('任务需求 / 最终产物不能为空。');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await client.startCodegenHardening(session.sessionId, { requirement });
+      await refreshSession(session.sessionId);
+    } catch (hardeningError) {
+      setError(hardeningError instanceof Error ? hardeningError.message : 'Codegen hardening failed to start.');
     } finally {
       setBusy(false);
     }
@@ -172,6 +201,29 @@ export function CodegenWorkspace({ client: injectedClient, runtimeClient }: Code
       </div>
 
       <DaemonHardeningPanel daemonRunId={session?.daemonRunId} logs={session?.logs ?? []} artifacts={session?.artifacts ?? []} />
+
+      {session?.status === 'completed' ? (
+        <form
+          className="daemon-hardening-panel"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void startHardening();
+          }}
+        >
+          <label className="field">
+            <span>任务需求 / 最终产物</span>
+            <textarea
+              value={hardeningRequirement}
+              onChange={(event) => setHardeningRequirement(event.target.value)}
+              placeholder="描述这次录制要完成的业务目标、需要泛化的参数，以及最终要输出的文件或数据。"
+              rows={4}
+            />
+          </label>
+          <button type="submit" className="command-button" disabled={busy || hardeningRequirement.trim().length === 0}>
+            生成脚本
+          </button>
+        </form>
+      ) : null}
 
       {session?.questionForm ? (
         <QuestionForm

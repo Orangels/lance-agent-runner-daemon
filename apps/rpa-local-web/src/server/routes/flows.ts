@@ -1,6 +1,7 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, rm } from 'node:fs/promises';
 import type { Express, Response } from 'express';
 import type {
+  DeleteRpaFlowResponse,
   RpaFlowDetailResponse,
   RpaFlowListResponse,
   RpaFlowSummary,
@@ -93,6 +94,17 @@ export function registerFlowRoutes(app: Express, options: RegisterFlowRoutesOpti
       sendError(res, error, options.storageRoot);
     }
   });
+
+  app.delete('/api/rpa/flows/:flowId', async (req, res) => {
+    try {
+      const flowId = parseFlowId(req.params.flowId);
+      await deleteFlowDirectory(options.storageRoot, flowId);
+      const payload: DeleteRpaFlowResponse = { flowId, deleted: true };
+      res.json(payload);
+    } catch (error) {
+      sendError(res, error, options.storageRoot);
+    }
+  });
 }
 
 async function listFlowSummaries(storageRoot: string): Promise<RpaFlowSummary[]> {
@@ -156,6 +168,18 @@ async function readDsl(filePath: string): Promise<unknown> {
       throw new RpaFlowRouteError('FLOW_ARTIFACT_MISSING', 'Flow artifact is missing: flow.dsl.json.', 404);
     }
     throw new RpaFlowRouteError('FLOW_ARTIFACT_READ_FAILED', 'Failed to read flow artifact.');
+  }
+}
+
+async function deleteFlowDirectory(storageRoot: string, flowId: string): Promise<void> {
+  const flowDir = resolveFlowDir(storageRoot, flowId);
+  try {
+    await rm(flowDir, { recursive: true });
+  } catch (error) {
+    if (isNodeError(error) && error.code === 'ENOENT') {
+      throw new RpaFlowRouteError('FLOW_NOT_FOUND', 'Flow not found.', 404);
+    }
+    throw new RpaFlowRouteError('FLOW_DELETE_FAILED', 'Failed to delete flow.');
   }
 }
 

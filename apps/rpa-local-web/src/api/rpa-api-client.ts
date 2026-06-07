@@ -1,4 +1,5 @@
 import type {
+  DeleteRpaFlowResponse,
   ImportRpaPackageResponse,
   RpaConfigResponse,
   RpaDaemonHealthResponse,
@@ -16,6 +17,8 @@ import { rpaExecutionEventTypes } from '../shared/rpa-api-types.js';
 import type {
   CancelCodegenSessionResponse,
   CodegenSessionStatusResponse,
+  StartCodegenHardeningRequest,
+  StartCodegenHardeningResponse,
   StartCodegenSessionRequest,
   StartCodegenSessionResponse,
   SubmitCodegenQuestionAnswersRequest,
@@ -83,6 +86,12 @@ export class RpaApiClient {
     return this.requestJson('/api/rpa/flows');
   }
 
+  deleteFlow(flowId: string): Promise<DeleteRpaFlowResponse> {
+    return this.requestJson(`/api/rpa/flows/${encodeURIComponent(flowId)}`, {
+      method: 'DELETE',
+    });
+  }
+
   getPackageDownloadUrl(flowId: string): string {
     return `/api/rpa/flows/${encodeURIComponent(flowId)}/package/download`;
   }
@@ -112,6 +121,16 @@ export class RpaApiClient {
   cancelCodegenSession(sessionId: string): Promise<CancelCodegenSessionResponse> {
     return this.requestJson(`/api/rpa/codegen/sessions/${encodeURIComponent(sessionId)}/cancel`, {
       method: 'POST',
+    });
+  }
+
+  startCodegenHardening(
+    sessionId: string,
+    request: StartCodegenHardeningRequest,
+  ): Promise<StartCodegenHardeningResponse> {
+    return this.requestJson(`/api/rpa/codegen/sessions/${encodeURIComponent(sessionId)}/harden`, {
+      method: 'POST',
+      body: JSON.stringify(request),
     });
   }
 

@@ -10,6 +10,7 @@ import { isKnownToolStateArtifactPath } from '../../shared/artifact-paths.js';
 import { resolveFlowsRoot, safeFlowId, writeFlowLocalMetadata } from '../flow-store.js';
 import { validateGenerationArtifacts } from '../validators/artifact-validator.js';
 import { validateRpaDsl } from '../validators/dsl-validator.js';
+import { canonicalizeGeneratedRpaDsl } from '../validators/generated-dsl-normalizer.js';
 
 export interface GenerationArtifactDaemonClient {
   listRunArtifacts(runId: string): Promise<ArtifactsResponse>;
@@ -20,6 +21,7 @@ export interface PersistRequiredGenerationArtifactsInput {
   daemonClient: GenerationArtifactDaemonClient;
   storageRoot: string;
   flowId: string;
+  flowName?: string;
   runId: string;
   tempSuffix: string;
   generator: RpaPackageManifest['generator'];
@@ -91,8 +93,15 @@ export async function persistRequiredGenerationArtifacts(
       await writeFile(path.join(tempFlowDir, flowRelativePath), await response.text(), 'utf8');
     }
 
-    const dsl = JSON.parse(await readFile(path.join(tempFlowDir, 'flow.dsl.json'), 'utf8')) as unknown;
-    const dslValidation = validateRpaDsl(dsl);
+    const dslPath = path.join(tempFlowDir, 'flow.dsl.json');
+    const dsl = JSON.parse(await readFile(dslPath, 'utf8')) as unknown;
+    const canonicalDsl = applyGeneratedFlowMetadata(canonicalizeGeneratedRpaDsl(dsl).dsl, {
+      flowId: input.flowId,
+      flowName: input.flowName,
+    });
+    await writeFile(dslPath, `${JSON.stringify(canonicalDsl, null, 2)}\n`, 'utf8');
+
+    const dslValidation = validateRpaDsl(canonicalDsl);
     if (!dslValidation.ok) {
       throw new GenerationArtifactError(
         'DSL_INVALID',
@@ -120,6 +129,21 @@ export async function persistRequiredGenerationArtifacts(
 
 function isKnownToolStateArtifact(relativePath: string): boolean {
   return isKnownToolStateArtifactPath(relativePath, { outputPrefix: true });
+}
+
+function applyGeneratedFlowMetadata(input: unknown, metadata: { flowId: string; flowName?: string }): unknown {
+  if (!isRecord(input) || !isRecord(input.meta)) {
+    return input;
+  }
+  const existingTitle = typeof input.meta.title === 'string' ? input.meta.title.trim() : '';
+  const submittedTitle = metadata.flowName?.trim();
+  return {
+    ...input,
+    meta: {
+      ...input.meta,
+      title: submittedTitle || existingTitle || metadata.flowId,
+    },
+  };
 }
 
 function flowRelativePathForGenerationArtifact(artifact: RpaGenerationArtifact): string {
@@ -167,4 +191,8 @@ async function replaceFinalFlowDir(tempFlowDir: string, finalFlowDir: string): P
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && 'code' in error;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

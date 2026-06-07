@@ -10,7 +10,8 @@ import type {
 const allowedQuestionTypes = new Set<RpaQuestionType>(['text', 'textarea', 'radio', 'checkbox', 'select']);
 const choiceQuestionTypes = new Set<RpaChoiceQuestion['type']>(['radio', 'checkbox', 'select']);
 const questionFormBlockPattern =
-  /(?:^|\r?\n)[ \t]*<question-form\b([^>]*)>[ \t]*(?:\r?\n)?([\s\S]*?)(?:\r?\n)?[ \t]*<\/question-form>[ \t]*(?=\r?\n|$)/;
+  /(?:^|\r?\n)[ \t]*<question-form\b([^>]*)>[ \t]*(?:\r?\n)?/g;
+const questionFormClosePattern = /(?:\r?\n)?[ \t]*<\/question-form>[ \t]*(?=\r?\n|$)/g;
 
 export class QuestionFormParseError extends Error {
   readonly code = 'QUESTION_FORM_INVALID';
@@ -22,19 +23,51 @@ export class QuestionFormParseError extends Error {
 }
 
 export function parseQuestionFormFromTranscript(transcript: string): RpaQuestionForm | null {
-  const match = questionFormBlockPattern.exec(transcript);
-  if (!match) return null;
+  const candidates = findQuestionFormCandidates(transcript);
+  if (candidates.length === 0) return null;
 
-  const attrs = match[1] ?? '';
-  const parsed = parsePayload(match[2] ?? '');
+  let lastError: QuestionFormParseError | undefined;
+  for (const candidate of candidates.reverse()) {
+    try {
+      return parseQuestionFormCandidate(candidate);
+    } catch (error) {
+      if (error instanceof QuestionFormParseError) {
+        lastError = error;
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  throw lastError ?? new QuestionFormParseError('Question form payload is invalid.');
+}
+
+function findQuestionFormCandidates(transcript: string): Array<{ attrs: string; body: string }> {
+  const candidates: Array<{ attrs: string; body: string }> = [];
+  for (const match of transcript.matchAll(questionFormBlockPattern)) {
+    const bodyStart = match.index + match[0].length;
+    questionFormClosePattern.lastIndex = bodyStart;
+    const close = questionFormClosePattern.exec(transcript);
+    if (!close) continue;
+    candidates.push({
+      attrs: match[1] ?? '',
+      body: transcript.slice(bodyStart, close.index),
+    });
+  }
+  questionFormClosePattern.lastIndex = 0;
+  return candidates;
+}
+
+function parseQuestionFormCandidate(candidate: { attrs: string; body: string }): RpaQuestionForm {
+  const parsed = parsePayload(candidate.body);
   if (!isRecord(parsed) || !Array.isArray(parsed.questions)) {
     throw new QuestionFormParseError('Question form payload is invalid: questions array is required.');
   }
 
   return {
-    formId: readAttr(attrs, 'id') ?? 'rpa-question-form',
-    version: readString(parsed.version) ?? readAttr(attrs, 'version'),
-    title: readString(parsed.title) ?? readAttr(attrs, 'title'),
+    formId: readAttr(candidate.attrs, 'id') ?? 'rpa-question-form',
+    version: readString(parsed.version) ?? readAttr(candidate.attrs, 'version'),
+    title: readString(parsed.title) ?? readAttr(candidate.attrs, 'title'),
     description: readString(parsed.description),
     questions: parsed.questions.map(parseQuestion),
   };

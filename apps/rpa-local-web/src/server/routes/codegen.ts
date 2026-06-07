@@ -1,5 +1,6 @@
 import type { Express, Response } from 'express';
 import type {
+  StartCodegenHardeningRequest,
   StartCodegenSessionRequest,
   SubmitCodegenQuestionAnswersRequest,
 } from '../../shared/codegen-types.js';
@@ -57,7 +58,6 @@ export function registerCodegenRoutes(app: Express, options: RegisterCodegenRout
           activeRecordings.delete(session.sessionId);
           if (result.status === 'cancelled') return;
           await options.store.transition(session.sessionId, 'completed');
-          await options.workflow.startHardening(session.sessionId);
         })
         .catch(async (error) => {
           activeRecordings.delete(session.sessionId);
@@ -65,6 +65,21 @@ export function registerCodegenRoutes(app: Express, options: RegisterCodegenRout
         });
 
       res.status(202).json(await options.store.getPublicSession(session.sessionId));
+    } catch (error) {
+      sendError(res, error, options.storageRoot);
+    }
+  });
+
+  app.post('/api/rpa/codegen/sessions/:sessionId/harden', async (req, res) => {
+    const sessionId = String(req.params.sessionId);
+    try {
+      const request = parseHardenBody(req.body);
+      await claimHardening(options.store, sessionId, request.requirement);
+
+      void options.workflow.startHardening(sessionId).catch(async (error) => {
+        await markFailed(options.store, sessionId, routeErrorCode(error), routeErrorMessage(error));
+      });
+      res.status(202).json(await options.store.getPublicSession(sessionId));
     } catch (error) {
       sendError(res, error, options.storageRoot);
     }
@@ -109,6 +124,17 @@ export function registerCodegenRoutes(app: Express, options: RegisterCodegenRout
       sendError(res, error, options.storageRoot);
     }
   });
+}
+
+async function claimHardening(store: CodegenSessionStore, sessionId: string, requirement: string) {
+  try {
+    return await store.claimHardening(sessionId, requirement);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('must be completed before hardening')) {
+      throw new CodegenRouteError('SESSION_NOT_READY', 'Codegen session must be completed before hardening.');
+    }
+    throw error;
+  }
 }
 
 async function createSession(store: CodegenSessionStore, request: StartCodegenSessionRequest) {
@@ -160,6 +186,16 @@ function parseStartBody(body: unknown): StartCodegenSessionRequest {
     flowId: body.flowId,
     flowName: body.flowName,
   };
+}
+
+function parseHardenBody(body: unknown): StartCodegenHardeningRequest {
+  if (!isRecord(body)) {
+    throw new CodegenRouteError('INVALID_REQUEST', 'Request body must be a JSON object.');
+  }
+  if (typeof body.requirement !== 'string' || body.requirement.trim().length === 0) {
+    throw new CodegenRouteError('INVALID_REQUEST', 'requirement is required.');
+  }
+  return { requirement: body.requirement.trim() };
 }
 
 function parseAnswersBody(body: unknown): SubmitCodegenQuestionAnswersRequest {

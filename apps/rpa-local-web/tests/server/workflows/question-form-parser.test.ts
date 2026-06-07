@@ -100,6 +100,51 @@ Need to confirm the workflow details.
     });
   });
 
+  it('uses the last valid form when an abandoned draft block appears earlier in the transcript', () => {
+    const form = parseQuestionFormFromTranscript(`I started a draft form.
+
+<question-form id="rpa-parameterization" version="rpa-question-form.v0.1">
+{
+  "version": "rpa-question-form.v0.1",
+  "questions": [
+    { "id": "bad", "type": "radio", "label": "Broken", "options": [
+      { "label": "This string is abandoned
+
+Now I will ask a complete form.
+
+<question-form id="rpa-parameterization" title="确认参数" version="rpa-question-form.v0.1">
+{
+  "version": "rpa-question-form.v0.1",
+  "questions": [
+    {
+      "id": "city",
+      "type": "radio",
+      "label": "城市定位方式",
+      "options": [
+        { "label": "城市编码直达", "value": "by_city_code" },
+        { "label": "首页搜索", "value": "by_search" }
+      ]
+    }
+  ]
+}
+</question-form>`);
+
+    expect(form).toMatchObject({
+      formId: 'rpa-parameterization',
+      title: '确认参数',
+      questions: [
+        {
+          id: 'city',
+          type: 'radio',
+          options: [
+            { label: '城市编码直达', value: 'by_city_code' },
+            { label: '首页搜索', value: 'by_search' },
+          ],
+        },
+      ],
+    });
+  });
+
   it('accepts lanceDesign-style type aliases, string options, and single-quoted attrs', () => {
     const form = parseQuestionFormFromTranscript(`<question-form id='rpa-parameterization' title='参数确认' version='rpa-question-form.v0.1'>
 {

@@ -45,7 +45,7 @@ describe('codegen hardening workflow', () => {
   it('creates a per-session daemon workspace, uploads flow.py, and creates a business-context run', async () => {
     const { daemon, session, workflow } = await createHarness();
 
-    await workflow.startHardening(session.sessionId);
+    await workflow.startHardening(session.sessionId, { requirement: '查询案件并导出 JSON。' });
 
     expect(daemon.createWorkspace).toHaveBeenCalledWith({
       profileId: 'rpa-local',
@@ -81,6 +81,15 @@ describe('codegen hardening workflow', () => {
           stage: 'codegen-hardening',
           codegenSessionId: 'cg_abc123',
           flowId: 'case_query',
+          flowName: 'Case query',
+          userRequirement: {
+            text: '查询案件并导出 JSON。',
+            required: true,
+          },
+          exploration: {
+            chromeDevtoolsMcp: 'profile-provided',
+            preferredServerName: 'cdt',
+          },
           inputFiles: ['input/flow.py'],
         }),
       }),
@@ -91,7 +100,7 @@ describe('codegen hardening workflow', () => {
   it('downloads required artifacts and writes a valid final flow', async () => {
     const { session, storageRoot, store, workflow } = await createHarness();
 
-    await workflow.startHardening(session.sessionId);
+    await workflow.startHardening(session.sessionId, { requirement: '查询案件并导出 JSON。' });
 
     for (const name of requiredGenerationArtifactNames) {
       await expect(readFile(path.join(storageRoot, 'flows', 'case_query', name), 'utf8')).resolves.toContain(
@@ -115,7 +124,7 @@ describe('codegen hardening workflow', () => {
       { type: 'end', status: 'succeeded' },
     ]);
 
-    await workflow.startHardening(session.sessionId);
+    await workflow.startHardening(session.sessionId, { requirement: '查询案件并导出 JSON。' });
 
     const updated = await store.getSession(session.sessionId);
     expect(updated.status).toBe('needs_input');
@@ -134,7 +143,7 @@ describe('codegen hardening workflow', () => {
       { type: 'text_delta', delta: questionForm },
       { type: 'end', status: 'succeeded' },
     ]);
-    await workflow.startHardening(session.sessionId);
+    await workflow.startHardening(session.sessionId, { requirement: '查询案件并导出 JSON。' });
     daemon.events = successfulEvents();
 
     await workflow.submitQuestionAnswers(session.sessionId, {
@@ -154,6 +163,11 @@ describe('codegen hardening workflow', () => {
         businessContext: expect.objectContaining({
           stage: 'codegen-hardening-follow-up',
           previousRunId: 'run_1',
+          flowName: 'Case query',
+          userRequirement: {
+            text: '查询案件并导出 JSON。',
+            required: true,
+          },
           formAnswers: { date: '2026-06-06' },
         }),
       }),
@@ -164,7 +178,7 @@ describe('codegen hardening workflow', () => {
   it('fails the session when artifacts are present but DSL is invalid', async () => {
     const { session, store, workflow } = await createHarness(successfulEvents({ invalidDsl: true }));
 
-    await workflow.startHardening(session.sessionId);
+    await workflow.startHardening(session.sessionId, { requirement: '查询案件并导出 JSON。' });
 
     await expect(store.getSession(session.sessionId)).resolves.toMatchObject({
       status: 'failed',
@@ -175,7 +189,7 @@ describe('codegen hardening workflow', () => {
   it('does not leave a final flow directory behind when DSL validation fails', async () => {
     const { session, storageRoot, workflow } = await createHarness(successfulEvents({ invalidDsl: true }));
 
-    await workflow.startHardening(session.sessionId);
+    await workflow.startHardening(session.sessionId, { requirement: '查询案件并导出 JSON。' });
 
     await expect(readdir(path.join(storageRoot, 'flows', 'case_query'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
@@ -184,7 +198,7 @@ describe('codegen hardening workflow', () => {
     const { daemon, session, store, workflow } = await createHarness();
     daemon.downloadArtifact.mockResolvedValueOnce(new Response('missing', { status: 404 }));
 
-    await workflow.startHardening(session.sessionId);
+    await workflow.startHardening(session.sessionId, { requirement: '查询案件并导出 JSON。' });
 
     await expect(store.getSession(session.sessionId)).resolves.toMatchObject({
       status: 'failed',
@@ -195,7 +209,7 @@ describe('codegen hardening workflow', () => {
   it('fails the session when the daemon run ends failed', async () => {
     const { session, store, workflow } = await createHarness([{ type: 'end', status: 'failed' }]);
 
-    await workflow.startHardening(session.sessionId);
+    await workflow.startHardening(session.sessionId, { requirement: '查询案件并导出 JSON。' });
 
     await expect(store.getSession(session.sessionId)).resolves.toMatchObject({
       status: 'failed',
@@ -212,7 +226,7 @@ describe('codegen hardening workflow', () => {
       ],
     });
 
-    await workflow.startHardening(session.sessionId);
+    await workflow.startHardening(session.sessionId, { requirement: '查询案件并导出 JSON。' });
 
     await expect(store.getSession(session.sessionId)).resolves.toMatchObject({
       status: 'failed',
@@ -225,7 +239,7 @@ describe('codegen hardening workflow', () => {
     const { daemon, session, workflow } = await createHarness([
       { type: 'status', label: 'running' },
     ]);
-    const running = workflow.startHardening(session.sessionId);
+    const running = workflow.startHardening(session.sessionId, { requirement: '查询案件并导出 JSON。' });
     await vi.waitFor(() => expect(daemon.createRun).toHaveBeenCalled());
 
     await workflow.cancel(session.sessionId);
@@ -239,7 +253,7 @@ describe('codegen hardening workflow', () => {
     const { daemon, session, store, workflow } = await createHarness([
       { type: 'status', label: 'running' },
     ]);
-    const running = workflow.startHardening(session.sessionId);
+    const running = workflow.startHardening(session.sessionId, { requirement: '查询案件并导出 JSON。' });
     await vi.waitFor(() => expect(daemon.createRun).toHaveBeenCalled());
 
     await workflow.cancel(session.sessionId);
@@ -263,7 +277,7 @@ describe('codegen hardening workflow', () => {
       { type: 'text_delta', delta: firstForm },
       { type: 'end', status: 'succeeded' },
     ]);
-    await workflow.startHardening(session.sessionId);
+    await workflow.startHardening(session.sessionId, { requirement: '查询案件并导出 JSON。' });
     daemon.events = [
       { type: 'text_delta', delta: secondForm },
       { type: 'end', status: 'succeeded' },

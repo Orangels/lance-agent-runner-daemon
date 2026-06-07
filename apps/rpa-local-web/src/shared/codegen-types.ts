@@ -49,6 +49,16 @@ export interface StartCodegenSessionResponse {
   recording: CodegenSessionRecordingSummary;
 }
 
+export interface StartCodegenHardeningRequest {
+  requirement: string;
+}
+
+export interface StartCodegenHardeningResponse {
+  sessionId: string;
+  status: CodegenSessionStatus;
+  daemonRunId?: string;
+}
+
 export interface CodegenArtifactSummary {
   artifactId: string;
   fileName: string;
@@ -61,6 +71,7 @@ export interface CodegenSessionStatusResponse {
   flowId: string;
   status: CodegenSessionStatus;
   targetUrl: string;
+  requirement?: string;
   daemonRunId?: string;
   workspaceId?: string;
   conversationId?: string;

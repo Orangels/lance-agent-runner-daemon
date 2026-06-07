@@ -46,6 +46,8 @@ export function validateRpaDsl(input: unknown): ValidationResult {
   }
   if (!isRecord(input.meta)) {
     errors.push(errorIssue('META_REQUIRED', 'meta', 'meta must be an object.'));
+  } else if (typeof input.meta.title !== 'string' || input.meta.title.trim().length === 0) {
+    errors.push(errorIssue('META_TITLE_REQUIRED', 'meta.title', 'meta.title must be a non-empty string.'));
   }
   if (!isRecord(input.params)) {
     errors.push(errorIssue('PARAMS_REQUIRED', 'params', 'params must be an object.'));
