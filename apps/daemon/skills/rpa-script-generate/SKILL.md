@@ -141,7 +141,7 @@ notes/
   `flow.hardened.py --mode verify|run --params <executionDir>/run.params.json --execution-dir <executionDir> [--dry-run] [--headed|--headless]`。
 - `--mode verify|dry-run|run`，其中 executor 只传 `verify|run`，脚本可额外兼容 `dry-run`。
 - `--execution-dir <executionDir>`，所有审计日志、截图、trace、录像、下载等执行期产物必须写入该目录下。
-- 业务结果文件必须写入 `config["downloads"]["dir"]`，例如 `Path(config["downloads"]["dir"]) / "weather.json"`；不要写到 `Path(execution_dir) / "weather.json"` 这类 execution 根目录路径。
+- 业务结果文件必须写入 `config["downloads"]["dir"]`，例如 `Path(config["downloads"]["dir"]) / "result.json"`；不要写到 `Path(execution_dir) / "result.json"` 这类 execution 根目录路径。
 - `--dry-run`，即使 `--mode run` 也必须强制跳过或暂停不可逆写操作。
 - `--headed` / `--headless`，覆盖配置文件和 mode 默认值。
 - 可选 `--config <path>`；未传时默认读取脚本同目录的 `config.example.json`，不要假设执行目录里有 `config.json`。

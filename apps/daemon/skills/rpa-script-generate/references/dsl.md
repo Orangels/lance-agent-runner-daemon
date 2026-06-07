@@ -109,7 +109,7 @@ path | file | url | text | textarea | datetime | array | object
 - `click | input | select | submit | assert` 类型 step 必须有页面元素 `target`。
 - 不要输出 `action: "assert"` 且 `target: null`；这会被 RPA Web 校验为 `STEP_TARGET_REQUIRED`。
 - 本地结果保存、审计日志、截图、trace、运行时 JSON 落盘不是页面元素操作，优先不要作为 DSL step；在脚本审计日志、executor artifact、`hardening-report.md` 中体现。业务结果 JSON/CSV/XLSX/PDF/TXT 应写入 `runtime/downloads/`，这样 RPA Web 才能作为下载产物识别。
-- 如果确实需要在 DSL 中保留“本地产物已生成”的可视化步骤，使用 `action: "wait"`，省略 step-level `target`，并用 `assert: [{ "type": "download_exists", "value": "weather.json" }]` 表达产物存在性。
+- 如果确实需要在 DSL 中保留“本地产物已生成”的可视化步骤，使用 `action: "wait"`，省略 step-level `target`，并用 `assert: [{ "type": "download_exists", "value": "result.json" }]` 表达产物存在性。
 
 ## Target 规则
 
