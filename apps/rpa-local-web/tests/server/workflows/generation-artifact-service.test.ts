@@ -252,6 +252,98 @@ describe('generation artifact service', () => {
     );
   });
 
+  it('uses the submitted flow name as the persisted DSL title', async () => {
+    const storageRoot = await createStorageRoot();
+    const daemonClient = createDaemonClient({
+      artifacts: { artifacts: generationArtifacts() },
+      bodies: {
+        'flow.dsl.json': JSON.stringify({
+          ...createMinimalRpaDsl(),
+          flow_id: 'case_query',
+          meta: {
+            title: '模型自己生成的标题',
+            source: 'codegen',
+          },
+        }),
+      },
+    });
+
+    await persistRequiredGenerationArtifacts({
+      daemonClient,
+      storageRoot,
+      flowId: 'case_query',
+      flowName: '用户填写的流程名称',
+      runId: 'run_title',
+      tempSuffix: 'title_dsl',
+      generator: { mode: 'codegen', skillId: 'playwright-rpa-harden', daemonRunId: 'run_title' },
+    });
+
+    await expect(readFile(path.join(storageRoot, 'flows', 'case_query', 'flow.dsl.json'), 'utf8')).resolves.toContain(
+      '"title": "用户填写的流程名称"',
+    );
+  });
+
+  it('keeps the generated DSL title when the submitted flow name is blank', async () => {
+    const storageRoot = await createStorageRoot();
+    const daemonClient = createDaemonClient({
+      artifacts: { artifacts: generationArtifacts() },
+      bodies: {
+        'flow.dsl.json': JSON.stringify({
+          ...createMinimalRpaDsl(),
+          flow_id: 'case_query',
+          meta: {
+            title: '模型自己生成的标题',
+            source: 'codegen',
+          },
+        }),
+      },
+    });
+
+    await persistRequiredGenerationArtifacts({
+      daemonClient,
+      storageRoot,
+      flowId: 'case_query',
+      flowName: '   ',
+      runId: 'run_blank_title',
+      tempSuffix: 'blank_title_dsl',
+      generator: { mode: 'codegen', skillId: 'playwright-rpa-harden', daemonRunId: 'run_blank_title' },
+    });
+
+    await expect(readFile(path.join(storageRoot, 'flows', 'case_query', 'flow.dsl.json'), 'utf8')).resolves.toContain(
+      '"title": "模型自己生成的标题"',
+    );
+  });
+
+  it('falls back to flow id when both submitted flow name and generated DSL title are blank', async () => {
+    const storageRoot = await createStorageRoot();
+    const daemonClient = createDaemonClient({
+      artifacts: { artifacts: generationArtifacts() },
+      bodies: {
+        'flow.dsl.json': JSON.stringify({
+          ...createMinimalRpaDsl(),
+          flow_id: 'case_query',
+          meta: {
+            title: '',
+            source: 'codegen',
+          },
+        }),
+      },
+    });
+
+    await persistRequiredGenerationArtifacts({
+      daemonClient,
+      storageRoot,
+      flowId: 'case_query',
+      runId: 'run_flow_id_title',
+      tempSuffix: 'flow_id_title_dsl',
+      generator: { mode: 'codegen', skillId: 'playwright-rpa-harden', daemonRunId: 'run_flow_id_title' },
+    });
+
+    await expect(readFile(path.join(storageRoot, 'flows', 'case_query', 'flow.dsl.json'), 'utf8')).resolves.toContain(
+      '"title": "case_query"',
+    );
+  });
+
   it('fails before downloading when a required artifact is missing', async () => {
     const storageRoot = await createStorageRoot();
     const daemonClient = createDaemonClient({

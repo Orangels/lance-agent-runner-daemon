@@ -59,6 +59,7 @@ RPA Web 通常没有真实 AskQuestion 工具；此时使用 RPA Web 的 `<quest
 优先从用户输入中提取：
 
 - 目标系统入口 URL。
+- `businessContext.flowName`：用户在 RPA Web 中填写的流程显示名称；生成 DSL 时必须作为 `meta.title`。
 - 业务目标和完成标准。
 - 登录、验证码、CA、USB-Key、人工确认等前置条件。
 - 查询、下载、提交、删除、导入等写操作风险。
@@ -119,6 +120,7 @@ notes/
 
 要求：
 
+- `meta.title` 必须优先使用 `businessContext.flowName`；只有该字段缺失或为空时，才根据业务目标生成简短标题。
 - `meta.source` 固定为 `nl`。
 - `params` 只放参数定义和默认值策略，不放真实敏感值。
 - `params.*.type` 只能使用 DSL v0.1 支持的枚举：`string | number | date | boolean | select | secret`。不要输出 `path`、`file`、`url`、`text`、`textarea`、`datetime`、`array`、`object` 等未列出的类型。

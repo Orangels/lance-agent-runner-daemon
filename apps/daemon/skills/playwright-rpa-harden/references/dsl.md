@@ -6,6 +6,7 @@
 
 - `dsl_version`：当前 MVP contract 为 `"rpa-dsl.v0.1"`。
 - `flow_id`：稳定流程 id，只使用小写字母、数字、下划线。
+- `meta.title`：流程显示名称；优先使用 `businessContext.flowName`，不要自行改写用户填写的名称。
 - `meta.source`：codegen 加固使用 `"codegen"`。
 - `params`：运行时业务参数定义。
 - `context`：部署环境配置引用。

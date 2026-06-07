@@ -103,6 +103,7 @@ export function createCodegenHardeningWorkflow(options: CodegenHardeningWorkflow
         stage: 'codegen-hardening',
         codegenSessionId: session.sessionId,
         flowId: session.flowId,
+        flowName: session.flowName,
         targetUrl: session.targetUrl,
         userRequirement: {
           text: requirement,
@@ -169,6 +170,7 @@ export function createCodegenHardeningWorkflow(options: CodegenHardeningWorkflow
         stage: 'codegen-hardening-follow-up',
         codegenSessionId: session.sessionId,
         flowId: session.flowId,
+        flowName: session.flowName,
         previousRunId: session.daemonRunId,
         userRequirement: {
           text: session.requirement,
@@ -250,6 +252,7 @@ export function createCodegenHardeningWorkflow(options: CodegenHardeningWorkflow
       daemonClient,
       storageRoot: options.storageRoot,
       flowId: session.flowId,
+      flowName: session.flowName,
       runId,
       tempSuffix: session.sessionId,
       generator: {

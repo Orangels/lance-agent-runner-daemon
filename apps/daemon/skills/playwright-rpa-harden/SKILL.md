@@ -18,6 +18,7 @@ argument-hint: "[input/flow.py 或 input/flow.dsl.json]"
 - `input/flow.dsl.json`：已经存在的步骤 DSL。
 - `input/config.example.json`：可选的配置样例。
 - `businessContext.userRequirement.text`：用户在录制完成后补充的任务目标、泛化要求和最终产物说明；codegen 加固模式下视为必填业务输入。
+- `businessContext.flowName`：用户在 RPA Web 中填写的流程显示名称；生成 DSL 时必须作为 `meta.title`。
 - 用户补充的业务说明、参数化要求、人工介入说明。
 
 如果同时存在 DSL 和脚本，优先以 DSL 为主，原始脚本作为定位和顺序证据。
@@ -92,6 +93,7 @@ RPA Web 通常没有真实 AskQuestion 工具；此时使用 RPA Web 的 `<quest
 按 `references/dsl.md` 输出统一结构：
 
 - `meta.source` 使用 `"codegen"`。
+- `meta.title` 必须优先使用 `businessContext.flowName`；只有该字段缺失或为空时，才根据业务目标生成简短标题。
 - step id 稳定递增，如 `s1`、`s2`。
 - 每个 step 有用户可读 `name`。
 - 写操作标记 `write: true`。

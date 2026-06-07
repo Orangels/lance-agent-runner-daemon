@@ -81,6 +81,7 @@ describe('codegen hardening workflow', () => {
           stage: 'codegen-hardening',
           codegenSessionId: 'cg_abc123',
           flowId: 'case_query',
+          flowName: 'Case query',
           userRequirement: {
             text: '查询案件并导出 JSON。',
             required: true,
@@ -162,6 +163,7 @@ describe('codegen hardening workflow', () => {
         businessContext: expect.objectContaining({
           stage: 'codegen-hardening-follow-up',
           previousRunId: 'run_1',
+          flowName: 'Case query',
           userRequirement: {
             text: '查询案件并导出 JSON。',
             required: true,
