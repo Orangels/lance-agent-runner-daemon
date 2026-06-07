@@ -170,6 +170,7 @@ role > label > placeholder > text > testid > id > css
 交付前检查：
 
 - `output/flow.dsl.json` 是合法 JSON。
+- `steps[].assert[].type` 全部属于 `visible | hidden | text_contains | url_contains | download_exists | row_count_gt`，不存在 `min_count`、`date_in_range`、`url_matches` 等未支持断言类型。
 - `output/flow.hardened.py` 不包含真实认证材料。
 - 没有固定 `time.sleep` 作为主要等待策略。
 - 没有坐标点击作为最终定位。

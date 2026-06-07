@@ -10,6 +10,7 @@ import { isKnownToolStateArtifactPath } from '../../shared/artifact-paths.js';
 import { resolveFlowsRoot, safeFlowId, writeFlowLocalMetadata } from '../flow-store.js';
 import { validateGenerationArtifacts } from '../validators/artifact-validator.js';
 import { validateRpaDsl } from '../validators/dsl-validator.js';
+import { canonicalizeGeneratedRpaDsl } from '../validators/generated-dsl-normalizer.js';
 
 export interface GenerationArtifactDaemonClient {
   listRunArtifacts(runId: string): Promise<ArtifactsResponse>;
@@ -91,8 +92,12 @@ export async function persistRequiredGenerationArtifacts(
       await writeFile(path.join(tempFlowDir, flowRelativePath), await response.text(), 'utf8');
     }
 
-    const dsl = JSON.parse(await readFile(path.join(tempFlowDir, 'flow.dsl.json'), 'utf8')) as unknown;
-    const dslValidation = validateRpaDsl(dsl);
+    const dslPath = path.join(tempFlowDir, 'flow.dsl.json');
+    const dsl = JSON.parse(await readFile(dslPath, 'utf8')) as unknown;
+    const canonicalDsl = canonicalizeGeneratedRpaDsl(dsl).dsl;
+    await writeFile(dslPath, `${JSON.stringify(canonicalDsl, null, 2)}\n`, 'utf8');
+
+    const dslValidation = validateRpaDsl(canonicalDsl);
     if (!dslValidation.ok) {
       throw new GenerationArtifactError(
         'DSL_INVALID',

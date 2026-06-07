@@ -213,6 +213,45 @@ describe('generation artifact service', () => {
     await expect(readdir(`${finalFlowDir}.tmp-bad_dsl`)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('canonicalizes safe generated DSL assertion aliases before persisting the flow', async () => {
+    const storageRoot = await createStorageRoot();
+    const daemonClient = createDaemonClient({
+      artifacts: { artifacts: generationArtifacts() },
+      bodies: {
+        'flow.dsl.json': JSON.stringify({
+          ...createMinimalRpaDsl(),
+          steps: [
+            {
+              id: 's1',
+              name: '确认预报列表',
+              action: 'assert',
+              target: { by: 'css', css: '[id="7d"] ul.t li' },
+              assert: [{ type: 'min_count', target: { by: 'css', css: '[id="7d"] ul.t li' }, value: 1 }],
+              write: false,
+              manual: null,
+            },
+          ],
+        }),
+      },
+    });
+
+    await persistRequiredGenerationArtifacts({
+      daemonClient,
+      storageRoot,
+      flowId: 'case_query',
+      runId: 'run_alias',
+      tempSuffix: 'alias_dsl',
+      generator: { mode: 'codegen', skillId: 'playwright-rpa-harden', daemonRunId: 'run_alias' },
+    });
+
+    await expect(readFile(path.join(storageRoot, 'flows', 'case_query', 'flow.dsl.json'), 'utf8')).resolves.toContain(
+      '"type": "row_count_gt"',
+    );
+    await expect(readFile(path.join(storageRoot, 'flows', 'case_query', 'flow.dsl.json'), 'utf8')).resolves.not.toContain(
+      '"type": "min_count"',
+    );
+  });
+
   it('fails before downloading when a required artifact is missing', async () => {
     const storageRoot = await createStorageRoot();
     const daemonClient = createDaemonClient({

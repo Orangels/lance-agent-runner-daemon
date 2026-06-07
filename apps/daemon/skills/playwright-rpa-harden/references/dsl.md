@@ -58,6 +58,27 @@ path | file | url | text | textarea | datetime | array | object
 - For `write: true`, emit `idempotency_key` whenever a stable business key is known. If no idempotency key is available, document the risk in `hardening-report.md`.
 - Wait keys supported by DSL v0.1 are `visible`, `enabled`, `url_changes`, `url_contains`, `network_idle`, `download`, `toast`, and `table_loaded`.
 
+## Assert 类型枚举
+
+DSL v0.1 只支持以下 `assert[].type`：
+
+```text
+visible | hidden | text_contains | url_contains | download_exists | row_count_gt
+```
+
+禁止输出任何未列出的断言类型，包括但不限于：
+
+```text
+min_count | date_in_range | url_matches | element_count | json_schema | custom
+```
+
+说明：
+
+- 列表数量校验使用 `row_count_gt`，不要发明 `min_count`。
+- URL 校验使用 `url_contains`，不要发明 `url_matches`。
+- 业务级判断（例如目标日期是否在 7 天预报范围内、JSON 字段是否满足业务规则）放在 `flow.hardened.py` 的运行逻辑、审计日志和 `hardening-report.md` 中，不要发明新的 DSL assert type。
+- 如果 DSL 只需要表达“页面上已经有可提取数据”，使用 `visible`、`text_contains` 或 `row_count_gt` 组合表达。
+
 ## 加固要求
 
 - 从 codegen 反抽 DSL 时保留原始业务顺序。

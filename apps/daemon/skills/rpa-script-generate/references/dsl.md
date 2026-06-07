@@ -169,6 +169,19 @@ path | url | file | download | coordinate | selector
 - `row_count_gt`
 - `download_exists`
 
+这些是 DSL v0.1 支持的完整 `assert[].type` 枚举。禁止输出任何未列出的断言类型，包括但不限于：
+
+```text
+min_count | date_in_range | url_matches | element_count | json_schema | custom
+```
+
+说明：
+
+- 列表数量校验使用 `row_count_gt`，不要发明 `min_count`。
+- URL 校验使用 `url_contains`，不要发明 `url_matches`。
+- 业务级判断（例如目标日期是否在 7 天预报范围内、JSON 字段是否满足业务规则）放在 `flow.hardened.py` 的运行逻辑、审计日志和 `hardening-report.md` 中，不要发明新的 DSL assert type。
+- 如果 DSL 只需要表达“页面上已经有可提取数据”，使用 `visible`、`text_contains` 或 `row_count_gt` 组合表达。
+
 ## 写操作
 
 涉及查询提交、保存、导出、删除、审批、导入等动作时：
