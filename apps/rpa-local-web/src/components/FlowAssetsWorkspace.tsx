@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Download, Upload } from 'lucide-react';
+import { Download, Trash2, Upload } from 'lucide-react';
 import { RpaApiClient } from '../api/rpa-api-client.js';
 import type {
+  DeleteRpaFlowResponse,
   ImportRpaPackageResponse,
   RpaFlowDetailResponse,
   RpaFlowListResponse,
@@ -13,6 +14,7 @@ import { StatusBadge } from './StatusBadge.js';
 export interface FlowAssetsApiClient {
   listFlows(): Promise<RpaFlowListResponse>;
   getFlow(flowId: string): Promise<RpaFlowDetailResponse>;
+  deleteFlow(flowId: string): Promise<DeleteRpaFlowResponse>;
   getPackageDownloadUrl(flowId: string): string;
   importPackage(file: File): Promise<ImportRpaPackageResponse>;
 }
@@ -97,6 +99,30 @@ export function FlowAssetsWorkspace({ client: injectedClient, runtimeClient }: F
     }
   };
 
+  const deleteFlow = async (summary: RpaFlowSummary) => {
+    const confirmed = window.confirm(
+      `Delete flow "${summary.title}" (${summary.flowId})? This removes local flow artifacts but keeps execution history.`,
+    );
+    if (!confirmed) return;
+
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await client.deleteFlow(summary.flowId);
+      if (flow?.flowId === summary.flowId) {
+        setFlow(null);
+        setVerificationMode(null);
+      }
+      setMessage(`Deleted ${summary.flowId}.`);
+      await refreshFlows();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Flow delete failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const canRun = flow !== null && flow.provenance.requiresVerifyBeforeRun === false;
 
   const startFlowExecution = (nextMode: 'verify' | 'run') => {
@@ -171,6 +197,18 @@ export function FlowAssetsWorkspace({ client: injectedClient, runtimeClient }: F
                         <Download aria-hidden="true" />
                         <span>Export</span>
                       </a>
+                      <button
+                        type="button"
+                        className="command-button command-button--secondary"
+                        aria-label={`Delete ${summary.flowId}`}
+                        disabled={busy}
+                        onClick={() => {
+                          void deleteFlow(summary);
+                        }}
+                      >
+                        <Trash2 aria-hidden="true" />
+                        <span>Delete</span>
+                      </button>
                     </div>
                   </td>
                 </tr>

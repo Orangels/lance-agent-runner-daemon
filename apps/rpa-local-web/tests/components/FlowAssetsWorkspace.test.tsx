@@ -74,11 +74,28 @@ describe('FlowAssetsWorkspace', () => {
     await waitFor(() => expect(client.getFlow).toHaveBeenLastCalledWith('imported_flow'));
     await waitFor(() => expect(client.listFlows).toHaveBeenCalledTimes(2));
   });
+
+  it('deletes a flow after user confirmation and refreshes the list', async () => {
+    const client = new FakeFlowAssetsClient();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<FlowAssetsWorkspace client={client} />);
+
+    expect(await screen.findByRole('cell', { name: 'case_query' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Delete case_query' }));
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('case_query'));
+    expect(client.deleteFlow).toHaveBeenCalledWith('case_query');
+    await waitFor(() => expect(client.listFlows).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole('cell', { name: 'case_query' })).not.toBeInTheDocument());
+    expect(screen.getByRole('cell', { name: 'weather_lookup' })).toBeInTheDocument();
+    confirm.mockRestore();
+  });
 });
 
 class FakeFlowAssetsClient {
   private verified = false;
   private imported = false;
+  private deletedFlowIds = new Set<string>();
 
   readonly listFlows = vi.fn(async () => ({
     flows: [
@@ -87,7 +104,7 @@ class FakeFlowAssetsClient {
       ...(this.imported
         ? [{ flowId: 'imported_flow', title: 'Imported flow', source: 'codegen' as const, requiresVerifyBeforeRun: true }]
         : []),
-    ],
+    ].filter((flow) => !this.deletedFlowIds.has(flow.flowId)),
   }));
 
   readonly getFlow = vi.fn(async (flowId = 'case_query'): Promise<RpaFlowDetailResponse> => {
@@ -113,6 +130,11 @@ class FakeFlowAssetsClient {
   });
 
   readonly getPackageDownloadUrl = vi.fn((flowId: string) => `/api/rpa/flows/${flowId}/package/download`);
+
+  readonly deleteFlow = vi.fn(async (flowId: string) => {
+    this.deletedFlowIds.add(flowId);
+    return { flowId, deleted: true as const };
+  });
 
   readonly importPackage = vi.fn(async () => {
     this.imported = true;

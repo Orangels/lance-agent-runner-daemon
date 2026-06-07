@@ -95,6 +95,17 @@ describe('RPA browser API client', () => {
     );
   });
 
+  it('deletes flows through the RPA BFF', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ flowId: 'case_query', deleted: true }));
+    const client = new RpaApiClient({ fetchImpl });
+
+    await expect(client.deleteFlow('case_query')).resolves.toEqual({ flowId: 'case_query', deleted: true });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      '/api/rpa/flows/case_query',
+      expect.objectContaining({ method: 'DELETE' }),
+    );
+  });
+
   it('builds package download URLs and imports package bytes', async () => {
     const file = new File([new Uint8Array([1, 2, 3])], 'case_query.rpa.zip', { type: 'application/zip' });
     const fetchImpl = vi.fn(async () =>

@@ -1,4 +1,5 @@
 import type {
+  DeleteRpaFlowResponse,
   ImportRpaPackageResponse,
   RpaConfigResponse,
   RpaDaemonHealthResponse,
@@ -83,6 +84,12 @@ export class RpaApiClient {
 
   listFlows(): Promise<RpaFlowListResponse> {
     return this.requestJson('/api/rpa/flows');
+  }
+
+  deleteFlow(flowId: string): Promise<DeleteRpaFlowResponse> {
+    return this.requestJson(`/api/rpa/flows/${encodeURIComponent(flowId)}`, {
+      method: 'DELETE',
+    });
   }
 
   getPackageDownloadUrl(flowId: string): string {
