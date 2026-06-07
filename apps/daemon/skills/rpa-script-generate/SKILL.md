@@ -32,7 +32,7 @@ argument-hint: "[目标系统URL] [业务流程描述]"
 
 不得输出真实密码、cookie、storage_state、CA/USB-Key 文件、真实业务数据样本。
 
-`output/` 只放 daemon 生成/加固 artifacts。脚本运行时产生的审计日志、截图、trace、下载文件属于 executor executionId 产物，默认写入 `runtime/`，不要写入 `output/`。
+`output/` 只放 daemon 生成/加固 artifacts。脚本运行时产生的审计日志、截图、trace、下载文件属于 executor executionId 产物，默认写入 `runtime/`，不要写入 `output/`。用户最终要下载、查看或复用的业务结果文件，例如 JSON、CSV、XLSX、PDF、TXT，必须写入 `config["downloads"]["dir"]`，默认是 `<executionDir>/runtime/downloads/`，不要直接写入 `<executionDir>/` 根目录。
 
 ## AskQuestion / question-form 约束
 
@@ -141,6 +141,7 @@ notes/
   `flow.hardened.py --mode verify|run --params <executionDir>/run.params.json --execution-dir <executionDir> [--dry-run] [--headed|--headless]`。
 - `--mode verify|dry-run|run`，其中 executor 只传 `verify|run`，脚本可额外兼容 `dry-run`。
 - `--execution-dir <executionDir>`，所有审计日志、截图、trace、录像、下载等执行期产物必须写入该目录下。
+- 业务结果文件必须写入 `config["downloads"]["dir"]`，例如 `Path(config["downloads"]["dir"]) / "weather.json"`；不要写到 `Path(execution_dir) / "weather.json"` 这类 execution 根目录路径。
 - `--dry-run`，即使 `--mode run` 也必须强制跳过或暂停不可逆写操作。
 - `--headed` / `--headless`，覆盖配置文件和 mode 默认值。
 - 可选 `--config <path>`；未传时默认读取脚本同目录的 `config.example.json`，不要假设执行目录里有 `config.json`。

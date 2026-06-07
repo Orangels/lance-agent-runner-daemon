@@ -2,7 +2,7 @@
 
 加固脚本从配置文件和运行参数中读取实例信息。
 
-`output/` 只用于 daemon 生成/加固产物，例如 DSL、脚本和报告。脚本执行时产生的审计日志、截图、trace、下载文件必须写入 `runtime/`，由 RPA Web / executor 按 executionId 管理。
+`output/` 只用于 daemon 生成/加固产物，例如 DSL、脚本和报告。脚本执行时产生的审计日志、截图、trace、下载文件必须写入 `runtime/`，由 RPA Web / executor 按 executionId 管理。用户最终要下载、查看或复用的业务结果文件必须写入 `config["downloads"]["dir"]`，默认是 `<executionDir>/runtime/downloads/`；不要直接写入 `<executionDir>/` 根目录。
 
 ## config.example.json
 
@@ -44,4 +44,3 @@
 - 不导出真实 storage_state 内容。
 - 不写客户机器绝对路径。
 - 不把 secrets 复制到流程包。
-

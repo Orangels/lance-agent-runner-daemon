@@ -78,6 +78,15 @@ def screenshot(page: Page, config: dict[str, Any], step_id: str) -> str:
     return str(path)
 
 
+def download_artifact_path(config: dict[str, Any], relative_name: str) -> Path:
+    relative = Path(relative_name)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError("download artifact path must stay under downloads dir")
+    path = Path(config["downloads"]["dir"]) / relative
+    ensure_dir(str(path.parent))
+    return path
+
+
 def run_flow(page: Page, config: dict[str, Any], params: dict[str, Any], mode: str, dry_run: bool) -> None:
     masked_keys = set(config.get("masked_params", []))
     flow_id = config.get("flow_id", "{{flow_id}}")
