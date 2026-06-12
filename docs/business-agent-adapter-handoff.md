@@ -111,7 +111,18 @@ GET /api/profiles
 - `profiles[].defaultModel`
 - `profiles[].allowedModels`
 
-`allowedSkillIds` 决定 `kind=generate` 可传哪些 `skillId`。`revise` 禁止传 `skillId`。
+`allowedSkillIds` 决定本 client/profile 可用哪些 `skillId`。`skillId` 是否必填取决于
+`promptMode`：
+
+| promptMode | generate | revise |
+| --- | --- | --- |
+| `legacy` | 必须传 `skillId` | 禁止传 `skillId` |
+| `business-context` | 必须传 `skillId` | 必须传 `skillId` |
+| `daemon-composed` | 必须传 `skillId` | 可选 `skillId` |
+
+报告仿写的最小接入可以继续使用 `legacy`。如果业务后端已经维护报告参数、表单答案、上一轮
+artifact 路径或阶段状态，并希望继续复用 `report-gen` skill 多轮更新同一报告，应使用
+`business-context`。
 
 ### 3. 创建或复用 Workspace
 
@@ -184,6 +195,19 @@ targetPath  workspace 相对路径，例如 input/source.docx
 ```
 
 多文件上传时，一次一个文件循环调用。不要上传到 `.claude-runner-skills/`，该目录受 daemon 保护。
+
+### 5. 选择 Prompt Mode
+
+业务端接 daemon 前先选清楚上下文模式：
+
+- `legacy`：最简单的报告生成/修改路径。业务端只传 `prompt`，daemon 不接收业务上下文包。
+- `business-context`：业务端维护流程状态、表单答案、artifact 路径或阶段信息，传
+  `currentPrompt` + `businessContext`，daemon 注入 skill 和 side files 后组装最终 prompt。
+- `daemon-composed`：daemon 根据同一 `conversationId` 的可见历史消息组装上下文，适合后续更通用 chat
+  接入。
+
+报告业务后端默认优先接 `legacy + generate + report-gen`。只有当业务端需要传结构化报告上下文，
+或需要在 `revise` 中继续注入同一个业务 skill 时，再接 `business-context`。
 
 ## 推荐流程 A：Generate + Poll
 
@@ -344,9 +368,9 @@ Last-Event-ID: <lastEventId>
 
 如果返回 `404`，说明内存事件流已过期或 daemon 重启，改用 `GET /api/runs/:runId` 恢复。
 
-## 流程 C：Chat 修改 / Revise
+## 流程 C：Legacy Chat 修改 / Revise
 
-Revise 用于同一个业务项目、同一个 workspace 上的后续修改。
+Legacy revise 用于同一个业务项目、同一个 workspace 上的后续报告修改。
 
 前置条件：
 
@@ -372,12 +396,75 @@ Revise 用于同一个业务项目、同一个 workspace 上的后续修改。
 
 Revise 规则：
 
-- 禁止传 `skillId`。
+- 这是 `promptMode` 默认为 `legacy` 的 revise，因此禁止传 `skillId`。
 - daemon 不接收业务 chat history 数组。
 - 如果需要历史上下文，业务端把必要上下文总结进 `prompt`。
 - 修改发生在同一个 workspace 文件状态上，Claude 可以看到已有 `input/`、`work/`、`output/` 文件。
 
 Revise 后续可以走 SSE，也可以走 Poll。实时 chat UI 推荐 SSE；后台静默修改推荐 Poll。
+
+## 流程 D：Business-context 报告多轮流程
+
+报告业务后端如果已经维护结构化上下文，例如报告限定条件、表单答案、上一轮 artifact 路径、
+业务消息 id 或阶段状态，可以使用 `business-context`。这条路径允许 `generate` 和 `revise`
+都显式传 `report-gen`，由业务端传入结构化上下文包，daemon 负责注入 skill 和 side files 后组装最终 prompt。
+
+适用场景：
+
+- 业务后端把“报告范围、统计口径、机构/时间条件、模板/数据文件路径”作为结构化上下文保存。
+- 业务 UI 有参数确认表单，用户回答后需要继续同一份报告生成。
+- 后续修改不仅依赖一句 `prompt`，还需要显式传上一轮报告 artifact、业务消息 id 或表单答案。
+- 需要 `collectionMode: "diagnostic"` 保存 prompt / business context snapshot，方便后台排查。
+
+报告 business-context generate 示例：
+
+```json
+{
+  "profileId": "report-docx",
+  "workspaceId": "ws_xxx",
+  "kind": "generate",
+  "promptMode": "business-context",
+  "collectionMode": "diagnostic",
+  "skillId": "report-gen",
+  "currentPrompt": "请根据已上传的模板和数据生成正式报告。",
+  "businessContext": {
+    "stage": "initial-generate",
+    "templatePath": "input/template.docx",
+    "dataPath": "input/data.xlsx",
+    "reportScope": "2025年8月 临高县公安局",
+    "requestedOutputPath": "output/report.docx"
+  },
+  "artifactRuleIds": ["report-docx"]
+}
+```
+
+报告 business-context revise 示例：
+
+```json
+{
+  "profileId": "report-docx",
+  "workspaceId": "ws_xxx",
+  "conversationId": "conv_xxx",
+  "kind": "revise",
+  "promptMode": "business-context",
+  "collectionMode": "diagnostic",
+  "skillId": "report-gen",
+  "currentPrompt": "用户已确认补充参数，请继续更新报告。",
+  "businessContext": {
+    "stage": "question-form-answers",
+    "previousRunId": "run_previous",
+    "artifactPaths": ["output/report.docx"],
+    "formAnswers": {
+      "reportScope": "2025年8月 临高县公安局",
+      "summaryLength": "300字以内"
+    }
+  },
+  "artifactRuleIds": ["report-docx"]
+}
+```
+
+业务端负责解释 `businessContext` 的业务语义；daemon 只做通用校验、skill 注入、prompt 组装、
+运行和 artifact 扫描。
 
 ## Run Detail 消费规则
 
@@ -465,7 +552,7 @@ GET /api/runs/:runId/logs
 | --- | --- |
 | `Generate + SSE` | 创建 generate run，订阅 `/events`，实时渲染 agent 输出，terminal 后对账。 |
 | `Generate + Poll` | 创建 generate run，只轮询 `/status`，terminal 后读取 artifacts。 |
-| `Revise` | 同 workspace 创建 revise run，不传 `skillId`，修改已有报告。 |
+| `Revise` | legacy revise：同 workspace 创建 revise run，不传 `skillId`，修改已有报告。 |
 | 文件选择 | 循环调用 `POST /api/workspaces/:workspaceId/files`。 |
 | 下载按钮 | 调用 artifact download API。 |
 
@@ -475,8 +562,10 @@ Web demo 不做生产鉴权、不保存业务数据库、不代表最终业务 U
 
 - 不要高频轮询 `GET /api/runs/:runId`；高频轮询使用 `/status`。
 - 不要把 SSE 当作长期历史存储。
-- 不要在 `revise` 请求里传 `skillId`。
-- 不要在 `generate` 请求里省略 `skillId`。
+- 不要在 `legacy revise` 请求里传 `skillId`。
+- 不要在 `business-context` 请求里省略 `skillId`。
+- 不要把复杂报告业务状态塞进 legacy `prompt` 后再要求 daemon 推断流程阶段；这种情况使用
+  `business-context`。
 - 不要在 `POST /api/runs` 中传 `originId/userId/projectId`。
 - 不要让用户或前端传 sandbox 绝对路径。
 - 不要试图覆盖 `claudeConfigDir`、`claudeBin`、`skillRoots`、`allowedInputRoots`、`permissionMode`。
@@ -495,7 +584,8 @@ Web demo 不做生产鉴权、不保存业务数据库、不代表最终业务 U
 6. 能选择 `role=primary` artifact 并下载，中文文件名可用。
 7. SSE 模式下能用 `fetch + ReadableStream` 读取 `event: agent`。
 8. 能在 SSE `end` 后调用 run detail 做 durable 对账。
-9. 能创建 `kind=revise` run，且不传 `skillId`。
-10. 能处理失败 run 的 `errorCode/errorMessage`。
-11. 能取消 queued/running run。
-12. 业务数据库能从 `business_project_id` 追溯到 `workspaceId/runId/artifactId`。
+9. 能创建 legacy `kind=revise` run，且不传 `skillId`。
+10. 如果接入多轮报告业务 skill，能创建 `business-context revise` run，且显式传 `report-gen`。
+11. 能处理失败 run 的 `errorCode/errorMessage`。
+12. 能取消 queued/running run。
+13. 业务数据库能从 `business_project_id` 追溯到 `workspaceId/runId/artifactId`。

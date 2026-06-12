@@ -197,7 +197,7 @@ POST /api/runs
   "profileId": "report-docx",
   "workspaceId": "ws_xxx",
   "kind": "generate",
-  "skillId": "report-writer",
+  "skillId": "report-gen",
   "prompt": "请基于 input/source.docx 生成一份正式报告，输出到 output/report.docx。",
   "model": "sonnet",
   "artifactRuleIds": ["report-docx"],
@@ -421,7 +421,7 @@ daemon 做：
   "kind": "revise",
   "promptMode": "business-context",
   "collectionMode": "diagnostic",
-  "skillId": "report-writer",
+  "skillId": "report-gen",
   "currentPrompt": "用户已确认参数，请继续更新产物。",
   "businessContext": {
     "previousRunId": "run_previous",
@@ -436,6 +436,85 @@ daemon 做：
 ```
 
 `collectionMode` 默认 `lite`。请求 `diagnostic` 或 `review` 时，必须同时满足 profile `maxCollectionMode` 和 client 权限，否则 daemon 在入队前返回 `403 COLLECTION_MODE_NOT_ALLOWED`。
+
+### 报告业务 business-context 示例
+
+如果报告业务后端只需要“上传模板/数据 -> 生成报告 -> 下载报告”，legacy generate 已经足够。
+当业务端已经维护报告参数、表单答案、上一轮 artifact 路径或阶段状态时，使用
+`business-context` 会更稳：业务端传结构化上下文，daemon 负责注入 `report-gen` skill 并组装最终 prompt。
+
+首次生成：
+
+```json
+{
+  "profileId": "report-docx",
+  "workspaceId": "ws_xxx",
+  "kind": "generate",
+  "promptMode": "business-context",
+  "collectionMode": "diagnostic",
+  "skillId": "report-gen",
+  "currentPrompt": "请根据已上传的模板和数据生成正式报告。",
+  "businessContext": {
+    "stage": "initial-generate",
+    "templatePath": "input/template.docx",
+    "dataPath": "input/data.xlsx",
+    "reportScope": "2025年8月 临高县公安局",
+    "requestedOutputPath": "output/report.docx"
+  },
+  "artifactRuleIds": ["report-docx"]
+}
+```
+
+表单答案继续：
+
+```json
+{
+  "profileId": "report-docx",
+  "workspaceId": "ws_xxx",
+  "conversationId": "conv_xxx",
+  "kind": "revise",
+  "promptMode": "business-context",
+  "collectionMode": "diagnostic",
+  "skillId": "report-gen",
+  "currentPrompt": "用户已确认补充参数，请继续更新报告。",
+  "businessContext": {
+    "stage": "question-form-answers",
+    "previousRunId": "run_previous",
+    "artifactPaths": ["output/report.docx"],
+    "formAnswers": {
+      "reportScope": "2025年8月 临高县公安局",
+      "summaryLength": "300字以内"
+    }
+  },
+  "artifactRuleIds": ["report-docx"]
+}
+```
+
+基于新数据修改：
+
+```json
+{
+  "profileId": "report-docx",
+  "workspaceId": "ws_xxx",
+  "conversationId": "conv_xxx",
+  "kind": "revise",
+  "promptMode": "business-context",
+  "collectionMode": "diagnostic",
+  "skillId": "report-gen",
+  "currentPrompt": "请基于新上传的数据文件更新现有报告。",
+  "businessContext": {
+    "stage": "revise-with-new-data",
+    "previousRunId": "run_previous",
+    "artifactPaths": ["output/report.docx"],
+    "newInputFiles": ["input/new-data.xlsx"],
+    "reportScope": "2025年8月 临高县公安局"
+  },
+  "artifactRuleIds": ["report-docx"]
+}
+```
+
+这些报告业务字段对 daemon 是 opaque business context。业务后端负责解释阶段、表单答案和 artifact
+语义；daemon 只负责通用运行、skill 注入和 artifact 扫描。
 
 ### Chat UI 状态建议
 
@@ -565,9 +644,10 @@ daemon 会按配置控制：
 2. Profile sync：调用 `GET /api/profiles`，选择业务 profile/skill/artifact rule。
 3. Workspace mapping：创建或复用 workspace，并把 `workspaceId` 保存到业务项目。
 4. File ingestion：先支持 upload，若部署有共享挂载再支持 prepare。
-5. Generate run：创建 `kind=generate`，订阅 SSE，落库 run 状态。
+5. Generate run：根据业务选择 legacy 或 `business-context`，创建 `kind=generate`，订阅 SSE，落库 run 状态。
 6. Artifact sync：run terminal 后 list/download artifacts。
-7. Revise run：同 workspace 创建 `kind=revise`，把业务 chat 修改映射为新 run。
+7. Revise run：同 workspace 创建 `kind=revise`。legacy revise 不传 `skillId`；`business-context`
+   revise 必须显式传 `skillId`。
 8. Cancel：支持用户停止 queued/running run。
 9. Recovery：SSE 断线后重连；重连失败则用 run detail 恢复。
 10. Diagnostics：授权 client 接入 logs，用于后台排查，不直接暴露给普通用户。
@@ -580,5 +660,5 @@ daemon 会按配置控制：
 - 不要把 daemon 的目录隔离当作强 sandbox。
 - 不要把 upload temp path、sandboxRoot、allowedInputRoots 暴露给用户。
 - 不要依赖 SSE 作为长期历史存储。
-- 不要在 revise 请求里传 `skillId`。
-- 不要在 generate 请求里省略 `skillId`。
+- 不要在 legacy revise 请求里传 `skillId`。
+- 不要在 `business-context` 请求里省略 `skillId`。
