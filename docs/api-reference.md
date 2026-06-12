@@ -83,6 +83,7 @@ MODEL_NOT_ALLOWED
 PROFILE_NOT_ALLOWED
 SKILL_NOT_ALLOWED
 COLLECTION_MODE_NOT_ALLOWED
+REVIEW_BUNDLE_TOO_LARGE
 SKILL_UNAVAILABLE
 SKILL_STAGING_FAILED
 PROMPT_COMPOSITION_FAILED
@@ -137,7 +138,7 @@ Authorization: Bearer <api-key>
   "profiles": [
     {
       "id": "report-docx",
-      "allowedSkillIds": ["report-writer"],
+      "allowedSkillIds": ["report-gen"],
       "artifactRules": [
         {
           "id": "report-docx",
@@ -166,7 +167,7 @@ Authorization: Bearer <api-key>
 | Field | Type | Notes |
 | --- | --- | --- |
 | `profiles[].id` | string | `POST /api/workspaces` 和 `POST /api/runs` 使用的 `profileId`。 |
-| `profiles[].allowedSkillIds` | string[] | `legacy + generate` 以及 MVP `business-context` run 可用的 `skillId`。 |
+| `profiles[].allowedSkillIds` | string[] | `legacy + generate`、`business-context` run 和部分 `daemon-composed` run 可用的 `skillId`。 |
 | `profiles[].artifactRules` | object[] | 可选择的 artifact rule。 |
 | `profiles[].defaultArtifactRuleIds` | string[] | `POST /api/runs` 不传 `artifactRuleIds` 时使用。 |
 | `profiles[].defaultModel` | string | 默认 Claude model。 |
@@ -355,7 +356,7 @@ Legacy generate 示例：
   "profileId": "report-docx",
   "workspaceId": "ws_xxx",
   "kind": "generate",
-  "skillId": "report-writer",
+  "skillId": "report-gen",
   "prompt": "请基于 input/source.docx 生成报告，输出到 output/report.docx。",
   "model": "sonnet",
   "artifactRuleIds": ["report-docx"],
@@ -393,7 +394,7 @@ Business-context 示例：
   "kind": "revise",
   "promptMode": "business-context",
   "collectionMode": "diagnostic",
-  "skillId": "report-writer",
+  "skillId": "report-gen",
   "currentPrompt": "用户已回答参数问题，请继续更新产物。",
   "businessContext": {
     "previousRunId": "run_previous",
@@ -504,7 +505,7 @@ Authorization: Bearer <api-key>
       "workspaceId": "ws_xxx",
       "profileId": "report-docx",
       "kind": "generate",
-      "skillId": "report-writer",
+      "skillId": "report-gen",
       "status": "succeeded",
       "lastRunEventId": "5",
       "queuedAt": 1770000000000,
@@ -537,7 +538,7 @@ Authorization: Bearer <api-key>
     "workspaceId": "ws_xxx",
     "profileId": "report-docx",
     "kind": "generate",
-    "skillId": "report-writer",
+    "skillId": "report-gen",
     "status": "succeeded",
     "lastRunEventId": "5",
     "queuedAt": 1770000000000,
@@ -650,7 +651,7 @@ Authorization: Bearer <api-key>
     "workspaceId": "ws_xxx",
     "profileId": "report-docx",
     "kind": "generate",
-    "skillId": "report-writer",
+    "skillId": "report-gen",
     "status": "running",
     "queuedAt": 1770000000000,
     "startedAt": 1770000001000,
@@ -1032,6 +1033,13 @@ Authorization: Bearer <api-key>
 }
 ```
 
+### Common Errors
+
+| Status | Code | Meaning |
+| --- | --- | --- |
+| 401 | `UNAUTHORIZED` | API key 缺失或错误。 |
+| 404 | `NOT_FOUND` | run 不存在或不属于该 client。 |
+
 ## POST /api/runs/:runId/feedback
 
 新增某个 run 的通用反馈记录。`message` 和 `metadata` 会经过通用脱敏。
@@ -1108,7 +1116,7 @@ revise
 
 - `legacy + generate` 必须传 `skillId`。
 - `legacy + revise` 禁止传 `skillId`。
-- MVP `business-context` run 必须传 `skillId`，包括 `revise`。
+- `business-context` run 必须传 `skillId`，包括 `revise`。
 
 ## PublicArtifact
 
@@ -1165,7 +1173,7 @@ curl -s -X POST "$DAEMON_URL/api/runs" \
     "profileId": "report-docx",
     "workspaceId": "'"$WORKSPACE_ID"'",
     "kind": "generate",
-    "skillId": "report-writer",
+    "skillId": "report-gen",
     "prompt": "请基于 input/source.docx 生成报告，输出到 output/report.docx。",
     "artifactRuleIds": ["report-docx"]
   }'
