@@ -51,7 +51,6 @@ import type {
   UpdateRunMessageInput,
   UpdateRunPromptSnapshotFieldsInput,
   UpdateRunStartedInput,
-  UpdateRunStatusInput,
   UpdateRunTerminalInput,
   UpsertRunContextSnapshotInput,
   UpsertRunLogPathsInput,
@@ -273,36 +272,21 @@ class PostgresRunnerPersistence implements RunnerPersistence {
 
   async upsertWorkspace(input: UpsertWorkspaceInput): Promise<WorkspaceRecord> {
     const workspaceKey = makeWorkspaceKey(input.originId, input.userId, input.projectId);
-    const existing = await maybeOne<WorkspaceRow>(
-      this.client,
-      'SELECT * FROM workspaces WHERE client_id = $1 AND profile_id = $2 AND workspace_key = $3',
-      [input.clientId, input.profileId, workspaceKey],
-    );
-
-    if (existing) {
-      await this.client.query(
-        `
-        UPDATE workspaces
-        SET status = $1, metadata_json = $2, updated_at = $3
-        WHERE id = $4
-        `,
-        [
-          input.status ?? existing.status,
-          input.metadata === undefined ? existing.metadata_json : stringifyNullable(input.metadata),
-          input.now,
-          existing.id,
-        ],
-      );
-      return this.getWorkspaceById(existing.id);
-    }
-
-    await this.client.query(
+    const result = await this.client.query<WorkspaceRow>(
       `
       INSERT INTO workspaces (
         id, profile_id, client_id, origin_id, user_id, project_id, workspace_key,
         status, metadata_json, created_at, updated_at
       )
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      ON CONFLICT (client_id, profile_id, workspace_key) DO UPDATE SET
+        status = COALESCE($13::text, workspaces.status),
+        metadata_json = CASE
+          WHEN $12::boolean THEN EXCLUDED.metadata_json
+          ELSE workspaces.metadata_json
+        END,
+        updated_at = EXCLUDED.updated_at
+      RETURNING *
       `,
       [
         input.id,
@@ -316,10 +300,12 @@ class PostgresRunnerPersistence implements RunnerPersistence {
         stringifyNullable(input.metadata),
         input.now,
         input.now,
+        input.metadata !== undefined,
+        input.status ?? null,
       ],
     );
 
-    return this.getWorkspaceById(input.id);
+    return mapWorkspace(result.rows[0]!);
   }
 
   async getWorkspaceForClient(input: GetWorkspaceForClientInput): Promise<WorkspaceRecord | null> {
@@ -771,19 +757,6 @@ class PostgresRunnerPersistence implements RunnerPersistence {
     return result.rowCount ?? 0;
   }
 
-  async updateRunStatus(input: UpdateRunStatusInput): Promise<RunRecord> {
-    await this.client.query(
-      `
-      UPDATE runs
-      SET status = $1,
-          updated_at = $2
-      WHERE id = $3
-      `,
-      [input.status, input.now, input.runId],
-    );
-    return this.getRunById(input.runId);
-  }
-
   async updateRunStarted(input: UpdateRunStartedInput): Promise<RunRecord> {
     await this.client.query(
       `
@@ -1182,22 +1155,6 @@ class PostgresRunnerPersistence implements RunnerPersistence {
       params,
     );
     return result.rows.map(mapRun);
-  }
-
-  async getActiveRunForWorkspace(workspaceId: string): Promise<RunRecord | null> {
-    const row = await maybeOne<RunRow>(
-      this.client,
-      `
-      SELECT *
-      FROM runs
-      WHERE workspace_id = $1
-        AND status IN ('queued', 'running')
-      ORDER BY created_at ASC
-      LIMIT 1
-      `,
-      [workspaceId],
-    );
-    return row ? mapRun(row) : null;
   }
 
   async getRunByIdempotencyKey(

@@ -61,6 +61,34 @@ postgresDescribe('postgres runner persistence', () => {
     ).resolves.toBeNull();
   });
 
+  it('atomically upserts concurrent workspace creates for the same key', async () => {
+    const attempts = Array.from({ length: 20 }, (_, index) =>
+      persistence.upsertWorkspace({
+        id: `ws_concurrent_${index}`,
+        clientId: 'client_concurrent',
+        profileId: 'report-docx',
+        originId: 'origin',
+        userId: 'user',
+        projectId: 'project',
+        metadata: { attempt: index },
+        now: 2000 + index,
+      }),
+    );
+
+    const workspaces = await Promise.all(attempts);
+
+    expect(new Set(workspaces.map((workspace) => workspace.id)).size).toBe(1);
+    const count = await pool.query<{ count: number }>(
+      `
+      SELECT COUNT(*)::int AS count
+      FROM workspaces
+      WHERE client_id = $1 AND profile_id = $2 AND workspace_key = $3
+      `,
+      ['client_concurrent', 'report-docx', 'origin/user/project'],
+    );
+    expect(count.rows[0]?.count).toBe(1);
+  });
+
   it('serializes concurrent default conversation creation and returns the oldest duplicate', async () => {
     const workspace = await insertWorkspaceFixture(persistence, { id: 'ws_default', now: 4000 });
 

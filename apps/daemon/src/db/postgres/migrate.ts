@@ -1,4 +1,4 @@
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { runner } from 'node-pg-migrate';
 
 export const postgresMigrationsTable = 'pgmigrations';
@@ -86,7 +86,7 @@ async function main(): Promise<void> {
   });
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   void main().catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     console.error(message);

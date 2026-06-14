@@ -319,12 +319,6 @@ export interface UpdateAssistantMessagesTerminalForRunInput {
   now: number;
 }
 
-export interface UpdateRunStatusInput {
-  runId: string;
-  status: RunStatus;
-  now: number;
-}
-
 export interface UpdateRunStartedInput {
   runId: string;
   startedAt: number;
@@ -488,7 +482,6 @@ export interface RunnerPersistence {
   insertRunMessagesForRunCreate(input: InsertRunMessagesForRunCreateInput): Promise<RunMessageRecord[]>;
   insertAssistantRunMessage(input: InsertAssistantRunMessageInput): Promise<RunMessageRecord>;
   updateAssistantMessagesTerminalForRun(input: UpdateAssistantMessagesTerminalForRunInput): Promise<number>;
-  updateRunStatus(input: UpdateRunStatusInput): Promise<RunRecord>;
   updateRunStarted(input: UpdateRunStartedInput): Promise<RunRecord>;
   updateRunTerminal(input: UpdateRunTerminalInput): Promise<RunRecord>;
   updateAssistantMessageStarted(input: UpdateAssistantMessageStartedInput): Promise<RunMessageRecord>;
@@ -507,6 +500,5 @@ export interface RunnerPersistence {
   getRunForClient(input: RunForClientInput): Promise<RunRecord | null>;
   getRunWithWorkspaceForClient(input: RunForClientInput): Promise<RunWithWorkspaceRecord | null>;
   listRunsForClient(input: ListRunsForClientInput): Promise<RunRecord[]>;
-  getActiveRunForWorkspace(workspaceId: string): Promise<RunRecord | null>;
   getRunByIdempotencyKey(input: GetRunByIdempotencyKeyInput): Promise<RunRecord | null>;
 }

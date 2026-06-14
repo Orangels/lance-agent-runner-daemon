@@ -98,9 +98,9 @@ Rollback before merging this branch is operationally simple: keep using main, wh
   - Define a database facade interface used by services and route tests.
   - Define transaction callback shape and close lifecycle.
   - Require all runtime repository methods to return `Promise`.
-- Create `apps/daemon/tests/helpers/in-memory-persistence.ts`
-  - Provide a pure JavaScript async `RunnerPersistence` test double for service/route unit tests during and after the async refactor.
-  - This is not a SQLite runtime adapter and must not be used by daemon startup.
+- Keep non-PG service/route fixtures explicitly scoped to behavioral compatibility tests.
+  - PostgreSQL-specific correctness must be covered by PG-gated schema, repository, migration, and API-flow tests.
+  - CI must provide `CLAUDE_RUNNER_TEST_PG_URL`; otherwise PG-gated tests fail fast.
 - Modify `apps/daemon/src/db/connection.ts`
   - Replace runtime SQLite opening with PostgreSQL pool opening.
   - Move SQLite opening helpers into migration tooling if the migration script needs shared code.
@@ -142,7 +142,7 @@ Rollback before merging this branch is operationally simple: keep using main, wh
   - `docs/claude-code-runner-daemon-version-roadmap.md` after implementation status is known.
 - Tests:
   - Replace runtime repository/service tests with PostgreSQL-backed tests where persistence behavior matters.
-  - Use the in-memory async test double for service/route tests that do not need PostgreSQL-specific semantics.
+  - Use PG-gated tests for persistence semantics. Non-PG tests may keep compatibility fixtures, but they must not be treated as PostgreSQL repository coverage.
   - Keep SQLite-only tests only for migration source reading and SQLite-to-PostgreSQL migration verification.
   - Add PostgreSQL integration tests gated behind `CLAUDE_RUNNER_TEST_PG_URL` locally and required when `CI=true`.
   - Add unit tests for config parsing, migration ordering, and verification script behavior.
@@ -441,7 +441,6 @@ git commit -m "feat: require postgres persistence config"
 
 **Files:**
 - Create: `apps/daemon/src/db/types.ts`
-- Create: `apps/daemon/tests/helpers/in-memory-persistence.ts`
 - Modify: `apps/daemon/src/db/connection.ts`
 - Modify: `apps/daemon/src/db/repositories.ts`
 - Modify: all services importing `RunnerDatabase`
@@ -520,7 +519,6 @@ markInterruptedRunsOnStartup
 insertRunMessagesForRunCreate
 insertAssistantRunMessage
 updateAssistantMessagesTerminalForRun
-updateRunStatus
 updateRunStarted
 updateRunTerminal
 updateAssistantMessageStarted
@@ -539,7 +537,6 @@ getRunDetail
 getRunForClient
 getRunWithWorkspaceForClient
 listRunsForClient
-getActiveRunForWorkspace
 getRunByIdempotencyKey
 isSqliteUniqueConstraintError
 ```
@@ -552,21 +549,11 @@ If implementation chooses a uniqueness-based strategy instead, the plan must be 
 
 Tests must cover concurrent create-run calls without explicit `conversationId` and must cover a migrated workspace that already contains duplicate `Default` conversations, proving the repository returns the oldest existing row rather than failing migration or creating another duplicate.
 
-- [ ] **Step 2: Add an async in-memory test persistence**
+- [ ] **Step 2: Define test coverage boundaries**
 
-Create `apps/daemon/tests/helpers/in-memory-persistence.ts` implementing `RunnerPersistence` with plain JavaScript maps and promise-returning methods. It must support the subset of repository behavior needed by unit/route tests before the PostgreSQL adapter exists:
+Do not add an unused in-memory `RunnerPersistence` implementation. Service/route tests that do not need PostgreSQL-specific semantics may keep explicit compatibility fixtures, but PostgreSQL repository behavior must be covered by PG-gated tests that run against `CLAUDE_RUNNER_TEST_PG_URL`.
 
-- workspace create/read/list semantics used by workspace routes and services;
-- conversation default creation;
-- run create/status/detail/list;
-- run messages create/update/list;
-- snapshots used by run creation;
-- artifacts/logs/feedback methods used by HTTP route tests;
-- `transaction(fn)` that snapshots in-memory state before the callback and restores it on thrown errors.
-
-This helper is only for tests. It must not import `better-sqlite3`, must not read/write `runner.sqlite`, and must not be referenced from `apps/daemon/src/index.ts` or production startup code.
-
-Use this test double for service/route tests that validate HTTP behavior, async route awaiting, and state-machine logic but do not need PostgreSQL-specific behavior such as `23505`, real transactions, row locks, or SQL constraints.
+CI must provide `CLAUDE_RUNNER_TEST_PG_URL`; without it, PG-gated tests fail fast instead of silently giving a SQLite-only green run.
 
 - [ ] **Step 3: Stop adding runtime SQLite adapter code**
 
@@ -628,7 +615,7 @@ pnpm test:daemon
 pnpm typecheck:daemon
 ```
 
-Expected: code compiles after service constructors accept async PostgreSQL persistence abstractions. Service/route tests that do not require PostgreSQL-specific semantics pass with the in-memory async test persistence. SQLite-specific repository tests may be rewritten or moved to migration-script tests in later tasks.
+Expected: code compiles after service constructors accept async PostgreSQL persistence abstractions. Non-PG service/route tests remain compatibility coverage only; PG-gated tests provide PostgreSQL persistence coverage. SQLite-specific repository tests may be rewritten or moved to migration-script tests in later tasks.
 
 - [ ] **Step 7: Commit**
 
@@ -715,7 +702,7 @@ it('awaits pending assistant message writes before terminal run persistence comp
 });
 ```
 
-`createDelayedRunPersistence` and `createRunServiceWithFakeRunner` are test-local helpers in `apps/daemon/tests/core/run-service.test.ts`. They should reuse the async in-memory persistence shape from Task 2, but add explicit promise gates around assistant-message updates so the test can assert status before and after terminal message persistence resolves.
+`createDelayedRunPersistence` and `createRunServiceWithFakeRunner` are test-local helpers in `apps/daemon/tests/core/run-service.test.ts`. They should use the async `RunnerPersistence` shape, but add explicit promise gates around assistant-message updates so the test can assert status before and after terminal message persistence resolves.
 
 - [ ] **Step 2: Implement per-run write queue**
 
@@ -1168,7 +1155,6 @@ Support:
 --sqlite <path>
 --database-url <url>
 --dry-run
---batch-size <n>
 ```
 
 Default database URL source:
@@ -1536,7 +1522,7 @@ git commit -m "docs: record postgres persistence migration completion"
 6. Use one full-copy transaction for the initial SQLite-to-PG migration. If the SQLite database becomes too large, create a separate chunked-migration plan.
 7. CI must provide PostgreSQL for daemon persistence tests. Local runs may skip PG tests only when `CI` is not true.
 8. Preserve current `finishRun()` artifact-first semantics. Artifact finalization can rewrite `succeeded` to `failed` before assistant terminal writes and `runs` terminal persistence.
-9. Use the async in-memory persistence helper only for unit/route tests that do not need PG semantics. Daemon startup must never fall back to SQLite or in-memory persistence.
+9. Treat PG-gated tests as the source of truth for persistence semantics. Daemon startup must never fall back to SQLite or in-memory persistence.
 10. Keep `message-accumulator.consume()` as in-memory plus throttled persistence. Do not enqueue one database write per streaming delta.
 11. Await each critical terminal write's own `enqueue()` promise. `RunWriteQueue.drain()` is an idleness check, not a replacement for terminal write error handling.
 12. Make default-conversation creation transaction-safe under async PG without breaking migration of historical duplicate `Default` rows. Prefer a transaction-scoped advisory lock and oldest-row reselect; do not add a `(workspace_id, title)` unique constraint unless the migration plan is updated to handle existing duplicates.

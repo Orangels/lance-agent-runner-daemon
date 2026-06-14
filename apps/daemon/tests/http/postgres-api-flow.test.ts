@@ -136,6 +136,14 @@ postgresDescribe('postgres-backed api flow', () => {
         expect(done.terminal).toBe(true);
       });
 
+      const events = await fetch(`${baseUrl}/api/runs/run_pg_http/events?after=2`, {
+        headers: authHeaders(),
+      });
+      expect(events.status).toBe(200);
+      expect(events.headers.get('content-type')).toContain('text/event-stream');
+      const eventText = await events.text();
+      expect(eventText).toContain('"status":"succeeded"');
+
       const artifacts = await getJson(`${baseUrl}/api/runs/run_pg_http/artifacts`);
       expect(artifacts.artifacts).toEqual([
         expect.objectContaining({

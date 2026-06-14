@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import Database from 'better-sqlite3';
 import { createPostgresPool } from '../postgres/connection.js';
 import { assertPostgresSchemaReady } from '../postgres/migrate.js';
@@ -9,7 +10,6 @@ export interface SqliteToPostgresInput {
   sqlitePath: string;
   databaseUrl: string;
   dryRun?: boolean;
-  batchSize?: number;
 }
 
 export interface SqliteToPostgresResult {
@@ -46,9 +46,7 @@ export async function migrateSqliteToPostgres(
       for (const spec of migrationTableSpecs) {
         const rows = readSourceRows(sqlite, spec);
         copied[spec.table] = rows.length;
-        if (!input.dryRun) {
-          await insertRows(client, spec, rows);
-        }
+        await insertRows(client, spec, rows);
       }
 
       if (input.dryRun) {
@@ -177,7 +175,6 @@ function parseArgs(argv: readonly string[], env: NodeJS.ProcessEnv): SqliteToPos
   let sqlitePath: string | undefined;
   let databaseUrl: string | undefined;
   let dryRun = false;
-  let batchSize: number | undefined;
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -187,8 +184,6 @@ function parseArgs(argv: readonly string[], env: NodeJS.ProcessEnv): SqliteToPos
       databaseUrl = argv[++index];
     } else if (arg === '--dry-run') {
       dryRun = true;
-    } else if (arg === '--batch-size') {
-      batchSize = Number(argv[++index]);
     } else {
       throw new Error(`Unsupported argument: ${arg}`);
     }
@@ -201,11 +196,8 @@ function parseArgs(argv: readonly string[], env: NodeJS.ProcessEnv): SqliteToPos
   if (!resolvedDatabaseUrl) {
     throw new Error('CLAUDE_RUNNER_DATABASE_URL or --database-url is required');
   }
-  if (batchSize !== undefined && (!Number.isInteger(batchSize) || batchSize <= 0)) {
-    throw new Error('--batch-size must be a positive integer');
-  }
 
-  return { sqlitePath, databaseUrl: resolvedDatabaseUrl, dryRun, batchSize };
+  return { sqlitePath, databaseUrl: resolvedDatabaseUrl, dryRun };
 }
 
 async function main(): Promise<void> {
@@ -213,7 +205,7 @@ async function main(): Promise<void> {
   console.log(JSON.stringify({ copied: result.copied, dryRun: result.dryRun }, null, 2));
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   void main().catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     console.error(message);

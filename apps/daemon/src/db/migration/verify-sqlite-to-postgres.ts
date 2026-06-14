@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import Database from 'better-sqlite3';
 import { createPostgresPool } from '../postgres/connection.js';
 import { assertPostgresSchemaReady } from '../postgres/migrate.js';
@@ -200,7 +201,7 @@ async function main(): Promise<void> {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   void main().catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     console.error(message);

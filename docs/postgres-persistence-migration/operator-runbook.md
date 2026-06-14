@@ -40,4 +40,10 @@ The SQLite migration source is opened read-only and must remain unchanged. If th
 
 The migration tool refuses to copy into a non-empty PostgreSQL target. Create a fresh empty database or reset it outside this tool before retrying.
 
+The initial migration copies the SQLite source in a single PostgreSQL transaction. For very large historical databases, plan and test a dedicated chunked migration before cutover instead of assuming this tool streams in bounded batches.
+
 Do not put database URLs in tracked config. Use `env:CLAUDE_RUNNER_DATABASE_URL`.
+
+## Test Coverage Policy
+
+PostgreSQL-specific schema, repository, migration, and API-flow tests require `CLAUDE_RUNNER_TEST_PG_URL`. Local runs without that variable skip PG-gated tests for convenience. CI must provide `CLAUDE_RUNNER_TEST_PG_URL`; otherwise those tests fail fast so a green CI run cannot rely only on SQLite compatibility fixtures.

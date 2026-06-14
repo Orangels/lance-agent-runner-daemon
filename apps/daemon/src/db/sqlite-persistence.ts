@@ -26,7 +26,6 @@ import type {
   UpdateRunMessageInput,
   UpdateRunPromptSnapshotFieldsInput,
   UpdateRunStartedInput,
-  UpdateRunStatusInput,
   UpdateRunTerminalInput,
   UpsertRunContextSnapshotInput,
   UpsertRunLogPathsInput,
@@ -105,9 +104,6 @@ export function createSqliteRunnerPersistence(db: RunnerDatabase): RunnerPersist
     async updateAssistantMessagesTerminalForRun(input: UpdateAssistantMessagesTerminalForRunInput) {
       return repositories.updateAssistantMessagesTerminalForRun(db, input);
     },
-    async updateRunStatus(input: UpdateRunStatusInput) {
-      return repositories.updateRunStatus(db, input);
-    },
     async updateRunStarted(input: UpdateRunStartedInput) {
       return repositories.updateRunStarted(db, input);
     },
@@ -161,9 +157,6 @@ export function createSqliteRunnerPersistence(db: RunnerDatabase): RunnerPersist
     },
     async listRunsForClient(input: ListRunsForClientInput) {
       return repositories.listRunsForClient(db, input);
-    },
-    async getActiveRunForWorkspace(workspaceId: string) {
-      return repositories.getActiveRunForWorkspace(db, workspaceId);
     },
     async getRunByIdempotencyKey(input: GetRunByIdempotencyKeyInput) {
       return repositories.getRunByIdempotencyKey(db, input);
