@@ -42,5 +42,6 @@ pnpm-debug.log*
 .DS_Store
 Thumbs.db
 .omc/
+.codegraph/
 .idea/
 .vscode/
