@@ -7,8 +7,6 @@ import {
   type DaemonConfig,
   type ProfileConfig,
 } from '../config/profiles.js';
-import type { RunnerDatabase } from '../db/connection.js';
-import { createSqliteRunnerPersistence } from '../db/sqlite-persistence.js';
 import type { RunnerPersistence, RunDetailRecord, RunRecord, WorkspaceRecord } from '../db/types.js';
 import { createArtifactService, type ArtifactService } from './artifact-service.js';
 import { buildClaudeInvocation, type ClaudeInvocation } from './claude-adapter.js';
@@ -70,7 +68,6 @@ export interface BufferedRunEvent {
 export interface CreateRunServiceInput {
   config: DaemonConfig;
   persistence?: RunnerPersistence;
-  db?: RunnerDatabase;
   runnerFactory?: RunServiceRunnerFactory;
   artifactService?: ArtifactService;
   runLogService?: RunLogService;
@@ -181,8 +178,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
   const nextUserMessageId = input.ids?.userMessageId ?? (() => createId('msg'));
   const nextAssistantMessageId = input.ids?.assistantMessageId ?? (() => createId('msg'));
   const runnerFactory = input.runnerFactory ?? defaultRunnerFactory;
-  const resolvedPersistence =
-    input.persistence ?? (input.db ? createSqliteRunnerPersistence(input.db) : null);
+  const resolvedPersistence = input.persistence;
   if (!resolvedPersistence) {
     throw new Error('RunService requires persistence');
   }

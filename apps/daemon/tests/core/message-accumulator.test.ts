@@ -1,21 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { RunnerDatabase } from '../../src/db/connection.js';
 import { runMessageFlushPolicy, type RunStatus } from '../../src/core/run-types.js';
 import type { RunEvent } from '../../src/core/run-events.js';
+import type { RunnerPersistence } from '../../src/db/types.js';
 
 const updateRunMessage = vi.fn();
 const updateAssistantMessageStarted = vi.fn();
 const updateAssistantMessageTerminal = vi.fn();
 const updateAssistantMessagesTerminalForRun = vi.fn();
 const insertAssistantRunMessage = vi.fn();
-
-vi.mock('../../src/db/repositories.js', () => ({
-  insertAssistantRunMessage,
-  updateRunMessage,
-  updateAssistantMessageStarted,
-  updateAssistantMessageTerminal,
-  updateAssistantMessagesTerminalForRun,
-}));
 
 const { createMessageAccumulator } = await import('../../src/core/message-accumulator.js');
 
@@ -62,32 +54,42 @@ function createDeterministicRuntime(startNow = 1_000) {
 
 function createAccumulator(input?: { messageId?: string; startNow?: number }) {
   const runtime = createDeterministicRuntime(input?.startNow);
-  const db = { label: input?.messageId ?? 'db' } as unknown as RunnerDatabase;
+  const persistence = createMockPersistence();
   const accumulator = createMessageAccumulator({
-    db,
+    persistence,
     messageId: input?.messageId ?? 'message-1',
     clock: runtime.clock,
     timer: runtime.timer,
   });
 
-  return { accumulator, db, runtime };
+  return { accumulator, persistence, runtime };
+}
+
+function createMockPersistence(): RunnerPersistence {
+  return {
+    updateRunMessage,
+    updateAssistantMessageStarted,
+    updateAssistantMessageTerminal,
+    updateAssistantMessagesTerminalForRun,
+    insertAssistantRunMessage,
+  } as unknown as RunnerPersistence;
 }
 
 describe('message accumulator', () => {
   beforeEach(() => {
-    updateRunMessage.mockReset();
-    updateAssistantMessageStarted.mockReset();
-    updateAssistantMessageTerminal.mockReset();
-    updateAssistantMessagesTerminalForRun.mockReset();
-    insertAssistantRunMessage.mockReset();
+    updateRunMessage.mockReset().mockResolvedValue(undefined);
+    updateAssistantMessageStarted.mockReset().mockResolvedValue(undefined);
+    updateAssistantMessageTerminal.mockReset().mockResolvedValue(undefined);
+    updateAssistantMessagesTerminalForRun.mockReset().mockResolvedValue(undefined);
+    insertAssistantRunMessage.mockReset().mockResolvedValue(undefined);
   });
 
   it('marks the assistant message running with startedAt when the run starts', async () => {
-    const { accumulator, db, runtime } = createAccumulator({ messageId: 'assistant-1' });
+    const { accumulator, runtime } = createAccumulator({ messageId: 'assistant-1' });
 
     await accumulator.startRun({ startedAt: 1_234 });
 
-    expect(updateAssistantMessageStarted).toHaveBeenCalledWith(db, {
+    expect(updateAssistantMessageStarted).toHaveBeenCalledWith({
       messageId: 'assistant-1',
       startedAt: 1_234,
       now: runtime.clock.now(),
@@ -95,14 +97,14 @@ describe('message accumulator', () => {
   });
 
   it('appends text_delta events to assistant content on flush', async () => {
-    const { accumulator, db, runtime } = createAccumulator({ messageId: 'assistant-1' });
+    const { accumulator, runtime } = createAccumulator({ messageId: 'assistant-1' });
 
     accumulator.consume({ type: 'text_delta', delta: 'hello ' }, '1');
     accumulator.consume({ type: 'text_delta', delta: 'world' }, '2');
     await accumulator.forceFlush();
 
     expect(updateRunMessage).toHaveBeenCalledTimes(1);
-    expect(updateRunMessage).toHaveBeenCalledWith(db, {
+    expect(updateRunMessage).toHaveBeenCalledWith({
       messageId: 'assistant-1',
       content: 'hello world',
       thinkingContent: '',
@@ -116,7 +118,7 @@ describe('message accumulator', () => {
   });
 
   it('appends status, thinking, tool, usage, error, and end events to events_json', async () => {
-    const { accumulator, db, runtime } = createAccumulator();
+    const { accumulator, runtime } = createAccumulator();
     const events: RunEvent[] = [
       { type: 'status', label: 'initializing', model: 'claude-sonnet-4-5' },
       { type: 'thinking_start' },
@@ -131,7 +133,7 @@ describe('message accumulator', () => {
     events.forEach((event, index) => accumulator.consume(event, String(index + 1)));
     await accumulator.forceFlush();
 
-    expect(updateRunMessage).toHaveBeenCalledWith(db, {
+    expect(updateRunMessage).toHaveBeenCalledWith({
       messageId: 'message-1',
       content: '',
       thinkingContent: 'considering',
@@ -148,14 +150,14 @@ describe('message accumulator', () => {
   });
 
   it('does not persist stderr or raw events by default', async () => {
-    const { accumulator, db, runtime } = createAccumulator();
+    const { accumulator, runtime } = createAccumulator();
 
     accumulator.consume({ type: 'stderr', text: 'debug noise' }, '1');
     accumulator.consume({ type: 'raw', line: '{"debug":true}' }, '2');
     accumulator.consume({ type: 'status', label: 'still alive' }, '3');
     await accumulator.forceFlush();
 
-    expect(updateRunMessage).toHaveBeenCalledWith(db, {
+    expect(updateRunMessage).toHaveBeenCalledWith({
       messageId: 'message-1',
       content: '',
       thinkingContent: '',
@@ -192,12 +194,12 @@ describe('message accumulator', () => {
   });
 
   it('terminal flush writes runStatus, endedAt, and lastRunEventId after pending updates', async () => {
-    const { accumulator, db, runtime } = createAccumulator({ messageId: 'assistant-1' });
+    const { accumulator, runtime } = createAccumulator({ messageId: 'assistant-1' });
 
     accumulator.consume({ type: 'text_delta', delta: 'done' }, '9');
     await accumulator.flushTerminal({ runStatus: 'succeeded', endedAt: 2_000 });
 
-    expect(updateRunMessage).toHaveBeenCalledWith(db, {
+    expect(updateRunMessage).toHaveBeenCalledWith({
       messageId: 'assistant-1',
       content: 'done',
       thinkingContent: '',
@@ -205,7 +207,7 @@ describe('message accumulator', () => {
       lastRunEventId: '9',
       now: runtime.clock.now(),
     });
-    expect(updateAssistantMessageTerminal).toHaveBeenCalledWith(db, {
+    expect(updateAssistantMessageTerminal).toHaveBeenCalledWith({
       messageId: 'assistant-1',
       runStatus: 'succeeded' satisfies RunStatus,
       lastRunEventId: '9',
@@ -226,7 +228,7 @@ describe('message accumulator', () => {
     await Promise.resolve();
 
     expect(updateRunMessage).toHaveBeenCalledTimes(1);
-    expect(updateRunMessage).toHaveBeenCalledWith(first.db, {
+    expect(updateRunMessage).toHaveBeenCalledWith({
       messageId: 'assistant-1',
       content: 'first',
       thinkingContent: '',
@@ -240,7 +242,7 @@ describe('message accumulator', () => {
     await Promise.resolve();
 
     expect(updateRunMessage).toHaveBeenCalledTimes(2);
-    expect(updateRunMessage).toHaveBeenLastCalledWith(second.db, {
+    expect(updateRunMessage).toHaveBeenLastCalledWith({
       messageId: 'assistant-2',
       content: '',
       thinkingContent: '',

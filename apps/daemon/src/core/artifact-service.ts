@@ -3,8 +3,6 @@ import path from 'node:path';
 import { requireProfileAccess } from '../config/auth.js';
 import type { ArtifactRuleConfig, ClientConfig, DaemonConfig, ProfileConfig } from '../config/profiles.js';
 import { getProfile } from '../config/profiles.js';
-import type { RunnerDatabase } from '../db/connection.js';
-import { createSqliteRunnerPersistence } from '../db/sqlite-persistence.js';
 import type { ArtifactRecord, RunnerPersistence, RunWithWorkspaceRecord, WorkspaceRecord } from '../db/types.js';
 import { scanArtifacts, type ScannedArtifact } from './artifact-scanner.js';
 import { badRequest, daemonError, notFound } from './errors.js';
@@ -54,7 +52,6 @@ export interface ArtifactDownload {
 export interface CreateArtifactServiceInput {
   config: DaemonConfig;
   persistence?: RunnerPersistence;
-  db?: RunnerDatabase;
   scanner?: (input: {
     workspaceCwd: string;
     rules: ArtifactRuleConfig[];
@@ -70,8 +67,7 @@ export function createArtifactService(input: CreateArtifactServiceInput): Artifa
   const now = input.clock ?? Date.now;
   const nextArtifactId = input.ids?.artifactId ?? (() => createId('artifact'));
   const scanner = input.scanner ?? scanArtifacts;
-  const persistence =
-    input.persistence ?? (input.db ? createSqliteRunnerPersistence(input.db) : null);
+  const persistence = input.persistence;
   if (!persistence) {
     throw new Error('ArtifactService requires persistence');
   }

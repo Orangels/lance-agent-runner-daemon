@@ -1,7 +1,5 @@
 import { readFileSync } from 'node:fs';
 import type { DaemonConfig } from '../config/profiles.js';
-import type { RunnerDatabase } from '../db/connection.js';
-import { createSqliteRunnerPersistence } from '../db/sqlite-persistence.js';
 import type { RunnerPersistence, RunMessageRecord, RunPromptSnapshotRecord } from '../db/types.js';
 import { daemonError, forbidden, notFound, type DaemonError } from './errors.js';
 import { sanitizeLogText, sanitizeReviewValue } from './log-sanitizer.js';
@@ -47,15 +45,13 @@ export interface ReviewBundleService {
 export interface CreateReviewBundleServiceInput {
   config: DaemonConfig;
   persistence?: RunnerPersistence;
-  db?: RunnerDatabase;
   runLogService: RunLogService;
   extensionProviders?: ReviewBundleExtensionProvider[];
 }
 
 export function createReviewBundleService(input: CreateReviewBundleServiceInput): ReviewBundleService {
   const providers = input.extensionProviders ?? [];
-  const persistence =
-    input.persistence ?? (input.db ? createSqliteRunnerPersistence(input.db) : null);
+  const persistence = input.persistence;
   if (!persistence) {
     throw new Error('ReviewBundleService requires persistence');
   }

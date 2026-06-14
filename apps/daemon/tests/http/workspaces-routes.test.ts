@@ -7,6 +7,7 @@ import { parseDaemonConfig, type DaemonConfig } from '../../src/config/profiles.
 import { createWorkspaceService } from '../../src/core/workspace-service.js';
 import { openInMemoryDatabase } from '../../src/db/connection.js';
 import { applySchema } from '../../src/db/schema.js';
+import { createSqliteRunnerPersistence } from '../../src/db/sqlite-persistence.js';
 import { createApp } from '../../src/http/app.js';
 
 const servers: Array<{ close: (callback: () => void) => void }> = [];
@@ -83,11 +84,12 @@ async function withApp(
   const config = makeConfig(root);
   const db = openInMemoryDatabase();
   applySchema(db);
+  const persistence = createSqliteRunnerPersistence(db);
   const app = createApp({
     config,
-    db,
+    persistence,
     workspaceService: createWorkspaceService({
-      db,
+      persistence,
       ids: { workspaceId: () => 'ws_1' },
       clock: () => 1000,
     }),

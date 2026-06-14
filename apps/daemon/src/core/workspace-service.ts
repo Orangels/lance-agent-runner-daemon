@@ -4,8 +4,6 @@ import type { ProfileConfig } from '../config/profiles.js';
 import type { PrepareWorkspaceFileRequest, WorkspaceIdentity } from './run-types.js';
 import { assertSafePathSegment, assertWorkspaceRelativePath, isPathInsideRoot, resolveUnderRoot } from './path-safety.js';
 import { createId } from './ids.js';
-import type { RunnerDatabase } from '../db/connection.js';
-import { createSqliteRunnerPersistence } from '../db/sqlite-persistence.js';
 import type { RunnerPersistence, WorkspaceRecord } from '../db/types.js';
 import { DaemonError, daemonError, notFound } from './errors.js';
 
@@ -68,7 +66,6 @@ interface PrepareUploadedWorkspaceFileInput {
 
 interface WorkspaceServiceDependencies {
   persistence?: RunnerPersistence;
-  db?: RunnerDatabase;
   ids?: {
     workspaceId?: () => string;
   };
@@ -78,9 +75,7 @@ interface WorkspaceServiceDependencies {
 export function createWorkspaceService(dependencies: WorkspaceServiceDependencies): WorkspaceService {
   const now = dependencies.clock ?? Date.now;
   const nextWorkspaceId = dependencies.ids?.workspaceId ?? (() => createId('ws'));
-  const persistence =
-    dependencies.persistence ??
-    (dependencies.db ? createSqliteRunnerPersistence(dependencies.db) : undefined);
+  const persistence = dependencies.persistence;
   if (!persistence) {
     throw new Error('WorkspaceService requires persistence');
   }

@@ -12,6 +12,7 @@ import {
   upsertWorkspace,
 } from '../../src/db/repositories.js';
 import { applySchema } from '../../src/db/schema.js';
+import { createSqliteRunnerPersistence } from '../../src/db/sqlite-persistence.js';
 import {
   createRunLogService,
   type RunLogClient,
@@ -34,9 +35,10 @@ function makeDataDir(): string {
 function setup(input: { maxLogBytesPerRun?: number; logRetentionMs?: number } = {}) {
   const db = openInMemoryDatabase();
   applySchema(db);
+  const persistence = createSqliteRunnerPersistence(db);
   const dataDir = makeDataDir();
   const service = createRunLogService({
-    db,
+    persistence,
     config: {
       server: {
         host: '127.0.0.1',

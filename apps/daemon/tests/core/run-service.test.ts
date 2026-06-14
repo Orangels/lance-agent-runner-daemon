@@ -13,6 +13,7 @@ import {
   upsertWorkspace,
 } from '../../src/db/repositories.js';
 import { applySchema } from '../../src/db/schema.js';
+import { createSqliteRunnerPersistence } from '../../src/db/sqlite-persistence.js';
 import { DaemonError } from '../../src/core/errors.js';
 import {
   buildClaudeRunInvocation,
@@ -122,6 +123,7 @@ function setup(
   options.configure?.(config);
   const db = openInMemoryDatabase();
   applySchema(db);
+  const persistence = createSqliteRunnerPersistence(db);
   const workspace = upsertWorkspace(db, {
     id: 'ws_1',
     clientId: 'lqbot',
@@ -154,7 +156,7 @@ function setup(
   };
   const service = createRunService({
     config,
-    db,
+    persistence,
     runnerFactory,
     capabilityProbe: async () => options.capabilities ?? {},
     timer: timerHarness.timer,

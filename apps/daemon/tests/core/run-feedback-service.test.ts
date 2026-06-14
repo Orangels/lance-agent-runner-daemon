@@ -6,10 +6,12 @@ import {
   upsertWorkspace,
 } from '../../src/db/repositories.js';
 import { applySchema } from '../../src/db/schema.js';
+import { createSqliteRunnerPersistence } from '../../src/db/sqlite-persistence.js';
 
 function setup() {
   const db = openInMemoryDatabase();
   applySchema(db);
+  const persistence = createSqliteRunnerPersistence(db);
   const workspace = upsertWorkspace(db, {
     id: 'ws_1',
     clientId: 'lqbot',
@@ -33,7 +35,7 @@ function setup() {
     now: 2000,
   });
   const service = createRunFeedbackService({
-    db,
+    persistence,
     clock: () => 3000,
     ids: { feedbackId: () => 'feedback_1' },
   });

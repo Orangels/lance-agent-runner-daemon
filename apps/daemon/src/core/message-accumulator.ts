@@ -1,5 +1,3 @@
-import type { RunnerDatabase } from '../db/connection.js';
-import { createSqliteRunnerPersistence } from '../db/sqlite-persistence.js';
 import type { RunnerPersistence } from '../db/types.js';
 import type { RunEvent } from './run-events.js';
 import { runMessageFlushPolicy, type RunStatus } from './run-types.js';
@@ -15,7 +13,6 @@ export interface MessageAccumulatorTimer {
 
 export interface CreateMessageAccumulatorInput {
   persistence?: RunnerPersistence;
-  db?: RunnerDatabase;
   messageId: string;
   workspaceId?: string;
   conversationId?: string;
@@ -76,8 +73,7 @@ class MessageAccumulator {
   private writeQueue: Promise<void> = Promise.resolve();
 
   constructor(input: CreateMessageAccumulatorInput) {
-    const persistence =
-      input.persistence ?? (input.db ? createSqliteRunnerPersistence(input.db) : null);
+    const persistence = input.persistence;
     if (!persistence) {
       throw new Error('MessageAccumulator requires persistence');
     }

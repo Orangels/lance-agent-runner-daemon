@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { ProfileConfig } from '../../src/config/profiles.js';
 import { openInMemoryDatabase } from '../../src/db/connection.js';
 import { applySchema } from '../../src/db/schema.js';
+import { createSqliteRunnerPersistence } from '../../src/db/sqlite-persistence.js';
 import { DaemonError } from '../../src/core/errors.js';
 import { createWorkspaceService, getWorkspaceCwd } from '../../src/core/workspace-service.js';
 
@@ -39,8 +40,9 @@ function setup() {
   const profile = makeProfile(root, uploadsRoot);
   const db = openInMemoryDatabase();
   applySchema(db);
+  const persistence = createSqliteRunnerPersistence(db);
   const service = createWorkspaceService({
-    db,
+    persistence,
     ids: {
       workspaceId: () => 'ws_1',
     },

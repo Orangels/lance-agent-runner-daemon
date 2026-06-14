@@ -8,8 +8,6 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import type { ServerConfig } from '../config/profiles.js';
-import type { RunnerDatabase } from '../db/connection.js';
-import { createSqliteRunnerPersistence } from '../db/sqlite-persistence.js';
 import type { RunnerPersistence, RunLogRecord } from '../db/types.js';
 import { forbidden, notFound } from './errors.js';
 import { sanitizeLogText } from './log-sanitizer.js';
@@ -67,7 +65,6 @@ export interface RunLogService {
 
 interface CreateRunLogServiceInput {
   persistence?: RunnerPersistence;
-  db?: RunnerDatabase;
   config: { server: ServerConfig };
   clock?: () => number;
 }
@@ -79,8 +76,7 @@ export function createRunLogService(input: CreateRunLogServiceInput): RunLogServ
   const dataDir = path.resolve(input.config.server.dataDir);
   const logRoot = path.join(dataDir, 'logs', 'runs');
   const now = input.clock ?? Date.now;
-  const persistence =
-    input.persistence ?? (input.db ? createSqliteRunnerPersistence(input.db) : null);
+  const persistence = input.persistence;
   if (!persistence) {
     throw new Error('RunLogService requires persistence');
   }

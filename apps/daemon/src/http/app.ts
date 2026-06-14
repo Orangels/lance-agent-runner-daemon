@@ -9,8 +9,6 @@ import type { ArtifactService } from '../core/artifact-service.js';
 import type { UploadTempService } from '../core/upload-temp-service.js';
 import type { ReviewBundleService } from '../core/review-bundle-service.js';
 import type { RunFeedbackService } from '../core/run-feedback-service.js';
-import type { RunnerDatabase } from '../db/connection.js';
-import { createSqliteRunnerPersistence } from '../db/sqlite-persistence.js';
 import type { RunnerPersistence } from '../db/types.js';
 import { noopDaemonLogger, type DaemonLogger } from '../core/daemon-logger.js';
 import { zodErrorToDaemonError } from './validation.js';
@@ -27,7 +25,6 @@ import { createWorkspacesRouter } from './workspaces-routes.js';
 interface CreateAppDependencies {
   config: DaemonConfig;
   persistence?: RunnerPersistence;
-  db?: RunnerDatabase;
   workspaceService: WorkspaceService;
   runService?: RunService;
   runLogService?: RunLogService;
@@ -41,9 +38,7 @@ interface CreateAppDependencies {
 export function createApp(dependencies: CreateAppDependencies): express.Express {
   const app = express();
   const daemonLogger = dependencies.daemonLogger ?? noopDaemonLogger;
-  const persistence =
-    dependencies.persistence ??
-    (dependencies.db ? createSqliteRunnerPersistence(dependencies.db) : undefined);
+  const persistence = dependencies.persistence;
   if (!persistence) {
     throw new Error('createApp requires persistence');
   }

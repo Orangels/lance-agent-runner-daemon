@@ -12,6 +12,7 @@ import {
   upsertWorkspace,
 } from '../../src/db/repositories.js';
 import { applySchema } from '../../src/db/schema.js';
+import { createSqliteRunnerPersistence } from '../../src/db/sqlite-persistence.js';
 import { createApp } from '../../src/http/app.js';
 
 const servers: Array<{ close: (callback: () => void) => void }> = [];
@@ -90,6 +91,7 @@ async function withApp(callback: (context: { baseUrl: string; config: DaemonConf
   const config = makeConfig(root);
   const db = openInMemoryDatabase();
   applySchema(db);
+  const persistence = createSqliteRunnerPersistence(db);
   const workspace = upsertWorkspace(db, {
     id: 'ws_1',
     clientId: 'lqbot',
@@ -112,7 +114,7 @@ async function withApp(callback: (context: { baseUrl: string; config: DaemonConf
     profileSnapshot: { profileId: workspace.profileId },
     now: 2000,
   });
-  const runLogService = createRunLogService({ config, db });
+  const runLogService = createRunLogService({ config, persistence });
   const logs = await runLogService.openRunLogs({ runId: 'run_1' });
   logs.stdout(`authorization: Bearer secret-token ${config.profiles[0]!.sandboxRoot} output/report.docx`);
   logs.stderr('stderr tail');
@@ -121,8 +123,8 @@ async function withApp(callback: (context: { baseUrl: string; config: DaemonConf
 
   const app = createApp({
     config,
-    db,
-    workspaceService: createWorkspaceService({ db }),
+    persistence,
+    workspaceService: createWorkspaceService({ persistence }),
     runLogService,
   });
   const server = app.listen(0);

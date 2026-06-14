@@ -1,5 +1,3 @@
-import type { RunnerDatabase } from '../db/connection.js';
-import { createSqliteRunnerPersistence } from '../db/sqlite-persistence.js';
 import type { RunnerPersistence, RunFeedbackRecord } from '../db/types.js';
 import { createId } from './ids.js';
 import { sanitizeLogText, sanitizeReviewValue } from './log-sanitizer.js';
@@ -23,7 +21,6 @@ export interface RunFeedbackService {
 
 export interface CreateRunFeedbackServiceInput {
   persistence?: RunnerPersistence;
-  db?: RunnerDatabase;
   clock?: () => number;
   ids?: {
     feedbackId?: () => string;
@@ -33,7 +30,7 @@ export interface CreateRunFeedbackServiceInput {
 export function createRunFeedbackService(input: CreateRunFeedbackServiceInput): RunFeedbackService {
   const now = input.clock ?? Date.now;
   const nextFeedbackId = input.ids?.feedbackId ?? (() => createId('feedback'));
-  const persistence = input.persistence ?? (input.db ? createSqliteRunnerPersistence(input.db) : undefined);
+  const persistence = input.persistence;
   if (!persistence) {
     throw new Error('RunFeedbackService requires persistence');
   }

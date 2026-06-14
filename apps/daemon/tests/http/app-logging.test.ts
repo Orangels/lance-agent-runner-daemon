@@ -8,6 +8,7 @@ import type { RunService } from '../../src/core/run-service.js';
 import { createWorkspaceService } from '../../src/core/workspace-service.js';
 import { openInMemoryDatabase } from '../../src/db/connection.js';
 import { applySchema } from '../../src/db/schema.js';
+import { createSqliteRunnerPersistence } from '../../src/db/sqlite-persistence.js';
 import { createApp } from '../../src/http/app.js';
 
 const servers: Array<{ close: (callback: () => void) => void }> = [];
@@ -85,11 +86,12 @@ async function withApp(
   const config = makeConfig(root);
   const db = openInMemoryDatabase();
   applySchema(db);
+  const persistence = createSqliteRunnerPersistence(db);
   const { logger, records } = memoryLogger();
   const app = createApp({
     config,
-    db,
-    workspaceService: createWorkspaceService({ db }),
+    persistence,
+    workspaceService: createWorkspaceService({ persistence }),
     runService: input.runService as RunService | undefined,
     daemonLogger: logger,
   });

@@ -9,6 +9,7 @@ import { createWorkspaceService, getWorkspaceCwd } from '../../src/core/workspac
 import { openInMemoryDatabase } from '../../src/db/connection.js';
 import { insertRunQueued, replaceArtifactsForRun, upsertWorkspace } from '../../src/db/repositories.js';
 import { applySchema } from '../../src/db/schema.js';
+import { createSqliteRunnerPersistence } from '../../src/db/sqlite-persistence.js';
 import { createApp } from '../../src/http/app.js';
 
 const servers: Array<{ close: (callback: () => void) => void }> = [];
@@ -77,6 +78,7 @@ async function withApp(
   const config = makeConfig(root);
   const db = openInMemoryDatabase();
   applySchema(db);
+  const persistence = createSqliteRunnerPersistence(db);
   const workspace = upsertWorkspace(db, {
     id: 'ws_1',
     clientId: 'lqbot',
@@ -132,9 +134,9 @@ async function withApp(
 
   const app = createApp({
     config,
-    db,
-    workspaceService: createWorkspaceService({ db }),
-    artifactService: createArtifactService({ config, db }),
+    persistence,
+    workspaceService: createWorkspaceService({ persistence }),
+    artifactService: createArtifactService({ config, persistence }),
   });
   const server = app.listen(0);
   servers.push(server);

@@ -17,6 +17,7 @@ import {
   upsertWorkspace,
 } from '../../src/db/repositories.js';
 import { applySchema } from '../../src/db/schema.js';
+import { createSqliteRunnerPersistence } from '../../src/db/sqlite-persistence.js';
 
 const tempDirs: string[] = [];
 
@@ -70,6 +71,7 @@ async function setup(input: { canReadDebugEvents?: boolean; maxReviewBundleBytes
   );
   const db = openInMemoryDatabase();
   applySchema(db);
+  const persistence = createSqliteRunnerPersistence(db);
   const workspace = upsertWorkspace(db, {
     id: 'ws_1',
     clientId: 'lqbot',
@@ -154,13 +156,13 @@ async function setup(input: { canReadDebugEvents?: boolean; maxReviewBundleBytes
     metadata: { token: 'abc', artifactPath: 'output/report.docx' },
     now: 2600,
   });
-  const runLogService = createRunLogService({ config, db });
+  const runLogService = createRunLogService({ config, persistence });
   const logs = await runLogService.openRunLogs({ runId: 'run_1' });
   logs.stdout(`stdout ${config.profiles[0]!.sandboxRoot} output/report.docx`);
   logs.stderr('stderr');
   logs.debugEvent({ type: 'tool_result', content: 'token=my-token' } as never);
   logs.close();
-  const service = createReviewBundleService({ config, db, runLogService });
+  const service = createReviewBundleService({ config, persistence, runLogService });
   return {
     config,
     service,
