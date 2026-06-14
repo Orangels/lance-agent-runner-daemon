@@ -1070,6 +1070,7 @@ function buildRunIdempotencyFingerprint(input: {
   artifactRuleIds: string[];
 }): string {
   return stableJsonHash({
+    version: 1,
     profileId: input.profileId,
     workspaceId: input.workspaceId,
     kind: input.kind,

@@ -19,6 +19,7 @@ import {
   createRunService,
   type RunServiceRunnerFactory,
 } from '../../src/core/run-service.js';
+import { createTextSnapshot, stableJsonHash } from '../../src/core/snapshot-service.js';
 import type { ClaudeCliRunResult } from '../../src/core/cli-runner.js';
 import { getWorkspaceCwd } from '../../src/core/workspace-service.js';
 
@@ -275,6 +276,41 @@ describe('run service', () => {
     });
     expect(runners).toHaveLength(0);
     expect(pendingTimers()).toHaveLength(1);
+  });
+
+  it('stores a versioned idempotency fingerprint', () => {
+    const { config, db, workspace, service } = setup();
+
+    service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'generate',
+        skillId: 'report-writer',
+        prompt: 'Generate the report.',
+        artifactRuleIds: ['report-docx'],
+        idempotencyKey: 'dispatch:1',
+      },
+    });
+
+    expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.run.idempotencyFingerprint).toBe(
+      stableJsonHash({
+        version: 1,
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'generate',
+        skillId: 'report-writer',
+        promptMode: 'legacy',
+        currentPromptHash: createTextSnapshot('Generate the report.').hash,
+        conversationId: null,
+        collectionMode: 'lite',
+        contextPolicy: null,
+        businessContextHash: null,
+        model: 'sonnet',
+        artifactRuleIds: ['report-docx'],
+      }),
+    );
   });
 
   it('replays an existing idempotency key before queue capacity checks', () => {
