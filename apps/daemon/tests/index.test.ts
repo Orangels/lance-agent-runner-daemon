@@ -3,12 +3,16 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { parseDaemonConfig } from '../src/config/profiles.js';
-import { openRunnerDatabase } from '../src/db/connection.js';
-import { getRunDetail, insertRunQueued, upsertWorkspace } from '../src/db/repositories.js';
-import { applySchema } from '../src/db/schema.js';
+import { runPostgresMigrations } from '../src/db/postgres/migrate.js';
+import { createPostgresRunnerPersistence } from '../src/db/postgres/repositories.js';
 import { createServerContext, installShutdownHandlers } from '../src/index.js';
+import {
+  acquirePostgresTestLock,
+  requirePostgresTestUrl,
+  resetPostgresSchema,
+} from './helpers/postgres.js';
 
-function makeConfig(root: string, input: { uploadTempRetentionMs?: number } = {}) {
+function makeConfig(root: string, input: { uploadTempRetentionMs?: number; databaseUrl?: string } = {}) {
   return parseDaemonConfig(
     {
       server: {
@@ -19,7 +23,7 @@ function makeConfig(root: string, input: { uploadTempRetentionMs?: number } = {}
         maxQueueSize: 100,
         uploadTempRetentionMs: input.uploadTempRetentionMs,
         persistence: {
-          databaseUrl: 'postgres://user:pass@localhost:5432/lance_agent_daemon_test',
+          databaseUrl: input.databaseUrl ?? 'postgres://user:pass@localhost:5432/lance_agent_daemon_test',
         },
       },
       clients: [{ id: 'lqbot', apiKey: 'secret', allowedProfileIds: ['report-docx'] }],
@@ -52,49 +56,69 @@ function makeConfig(root: string, input: { uploadTempRetentionMs?: number } = {}
   );
 }
 
-describe('server startup context', () => {
+const postgresDescribe = requirePostgresTestUrl() === null ? describe.skip : describe;
+
+postgresDescribe('server startup context', () => {
   it('applies schema and marks old queued runs interrupted', async () => {
+    const databaseUrl = requirePostgresTestUrl()!;
+    const releaseTestLock = await acquirePostgresTestLock(databaseUrl);
     const root = mkdtempSync(path.join(tmpdir(), 'runner-index-test-'));
-    const config = makeConfig(root);
-    const setupDb = openRunnerDatabase(config.server.dataDir);
-    applySchema(setupDb);
-    const workspace = upsertWorkspace(setupDb, {
-      id: 'ws_1',
-      clientId: 'lqbot',
-      profileId: 'report-docx',
-      originId: 'lqbot',
-      userId: 'user_1',
-      projectId: 'project_123',
-      now: 1000,
-    });
-    insertRunQueued(setupDb, {
-      id: 'run_1',
-      workspaceId: workspace.id,
-      clientId: 'lqbot',
-      profileId: 'report-docx',
-      kind: 'revise',
-      prompt: 'Queued run',
-      now: 1000,
-    });
-    setupDb.close();
+    const config = makeConfig(root, { databaseUrl });
+    await resetPostgresSchema(databaseUrl);
+    await runPostgresMigrations({ databaseUrl, command: 'up' });
+    const setupPersistence = createPostgresRunnerPersistence({ databaseUrl });
+    try {
+      const workspace = await setupPersistence.upsertWorkspace({
+        id: 'ws_1',
+        clientId: 'lqbot',
+        profileId: 'report-docx',
+        originId: 'lqbot',
+        userId: 'user_1',
+        projectId: 'project_123',
+        now: 1000,
+      });
+      await setupPersistence.insertRunQueued({
+        id: 'run_1',
+        workspaceId: workspace.id,
+        clientId: 'lqbot',
+        profileId: 'report-docx',
+        kind: 'revise',
+        prompt: 'Queued run',
+        now: 1000,
+      });
+    } finally {
+      await setupPersistence.close();
+    }
 
-    const context = await createServerContext(config, { clock: () => 2000 });
+    try {
+      const context = await createServerContext(config, { clock: () => 2000 });
 
-    expect(context.runService).toBeDefined();
-    expect(context.artifactService).toBeDefined();
-    expect(context.uploadTempService.getTempRoot()).toBe(path.join(config.server.dataDir, 'uploads', 'tmp'));
-    expect(context.interruptedRuns).toBe(1);
-    expect(getRunDetail(context.db, { runId: 'run_1', clientId: 'lqbot' })?.run).toMatchObject({
-      status: 'interrupted',
-      errorCode: 'RUN_INTERRUPTED_BY_DAEMON_RESTART',
-      finishedAt: 2000,
-    });
-    context.db.close();
+      expect(context.runService).toBeDefined();
+      expect(context.artifactService).toBeDefined();
+      expect(context.uploadTempService.getTempRoot()).toBe(path.join(config.server.dataDir, 'uploads', 'tmp'));
+      expect(context.interruptedRuns).toBe(1);
+      await expect(
+        context.persistence.getRunDetail({ runId: 'run_1', clientId: 'lqbot' }),
+      ).resolves.toMatchObject({
+        run: {
+          status: 'interrupted',
+          errorCode: 'RUN_INTERRUPTED_BY_DAEMON_RESTART',
+          finishedAt: 2000,
+        },
+      });
+      await context.persistence.close();
+    } finally {
+      await releaseTestLock();
+    }
   });
 
   it('prunes stale upload temp directories on startup while preserving fresh ones', async () => {
+    const databaseUrl = requirePostgresTestUrl()!;
+    const releaseTestLock = await acquirePostgresTestLock(databaseUrl);
     const root = mkdtempSync(path.join(tmpdir(), 'runner-index-test-'));
-    const config = makeConfig(root, { uploadTempRetentionMs: 1000 });
+    const config = makeConfig(root, { uploadTempRetentionMs: 1000, databaseUrl });
+    await resetPostgresSchema(databaseUrl);
+    await runPostgresMigrations({ databaseUrl, command: 'up' });
     const tempRoot = path.join(config.server.dataDir, 'uploads', 'tmp');
     const staleUploadDir = path.join(tempRoot, 'upload_stale');
     const freshUploadDir = path.join(tempRoot, 'upload_fresh');
@@ -105,12 +129,16 @@ describe('server startup context', () => {
     utimesSync(staleUploadDir, new Date(8000), new Date(8000));
     utimesSync(freshUploadDir, new Date(9500), new Date(9500));
 
-    const context = await createServerContext(config, { clock: () => 10_000 });
+    try {
+      const context = await createServerContext(config, { clock: () => 10_000 });
 
-    expect(existsSync(staleUploadDir)).toBe(false);
-    expect(existsSync(freshUploadDir)).toBe(true);
-    expect(readdirSync(tempRoot)).toEqual(['upload_fresh']);
-    context.db.close();
+      expect(existsSync(staleUploadDir)).toBe(false);
+      expect(existsSync(freshUploadDir)).toBe(true);
+      expect(readdirSync(tempRoot)).toEqual(['upload_fresh']);
+      await context.persistence.close();
+    } finally {
+      await releaseTestLock();
+    }
   });
 
   it('can import the index module without starting the server', async () => {

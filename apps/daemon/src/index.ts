@@ -13,15 +13,13 @@ import { createRunLogService, type RunLogService } from './core/run-log-service.
 import { createRunService, type RunService } from './core/run-service.js';
 import { createUploadTempService, type UploadTempService } from './core/upload-temp-service.js';
 import { createWorkspaceService, type WorkspaceService } from './core/workspace-service.js';
-import { openRunnerDatabase, type RunnerDatabase } from './db/connection.js';
-import { applySchema } from './db/schema.js';
-import { createSqliteRunnerPersistence } from './db/sqlite-persistence.js';
+import { assertPostgresSchemaReady } from './db/postgres/migrate.js';
+import { createPostgresRunnerPersistence } from './db/postgres/repositories.js';
 import type { RunnerPersistence } from './db/types.js';
 import { createApp } from './http/app.js';
 
 export interface ServerContext {
   config: DaemonConfig;
-  db: RunnerDatabase;
   persistence: RunnerPersistence;
   workspaceService: WorkspaceService;
   artifactService: ArtifactService;
@@ -51,9 +49,10 @@ export async function createServerContext(
   options: CreateServerContextOptions = {},
 ): Promise<ServerContext> {
   const daemonLogger = options.daemonLogger ?? createDaemonLogger({ dataDir: config.server.dataDir });
-  const db = openRunnerDatabase(config.server.dataDir);
-  applySchema(db);
-  const persistence = createSqliteRunnerPersistence(db);
+  await assertPostgresSchemaReady(config.server.persistence.databaseUrl);
+  const persistence = createPostgresRunnerPersistence({
+    databaseUrl: config.server.persistence.databaseUrl,
+  });
   const now = options.clock ?? Date.now;
   const startupNow = now();
   const interruptedRuns = await persistence.markInterruptedRunsOnStartup(startupNow);
@@ -85,7 +84,6 @@ export async function createServerContext(
 
   return {
     config,
-    db,
     persistence,
     workspaceService,
     artifactService,
