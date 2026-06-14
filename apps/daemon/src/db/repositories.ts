@@ -50,6 +50,8 @@ export interface RunRecord {
   promptSnapshotPersisted: boolean;
   businessContextHash: string | null;
   artifactRuleIds: string[] | null;
+  idempotencyKey: string | null;
+  idempotencyFingerprint: string | null;
   lastRunEventId: string | null;
   queuedAt: number | null;
   startedAt: number | null;
@@ -213,6 +215,8 @@ interface RunRow {
   prompt_snapshot_persisted: number;
   business_context_hash: string | null;
   artifact_rule_ids_json: string | null;
+  idempotency_key: string | null;
+  idempotency_fingerprint: string | null;
   last_run_event_id: string | null;
   queued_at: number | null;
   started_at: number | null;
@@ -491,6 +495,8 @@ export function insertRunQueued(
     promptSnapshotPersisted?: boolean;
     businessContextHash?: string | null;
     artifactRuleIds?: string[];
+    idempotencyKey?: string | null;
+    idempotencyFingerprint?: string | null;
     metadata?: unknown;
     now: number;
   },
@@ -501,9 +507,10 @@ export function insertRunQueued(
       id, workspace_id, profile_id, client_id, kind, skill_id, status, prompt,
       prompt_mode, current_prompt, context_policy_json, collection_mode, prompt_snapshot_hash,
       prompt_snapshot_char_count, prompt_snapshot_byte_count, prompt_snapshot_persisted,
-      business_context_hash, artifact_rule_ids_json, queued_at, metadata_json, created_at, updated_at
+      business_context_hash, artifact_rule_ids_json, idempotency_key, idempotency_fingerprint,
+      queued_at, metadata_json, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
   ).run(
     input.id,
@@ -524,6 +531,8 @@ export function insertRunQueued(
     input.promptSnapshotPersisted ? 1 : 0,
     input.businessContextHash ?? null,
     stringifyNullable(input.artifactRuleIds),
+    input.idempotencyKey ?? null,
+    input.idempotencyFingerprint ?? null,
     input.now,
     stringifyNullable(input.metadata),
     input.now,
@@ -555,6 +564,8 @@ export function createRunQueuedWithMessagesAndSnapshot(
     businessContextHash?: string | null;
     persistBusinessContext?: boolean;
     artifactRuleIds?: string[];
+    idempotencyKey?: string | null;
+    idempotencyFingerprint?: string | null;
     metadata?: unknown;
     profileSnapshot: unknown;
     now: number;
@@ -591,6 +602,8 @@ export function createRunQueuedWithMessagesAndSnapshot(
       collectionMode: input.collectionMode,
       businessContextHash: input.businessContextHash,
       artifactRuleIds: input.artifactRuleIds,
+      idempotencyKey: input.idempotencyKey,
+      idempotencyFingerprint: input.idempotencyFingerprint,
       metadata: input.metadata,
       now: input.now,
     });
@@ -1587,6 +1600,41 @@ export function getActiveRunForWorkspace(db: RunnerDatabase, workspaceId: string
   return row ? mapRun(row) : null;
 }
 
+export function getRunByIdempotencyKey(
+  db: RunnerDatabase,
+  input: {
+    clientId: string;
+    profileId: string;
+    workspaceId: string;
+    idempotencyKey: string;
+  },
+): RunRecord | null {
+  const row = db
+    .prepare(
+      `
+      SELECT *
+      FROM runs
+      WHERE client_id = ?
+        AND profile_id = ?
+        AND workspace_id = ?
+        AND idempotency_key = ?
+      `,
+    )
+    .get(input.clientId, input.profileId, input.workspaceId, input.idempotencyKey) as
+    | RunRow
+    | undefined;
+
+  return row ? mapRun(row) : null;
+}
+
+export function isSqliteUniqueConstraintError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    'code' in error &&
+    (error as { code?: unknown }).code === 'SQLITE_CONSTRAINT_UNIQUE'
+  );
+}
+
 function insertProfileSnapshot(
   db: RunnerDatabase,
   input: { runId: string; profile: unknown; now: number },
@@ -1651,6 +1699,8 @@ function mapRun(row: RunRow): RunRecord {
     promptSnapshotPersisted: row.prompt_snapshot_persisted === 1,
     businessContextHash: row.business_context_hash,
     artifactRuleIds: parseNullable(row.artifact_rule_ids_json) as string[] | null,
+    idempotencyKey: row.idempotency_key,
+    idempotencyFingerprint: row.idempotency_fingerprint,
     lastRunEventId: row.last_run_event_id,
     queuedAt: row.queued_at,
     startedAt: row.started_at,

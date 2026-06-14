@@ -87,6 +87,7 @@ REVIEW_BUNDLE_TOO_LARGE
 SKILL_UNAVAILABLE
 SKILL_STAGING_FAILED
 PROMPT_COMPOSITION_FAILED
+IDEMPOTENCY_KEY_CONFLICT
 RUN_QUEUE_FULL
 WORKSPACE_RUN_ACTIVE
 RUN_NOT_CANCELABLE
@@ -360,6 +361,7 @@ Legacy generate 示例：
   "prompt": "请基于 input/source.docx 生成报告，输出到 output/report.docx。",
   "model": "sonnet",
   "artifactRuleIds": ["report-docx"],
+  "idempotencyKey": "origin:business_task_001:1",
   "eventVisibility": "normal",
   "metadata": {
     "businessMessageId": "msg_001"
@@ -425,8 +427,11 @@ Business-context 示例：
 | `skillId` | string | 见矩阵 | `legacy + generate` 必填；`legacy + revise` 禁止；`business-context` 必填；`daemon-composed + generate` 必填；`daemon-composed + revise` 可选。1-128 字符。 |
 | `model` | string | no | 不传使用 profile `defaultModel`；传入时必须在 `allowedModels` 内。 |
 | `artifactRuleIds` | string[] | no | 最多 32 个；不传使用 profile `defaultArtifactRuleIds`。 |
+| `idempotencyKey` | string | no | 同一次业务派发的幂等 key，1-128 字符。同一 client/profile/workspace 下同 key + 相同 run 参数会返回旧 run；同 key + 不同 run 参数返回 `IDEMPOTENCY_KEY_CONFLICT`。用户主动 retry / 新任务必须换新 key。 |
 | `eventVisibility` | `quiet` / `normal` / `debug` | no | 只能降低到 profile 可见性，不会超过 profile/client 权限。 |
 | `metadata` | object | no | 业务自定义 JSON，daemon 不解释。 |
+
+`idempotencyKey` 是 daemon 通用 dispatch key，不是业务任务 id 语义本身。该字段明文存储，业务端不要放 API key、凭证、个人敏感信息、完整 prompt 或其他敏感 payload。
 
 `kind × promptMode × skillId` 约束：
 
@@ -447,6 +452,8 @@ conversation 级 `conversation_seq` 排序；`contextPolicy` 默认值为
 
 ### Response 202
 
+首次创建新 run：
+
 ```json
 {
   "runId": "run_xxx",
@@ -456,6 +463,22 @@ conversation 级 `conversation_seq` 排序；`contextPolicy` 默认值为
   "assistantMessageId": "msg_assistant_xxx"
 }
 ```
+
+同一 `idempotencyKey` 重试并命中旧 run：
+
+```json
+{
+  "runId": "run_xxx",
+  "status": "running",
+  "conversationId": "conv_xxx",
+  "userMessageId": "msg_user_xxx",
+  "assistantMessageId": "msg_assistant_xxx",
+  "idempotentReplay": true
+}
+```
+
+replay 时不会重新入队或重新执行；`status` 是旧 run 当前状态，可能是
+`queued/running/succeeded/failed/canceled/interrupted`。
 
 ### Common Errors
 
@@ -469,6 +492,7 @@ conversation 级 `conversation_seq` 排序；`contextPolicy` 默认值为
 | 403 | `PROFILE_NOT_ALLOWED` | client 不能使用该 profile。 |
 | 403 | `COLLECTION_MODE_NOT_ALLOWED` | 请求的 `collectionMode` 超过 profile/client 权限。 |
 | 404 | `NOT_FOUND` | workspace 不存在或不属于该 client。 |
+| 409 | `IDEMPOTENCY_KEY_CONFLICT` | 同一个 `idempotencyKey` 已被同 client/profile/workspace 下不同 run 参数使用。 |
 | 429 | `RUN_QUEUE_FULL` | 队列已满，未创建 run row。 |
 
 ## GET /api/runs

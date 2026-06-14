@@ -4,6 +4,7 @@ import {
   createRunQueuedWithMessagesAndSnapshot,
   getActiveRunForWorkspace,
   getConversationForWorkspace,
+  getRunByIdempotencyKey,
   getRunLogForRunForClient,
   getOrCreateDefaultConversation,
   getProfileSnapshotForRun,
@@ -243,6 +244,86 @@ describe('run repository', () => {
       createdAt: 5000,
     });
     expect(getProfileSnapshotForRun(db, 'run_1')?.profile).toEqual(created.profileSnapshot.profile);
+  });
+
+  it('stores and looks up runs by client-scoped idempotency key', () => {
+    const { db, workspace } = insertWorkspaceFixture();
+
+    createRunQueuedWithMessagesAndSnapshot(db, {
+      runId: 'run_1',
+      defaultConversationId: 'conv_1',
+      userMessageId: 'msg_user',
+      assistantMessageId: 'msg_assistant',
+      workspaceId: workspace.id,
+      profileId: 'report-docx',
+      clientId: 'lqbot',
+      kind: 'generate',
+      skillId: 'report-writer',
+      prompt: 'Generate.',
+      artifactRuleIds: ['report-docx'],
+      idempotencyKey: 'dispatch:1',
+      idempotencyFingerprint: 'fingerprint-a',
+      profileSnapshot: {},
+      now: 1000,
+    });
+
+    expect(
+      getRunByIdempotencyKey(db, {
+        clientId: 'lqbot',
+        profileId: 'report-docx',
+        workspaceId: 'ws_1',
+        idempotencyKey: 'dispatch:1',
+      }),
+    ).toEqual(expect.objectContaining({
+      id: 'run_1',
+      idempotencyKey: 'dispatch:1',
+      idempotencyFingerprint: 'fingerprint-a',
+    }));
+
+    expect(
+      getRunByIdempotencyKey(db, {
+        clientId: 'other',
+        profileId: 'report-docx',
+        workspaceId: 'ws_1',
+        idempotencyKey: 'dispatch:1',
+      }),
+    ).toBeNull();
+
+    expect(
+      getRunByIdempotencyKey(db, {
+        clientId: 'lqbot',
+        profileId: 'other-profile',
+        workspaceId: 'ws_1',
+        idempotencyKey: 'dispatch:1',
+      }),
+    ).toBeNull();
+
+    expect(
+      getRunByIdempotencyKey(db, {
+        clientId: 'lqbot',
+        profileId: 'report-docx',
+        workspaceId: 'ws_2',
+        idempotencyKey: 'dispatch:1',
+      }),
+    ).toBeNull();
+
+    updateRunStatus(db, {
+      runId: 'run_1',
+      status: 'interrupted',
+      now: 2000,
+    });
+
+    expect(
+      getRunByIdempotencyKey(db, {
+        clientId: 'lqbot',
+        profileId: 'report-docx',
+        workspaceId: 'ws_1',
+        idempotencyKey: 'dispatch:1',
+      }),
+    ).toEqual(expect.objectContaining({
+      id: 'run_1',
+      status: 'interrupted',
+    }));
   });
 
   it('reuses an explicit conversation when it belongs to the workspace', () => {

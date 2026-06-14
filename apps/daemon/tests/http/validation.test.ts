@@ -158,6 +158,32 @@ describe('run create request validation', () => {
     expect(parsed.promptMode).toBeUndefined();
   });
 
+  it('accepts idempotencyKey on run create requests', () => {
+    const parsed = createRunRequestSchema.parse({
+      profileId: 'report-docx',
+      workspaceId: 'ws_1',
+      kind: 'generate',
+      skillId: 'report-gen',
+      prompt: 'Generate report.',
+      idempotencyKey: 'origin:task_001:1',
+    });
+
+    expect(parsed.idempotencyKey).toBe('origin:task_001:1');
+  });
+
+  it('rejects empty idempotencyKey on run create requests', () => {
+    expect(() =>
+      createRunRequestSchema.parse({
+        profileId: 'report-docx',
+        workspaceId: 'ws_1',
+        kind: 'generate',
+        skillId: 'report-gen',
+        prompt: 'Generate report.',
+        idempotencyKey: '',
+      }),
+    ).toThrow();
+  });
+
   it('accepts a revise run with only workspaceId and prompt fields', () => {
     const parsed = createRunRequestSchema.parse({
       profileId: 'report-docx',
