@@ -21,6 +21,7 @@ Relative filesystem paths inside the config file are resolved from the directory
 ```bash
 cp config.example.json .claude-runner/config.local.json
 export CLAUDE_RUNNER_LQBOT_API_KEY="replace-with-a-secret"
+export CLAUDE_RUNNER_DATABASE_URL="postgres://user:pass@localhost:5432/lance_agent_daemon"
 pnpm dev:daemon
 ```
 
@@ -60,18 +61,12 @@ Example:
 
 ### `server.dataDir`
 
-Daemon runtime data directory. The daemon stores SQLite, service logs, run logs, and upload temp files under this directory.
+Daemon runtime data directory. The daemon stores service logs, run logs, upload temp files, and workspace-local files under this directory.
 
 With the example value:
 
 ```json
 "dataDir": "data"
-```
-
-the SQLite file is:
-
-```text
-.claude-runner/data/runner.sqlite
 ```
 
 Service-level logs are written as JSON lines:
@@ -82,6 +77,22 @@ Service-level logs are written as JSON lines:
 ```
 
 `daemon.log` records daemon startup/shutdown, HTTP request summaries, and service events. `daemon-error.log` receives `warn` and `error` events, including local stack traces for unexpected daemon errors. These service logs are local files only; they are not exposed through the run logs API.
+
+### `server.persistence`
+
+Durable daemon persistence configuration.
+
+PostgreSQL is required after the persistence migration:
+
+```json
+"persistence": {
+  "databaseUrl": "env:CLAUDE_RUNNER_DATABASE_URL"
+}
+```
+
+The daemon validates this config at startup and refuses to start if the env var is missing or if PostgreSQL migrations have not been applied. Use env indirection for shared environments so database credentials are not written into tracked config files.
+
+Runtime persistence operations use asynchronous PostgreSQL driver calls. SQLite is no longer a runtime backend after this migration; an existing `.claude-runner/data/runner.sqlite` file is preserved only as a migration source and historical backup.
 
 ### `server.globalConcurrency`
 

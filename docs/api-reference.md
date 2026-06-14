@@ -56,6 +56,10 @@ Content-Type: text/event-stream
 1770000000000
 ```
 
+### Persistence Backend
+
+当前持久化迁移到 PostgreSQL 不改变 HTTP/SSE API 的请求或响应结构。业务端仍按本文件的 workspace、upload/prepare、generate/revise、poll/SSE、cancel、artifacts、logs 和 idempotency 流程调用。
+
 ### 错误响应
 
 统一结构：

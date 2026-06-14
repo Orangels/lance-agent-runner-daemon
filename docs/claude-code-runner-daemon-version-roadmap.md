@@ -126,13 +126,13 @@ The following capabilities are intentionally deferred to later versions. Do not 
 
 ### Persistence Backend V2
 
-- Migrate the daemon's current SQLite persistence layer to PostgreSQL.
+- Migrate the daemon's current SQLite persistence layer to PostgreSQL. This is being implemented as a PostgreSQL-only runtime migration, not a dual-backend mode.
 - Keep repository/service boundaries generic so HTTP and core run semantics do not depend on the selected database engine.
 - Define a migration path for existing SQLite data, including workspaces, conversations, runs, run messages, artifacts, run logs, snapshots, feedback, and idempotency fields.
 - Preserve run-create idempotency guarantees with PostgreSQL unique constraints or equivalent transactional behavior.
 - Revisit startup interruption handling, queue consistency, and transaction isolation under PostgreSQL.
 - Add deployment configuration, local development setup, migration tooling, backup/restore notes, and rollback guidance.
-- Keep SQLite available only if a separate compatibility plan explicitly requires dual-backend support.
+- Preserve SQLite only as a read-only migration source and historical backup after cutover.
 
 ### Queue Scale-Out
 
