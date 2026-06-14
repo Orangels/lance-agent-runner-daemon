@@ -95,6 +95,22 @@ The following capabilities are intentionally deferred to later versions. Do not 
 - Queue depth and per-profile concurrency metrics.
 - External alerting integration.
 
+### Webhook Notifications
+
+- Optional business-callback webhook support for callers that do not want to rely only on polling or SSE.
+- Allow a run-create request to include a caller-provided webhook target and callback metadata after a dedicated API contract is defined.
+- This should not be implemented by polling run status from inside the daemon. The daemon already owns the status transition points, so webhook notification should be triggered from durable state changes.
+- Persist webhook configuration with the run, then create webhook delivery jobs when run status changes are committed.
+- Use a webhook delivery/outbox table and a delivery worker for timeout, retry, backoff, and audit instead of blocking the main run execution path on a remote callback.
+- Define a daemon-owned webhook payload schema for run status changes, including run id, workspace id, profile id, kind, status, timestamps, error summary, artifact summary when available, and idempotency replay context when relevant.
+- Trigger webhook delivery when durable run status changes, especially terminal states such as `succeeded`, `failed`, `canceled`, and `interrupted`.
+- Cover normal transitions such as `queued` and `running`, terminal transitions from `finishRun()`, and restart recovery transitions where old queued/running rows are marked `interrupted`.
+- Keep webhook delivery generic and client-scoped; do not embed product-specific business fields outside caller-provided metadata.
+- Add retry, timeout, signing, secret handling, idempotent delivery event ids, and delivery audit logs.
+- Add SSRF protections such as URL validation, allowed hosts or networks, and no redirects to unsafe targets before accepting arbitrary callback URLs.
+- Preserve polling, SSE, and artifact APIs as the source of truth; webhook delivery should be a notification mechanism, not the only way to recover state.
+- Before implementation, write a dedicated design plan and review the run-create API shape, webhook security model, delivery durability, retry semantics, and business-side idempotency expectations in detail.
+
 ### Runtime Configuration
 
 - Profile hot reload.
