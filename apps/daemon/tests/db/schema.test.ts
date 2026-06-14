@@ -78,6 +78,8 @@ describe('sqlite schema', () => {
         'prompt_snapshot_byte_count',
         'prompt_snapshot_persisted',
         'business_context_hash',
+        'idempotency_key',
+        'idempotency_fingerprint',
       ]),
     );
   });
@@ -137,6 +139,7 @@ describe('sqlite schema', () => {
         'idx_run_messages_conversation_seq',
         'idx_run_messages_run',
         'idx_run_feedback_run_created',
+        'idx_runs_idempotency_key',
         'idx_runs_status_created',
         'idx_runs_workspace_created',
         'idx_workspaces_client_profile_key',
@@ -161,5 +164,31 @@ describe('sqlite schema', () => {
     const row = db.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number };
 
     expect(row.foreign_keys).toBe(1);
+  });
+
+  it('migrates existing runs tables to add idempotency columns and index', () => {
+    const db = openInMemoryDatabase();
+    db.exec(`
+      CREATE TABLE runs (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        client_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        skill_id TEXT,
+        status TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        metadata_json TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `);
+
+    applySchema(db);
+
+    expect(listColumns(db, 'runs')).toEqual(
+      expect.arrayContaining(['idempotency_key', 'idempotency_fingerprint']),
+    );
+    expect(listNames(db, 'index')).toContain('idx_runs_idempotency_key');
   });
 });

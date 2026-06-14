@@ -1,4 +1,5 @@
 export type RunKind = 'generate' | 'revise';
+export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled' | 'interrupted';
 export type PromptMode = 'legacy' | 'business-context' | 'daemon-composed';
 export type CollectionMode = 'lite' | 'diagnostic' | 'review';
 export type EventVisibility = 'quiet' | 'normal' | 'debug';
@@ -56,14 +57,16 @@ export interface CreateRunRequest {
   artifactRuleIds?: string[];
   eventVisibility?: EventVisibility;
   metadata?: Record<string, unknown>;
+  idempotencyKey?: string;
 }
 
 export interface CreateRunResponse {
   runId: string;
-  status: 'queued';
+  status: RunStatus;
   conversationId: string;
   userMessageId: string;
   assistantMessageId: string;
+  idempotentReplay?: true;
 }
 
 export interface CancelRunResponse {

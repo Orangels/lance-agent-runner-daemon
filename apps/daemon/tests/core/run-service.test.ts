@@ -241,6 +241,201 @@ describe('run service', () => {
     expect(runners).toHaveLength(1);
   });
 
+  it('replays an existing run for the same idempotency key and fingerprint', () => {
+    const { config, workspace, service, runners, pendingTimers } = setup();
+
+    const first = service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'generate',
+        skillId: 'report-writer',
+        prompt: 'Generate the report.',
+        artifactRuleIds: ['report-docx'],
+        idempotencyKey: 'dispatch:1',
+      },
+    });
+    const second = service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'generate',
+        skillId: 'report-writer',
+        prompt: 'Generate the report.',
+        artifactRuleIds: ['report-docx'],
+        idempotencyKey: 'dispatch:1',
+      },
+    });
+
+    expect(second).toEqual({
+      ...first,
+      idempotentReplay: true,
+    });
+    expect(runners).toHaveLength(0);
+    expect(pendingTimers()).toHaveLength(1);
+  });
+
+  it('replays an existing idempotency key before queue capacity checks', () => {
+    const { config, workspace, service } = setup({
+      configure: (config) => {
+        config.server.globalConcurrency = 1;
+        config.server.maxQueueSize = 0;
+      },
+    });
+
+    const first = service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'generate',
+        skillId: 'report-writer',
+        prompt: 'Generate the report.',
+        artifactRuleIds: ['report-docx'],
+        idempotencyKey: 'dispatch:1',
+      },
+    });
+    const replay = service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'generate',
+        skillId: 'report-writer',
+        prompt: 'Generate the report.',
+        artifactRuleIds: ['report-docx'],
+        idempotencyKey: 'dispatch:1',
+      },
+    });
+
+    expect(replay).toEqual({
+      ...first,
+      idempotentReplay: true,
+    });
+  });
+
+  it('replays an interrupted run after daemon shutdown for the same idempotency key', async () => {
+    const { config, workspace, service } = setup();
+
+    const request = {
+      profileId: 'report-docx',
+      workspaceId: workspace.id,
+      kind: 'generate' as const,
+      skillId: 'report-writer',
+      prompt: 'Generate the report.',
+      artifactRuleIds: ['report-docx'],
+      idempotencyKey: 'dispatch:1',
+    };
+    const first = service.createRun({
+      client: config.clients[0]!,
+      request,
+    });
+
+    await service.shutdownActive();
+    const replay = service.createRun({
+      client: config.clients[0]!,
+      request,
+    });
+
+    expect(replay.runId).toBe(first.runId);
+    expect(replay.status).toBe('interrupted');
+    expect(replay.idempotentReplay).toBe(true);
+  });
+
+  it('rejects reuse of an idempotency key with different run parameters', () => {
+    const { config, workspace, service } = setup();
+
+    service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'generate',
+        skillId: 'report-writer',
+        prompt: 'Generate the report.',
+        artifactRuleIds: ['report-docx'],
+        idempotencyKey: 'dispatch:1',
+      },
+    });
+
+    expect(() =>
+      service.createRun({
+        client: config.clients[0]!,
+        request: {
+          profileId: 'report-docx',
+          workspaceId: workspace.id,
+          kind: 'generate',
+          skillId: 'report-writer',
+          prompt: 'Generate a different report.',
+          artifactRuleIds: ['report-docx'],
+          idempotencyKey: 'dispatch:1',
+        },
+      }),
+    ).toThrow(expect.objectContaining({
+      code: 'IDEMPOTENCY_KEY_CONFLICT',
+      status: 409,
+    }));
+  });
+
+  it('creates a new run when idempotency key changes', () => {
+    const { config, workspace, service } = setup();
+
+    const first = service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'generate',
+        skillId: 'report-writer',
+        prompt: 'Generate the report.',
+        artifactRuleIds: ['report-docx'],
+        idempotencyKey: 'dispatch:1',
+      },
+    });
+    const second = service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'generate',
+        skillId: 'report-writer',
+        prompt: 'Generate the report.',
+        artifactRuleIds: ['report-docx'],
+        idempotencyKey: 'dispatch:2',
+      },
+    });
+
+    expect(second.runId).not.toBe(first.runId);
+    expect(second.idempotentReplay).toBeUndefined();
+  });
+
+  it('does not apply idempotency when no idempotency key is provided', () => {
+    const { config, workspace, service } = setup();
+
+    const first = service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'revise',
+        prompt: 'Revise.',
+      },
+    });
+    const second = service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'revise',
+        prompt: 'Revise.',
+      },
+    });
+
+    expect(second.runId).not.toBe(first.runId);
+  });
+
   it('rejects explicit conversation ids owned by a different workspace before inserting a run', () => {
     const { config, db, workspace, service } = setup();
     const otherWorkspace = upsertWorkspace(db, {

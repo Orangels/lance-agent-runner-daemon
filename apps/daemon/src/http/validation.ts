@@ -103,6 +103,7 @@ export const createRunRequestSchema: z.ZodType<CreateRunRequest> = z
     artifactRuleIds: z.array(runShortStringSchema).max(32).optional(),
     eventVisibility: z.enum(eventVisibilityLevels).optional(),
     metadata: metadataSchema.optional(),
+    idempotencyKey: runShortStringSchema.optional(),
   })
   .strict()
   .superRefine((value, context) => {

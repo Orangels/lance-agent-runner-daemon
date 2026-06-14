@@ -43,6 +43,7 @@ export const daemonErrorCodes = [
   'SKILL_UNAVAILABLE',
   'SKILL_STAGING_FAILED',
   'PROMPT_COMPOSITION_FAILED',
+  'IDEMPOTENCY_KEY_CONFLICT',
   'RUN_QUEUE_FULL',
   'WORKSPACE_RUN_ACTIVE',
   'RUN_NOT_CANCELABLE',
@@ -128,6 +129,7 @@ export interface CreateRunRequest {
   artifactRuleIds?: string[];
   eventVisibility?: EventVisibility;
   metadata?: Record<string, unknown>;
+  idempotencyKey?: string;
 }
 
 export interface ContextPolicy {

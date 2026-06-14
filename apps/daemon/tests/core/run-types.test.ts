@@ -71,6 +71,7 @@ describe('run contract constants', () => {
       'SKILL_UNAVAILABLE',
       'SKILL_STAGING_FAILED',
       'PROMPT_COMPOSITION_FAILED',
+      'IDEMPOTENCY_KEY_CONFLICT',
       'RUN_QUEUE_FULL',
       'WORKSPACE_RUN_ACTIVE',
       'RUN_NOT_CANCELABLE',
@@ -87,6 +88,10 @@ describe('run contract constants', () => {
       'PATH_NOT_ALLOWED',
       'INVALID_PATH_SEGMENT',
     ]);
+  });
+
+  it('includes idempotency conflict in public error codes', () => {
+    expect(daemonErrorCodes).toContain('IDEMPOTENCY_KEY_CONFLICT');
   });
 });
 

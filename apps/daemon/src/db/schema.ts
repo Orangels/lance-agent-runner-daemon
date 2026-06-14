@@ -53,6 +53,8 @@ export function applySchema(db: RunnerDatabase): void {
       prompt_snapshot_persisted INTEGER NOT NULL DEFAULT 0,
       business_context_hash TEXT,
       artifact_rule_ids_json TEXT,
+      idempotency_key TEXT,
+      idempotency_fingerprint TEXT,
       last_run_event_id TEXT,
       queued_at INTEGER,
       started_at INTEGER,
@@ -192,6 +194,7 @@ export function applySchema(db: RunnerDatabase): void {
   ensureRunMessagesThinkingContentColumn(db);
   ensureRunMessagesConversationSeqColumn(db);
   ensureRunColumns(db);
+  ensureRunIdempotencyIndex(db);
 }
 
 function ensureRunMessagesThinkingContentColumn(db: RunnerDatabase): void {
@@ -216,6 +219,16 @@ function ensureRunColumns(db: RunnerDatabase): void {
   ensureColumn(db, 'runs', 'prompt_snapshot_byte_count', 'INTEGER');
   ensureColumn(db, 'runs', 'prompt_snapshot_persisted', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'runs', 'business_context_hash', 'TEXT');
+  ensureColumn(db, 'runs', 'idempotency_key', 'TEXT');
+  ensureColumn(db, 'runs', 'idempotency_fingerprint', 'TEXT');
+}
+
+function ensureRunIdempotencyIndex(db: RunnerDatabase): void {
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_idempotency_key
+      ON runs(client_id, profile_id, workspace_id, idempotency_key)
+      WHERE idempotency_key IS NOT NULL
+  `);
 }
 
 function ensureColumn(

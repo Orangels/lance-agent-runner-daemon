@@ -266,6 +266,75 @@ describe('runs routes', () => {
     });
   });
 
+  it('replays POST /api/runs with the same idempotency key', async () => {
+    await withApp(async ({ baseUrl, workspaceId }) => {
+      const body = {
+        profileId: 'report-docx',
+        workspaceId,
+        kind: 'generate',
+        skillId: 'report-writer',
+        prompt: 'Generate.',
+        artifactRuleIds: ['report-docx'],
+        idempotencyKey: 'dispatch:1',
+      };
+
+      const first = await fetch(`${baseUrl}/api/runs`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer secret', 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const firstPayload = await first.json() as Record<string, unknown>;
+      const second = await fetch(`${baseUrl}/api/runs`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer secret', 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      expect(second.status).toBe(202);
+      const secondPayload = await second.json() as Record<string, unknown>;
+      expect(secondPayload.runId).toBe(firstPayload.runId);
+      expect(secondPayload.conversationId).toBe(firstPayload.conversationId);
+      expect(secondPayload.userMessageId).toBe(firstPayload.userMessageId);
+      expect(secondPayload.assistantMessageId).toBe(firstPayload.assistantMessageId);
+      expect(secondPayload.idempotentReplay).toBe(true);
+      expect(['queued', 'running', 'succeeded', 'failed', 'canceled', 'interrupted']).toContain(
+        secondPayload.status,
+      );
+    });
+  });
+
+  it('returns 409 when idempotency key is reused with different parameters', async () => {
+    await withApp(async ({ baseUrl, workspaceId }) => {
+      const baseBody = {
+        profileId: 'report-docx',
+        workspaceId,
+        kind: 'generate',
+        skillId: 'report-writer',
+        artifactRuleIds: ['report-docx'],
+        idempotencyKey: 'dispatch:1',
+      };
+
+      await fetch(`${baseUrl}/api/runs`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer secret', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...baseBody, prompt: 'Generate.' }),
+      });
+      const conflict = await fetch(`${baseUrl}/api/runs`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer secret', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...baseBody, prompt: 'Generate differently.' }),
+      });
+
+      expect(conflict.status).toBe(409);
+      expect(await conflict.json()).toEqual({
+        error: {
+          code: 'IDEMPOTENCY_KEY_CONFLICT',
+          message: 'idempotency key was already used with different run parameters',
+        },
+      });
+    });
+  });
+
   it('prevents another client from creating a run for this workspace', async () => {
     await withApp(async ({ baseUrl, workspaceId }) => {
       const response = await fetch(`${baseUrl}/api/runs`, {

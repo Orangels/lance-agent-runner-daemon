@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { requireCollectionModeAccess, requireProfileAccess } from '../config/auth.js';
 import {
   getProfile,
@@ -10,9 +11,11 @@ import type { RunnerDatabase } from '../db/connection.js';
 import {
   createRunQueuedWithMessagesAndSnapshot,
   getConversationForWorkspace,
+  getRunByIdempotencyKey,
   getRunDetail,
   getRunForClient,
   getWorkspaceForClient,
+  isSqliteUniqueConstraintError,
   listConversationMessagesForPrompt,
   listRunsForClient,
   updateAssistantMessageTerminal,
@@ -118,10 +121,11 @@ export interface RunService {
 
 export interface CreateRunResult {
   runId: string;
-  status: 'queued';
+  status: RunStatus;
   conversationId: string;
   userMessageId: string;
   assistantMessageId: string;
+  idempotentReplay?: true;
 }
 
 export interface RunServiceRunnerInput {
@@ -684,6 +688,40 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     return run;
   }
 
+  function replayIdempotentRun(replayInput: {
+    client: ClientConfig;
+    existing: RunRecord;
+    expectedFingerprint: string | null;
+    requestConversationId?: string;
+  }): CreateRunResult {
+    if (
+      !replayInput.expectedFingerprint ||
+      replayInput.existing.idempotencyFingerprint !== replayInput.expectedFingerprint
+    ) {
+      throw daemonError(
+        'IDEMPOTENCY_KEY_CONFLICT',
+        'idempotency key was already used with different run parameters',
+        409,
+      );
+    }
+    const detail = getRunDetail(input.db, {
+      runId: replayInput.existing.id,
+      clientId: replayInput.client.id,
+      isAdmin: replayInput.client.isAdmin,
+    });
+    if (!detail) {
+      throw notFound('Run not found');
+    }
+    return {
+      runId: replayInput.existing.id,
+      status: replayInput.existing.status,
+      conversationId: detail.messages[0]?.conversationId ?? replayInput.requestConversationId ?? '',
+      userMessageId: detail.messages.find((message) => message.role === 'user')?.id ?? '',
+      assistantMessageId: detail.messages.find((message) => message.role === 'assistant')?.id ?? '',
+      idempotentReplay: true,
+    };
+  }
+
   return {
     createRun({ client, request }) {
       requireProfileAccess(client, request.profileId);
@@ -738,14 +776,52 @@ export function createRunService(input: CreateRunServiceInput): RunService {
         throw badRequest('Conversation does not belong to requested workspace');
       }
 
-      const runId = nextRunId();
-      const sequence = nextSequence++;
-      const assistantMessageId = nextAssistantMessageId();
       const selectedArtifactRules = artifactService.resolveSelectedArtifactRules({
         profile,
         artifactRuleIds: request.artifactRuleIds,
       });
       const selectedArtifactRuleIds = selectedArtifactRules.map((rule) => rule.id);
+      const businessContextHash =
+        request.businessContext === undefined ? null : stableJsonHash(request.businessContext);
+      const persistBusinessContext =
+        request.businessContext !== undefined && shouldPersistFullSnapshot(collectionMode);
+      const idempotencyFingerprint = request.idempotencyKey
+        ? buildRunIdempotencyFingerprint({
+            profileId: profile.id,
+            workspaceId: workspace.id,
+            kind: request.kind,
+            skillId: request.skillId ?? null,
+            promptMode: activePromptMode,
+            currentPrompt,
+            conversationId: request.conversationId ?? null,
+            collectionMode,
+            contextPolicy: request.contextPolicy,
+            businessContextHash,
+            model: selectedModel,
+            artifactRuleIds: selectedArtifactRuleIds,
+          })
+        : null;
+
+      if (request.idempotencyKey) {
+        const existing = getRunByIdempotencyKey(input.db, {
+          clientId: client.id,
+          profileId: profile.id,
+          workspaceId: workspace.id,
+          idempotencyKey: request.idempotencyKey,
+        });
+        if (existing) {
+          return replayIdempotentRun({
+            client,
+            existing,
+            expectedFingerprint: idempotencyFingerprint,
+            requestConversationId: request.conversationId,
+          });
+        }
+      }
+
+      const runId = nextRunId();
+      const sequence = nextSequence++;
+      const assistantMessageId = nextAssistantMessageId();
 
       if (
         !canStartNewRun(profile, workspace, sequence) &&
@@ -754,37 +830,56 @@ export function createRunService(input: CreateRunServiceInput): RunService {
         throw daemonError('RUN_QUEUE_FULL', 'Run queue is full', 429);
       }
 
-      const businessContextHash =
-        request.businessContext === undefined ? null : stableJsonHash(request.businessContext);
-      const persistBusinessContext =
-        request.businessContext !== undefined && shouldPersistFullSnapshot(collectionMode);
-      const created = createRunQueuedWithMessagesAndSnapshot(input.db, {
-        runId,
-        conversationId: request.conversationId,
-        defaultConversationId: nextConversationId(),
-        userMessageId: nextUserMessageId(),
-        assistantMessageId,
-        workspaceId: workspace.id,
-        profileId: profile.id,
-        clientId: client.id,
-        kind: request.kind,
-        skillId: request.skillId,
-        prompt: currentPrompt,
-        promptMode: activePromptMode,
-        currentPrompt,
-        contextPolicy: request.contextPolicy,
-        collectionMode,
-        businessContext: request.businessContext,
-        businessContextHash,
-        persistBusinessContext,
-        artifactRuleIds: selectedArtifactRuleIds,
-        metadata: request.metadata,
-        profileSnapshot: createSanitizedProfileSnapshot(profile, {
-          selectedModel,
-          selectedArtifactRuleIds,
-        }),
-        now: now(),
-      });
+      let created: ReturnType<typeof createRunQueuedWithMessagesAndSnapshot>;
+      try {
+        created = createRunQueuedWithMessagesAndSnapshot(input.db, {
+          runId,
+          conversationId: request.conversationId,
+          defaultConversationId: nextConversationId(),
+          userMessageId: nextUserMessageId(),
+          assistantMessageId,
+          workspaceId: workspace.id,
+          profileId: profile.id,
+          clientId: client.id,
+          kind: request.kind,
+          skillId: request.skillId,
+          prompt: currentPrompt,
+          promptMode: activePromptMode,
+          currentPrompt,
+          contextPolicy: request.contextPolicy,
+          collectionMode,
+          businessContext: request.businessContext,
+          businessContextHash,
+          persistBusinessContext,
+          artifactRuleIds: selectedArtifactRuleIds,
+          idempotencyKey: request.idempotencyKey,
+          idempotencyFingerprint,
+          metadata: request.metadata,
+          profileSnapshot: createSanitizedProfileSnapshot(profile, {
+            selectedModel,
+            selectedArtifactRuleIds,
+          }),
+          now: now(),
+        });
+      } catch (error) {
+        if (request.idempotencyKey && isSqliteUniqueConstraintError(error)) {
+          const existing = getRunByIdempotencyKey(input.db, {
+            clientId: client.id,
+            profileId: profile.id,
+            workspaceId: workspace.id,
+            idempotencyKey: request.idempotencyKey,
+          });
+          if (existing) {
+            return replayIdempotentRun({
+              client,
+              existing,
+              expectedFingerprint: idempotencyFingerprint,
+              requestConversationId: request.conversationId,
+            });
+          }
+        }
+        throw error;
+      }
 
       const state: RunState = {
         runId,
@@ -958,6 +1053,40 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       return { interrupted };
     },
   };
+}
+
+function buildRunIdempotencyFingerprint(input: {
+  profileId: string;
+  workspaceId: string;
+  kind: RunKind;
+  skillId: string | null;
+  promptMode: ActivePromptMode;
+  currentPrompt: string;
+  conversationId: string | null;
+  collectionMode: CollectionMode;
+  contextPolicy: ContextPolicy | undefined;
+  businessContextHash: string | null;
+  model: string | null;
+  artifactRuleIds: string[];
+}): string {
+  return stableJsonHash({
+    profileId: input.profileId,
+    workspaceId: input.workspaceId,
+    kind: input.kind,
+    skillId: input.skillId,
+    promptMode: input.promptMode,
+    currentPromptHash: hashSensitiveText(input.currentPrompt),
+    conversationId: input.conversationId,
+    collectionMode: input.collectionMode,
+    contextPolicy: input.contextPolicy ?? null,
+    businessContextHash: input.businessContextHash,
+    model: input.model,
+    artifactRuleIds: input.artifactRuleIds,
+  });
+}
+
+function hashSensitiveText(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
 }
 
 function assertPromptModeRequestShape(
