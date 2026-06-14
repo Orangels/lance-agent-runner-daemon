@@ -8,26 +8,8 @@ import {
   type ProfileConfig,
 } from '../config/profiles.js';
 import type { RunnerDatabase } from '../db/connection.js';
-import {
-  createRunQueuedWithMessagesAndSnapshot,
-  getConversationForWorkspace,
-  getRunByIdempotencyKey,
-  getRunDetail,
-  getRunForClient,
-  getWorkspaceForClient,
-  isSqliteUniqueConstraintError,
-  listConversationMessagesForPrompt,
-  listRunsForClient,
-  updateAssistantMessageTerminal,
-  updateRunPromptSnapshotFields,
-  updateRunStarted,
-  updateRunTerminal,
-  upsertRunPromptSnapshot,
-  upsertRunSkillSnapshot,
-  type RunDetailRecord,
-  type RunRecord,
-  type WorkspaceRecord,
-} from '../db/repositories.js';
+import { createSqliteRunnerPersistence } from '../db/sqlite-persistence.js';
+import type { RunnerPersistence, RunDetailRecord, RunRecord, WorkspaceRecord } from '../db/types.js';
 import { createArtifactService, type ArtifactService } from './artifact-service.js';
 import { buildClaudeInvocation, type ClaudeInvocation } from './claude-adapter.js';
 import {
@@ -87,7 +69,8 @@ export interface BufferedRunEvent {
 
 export interface CreateRunServiceInput {
   config: DaemonConfig;
-  db: RunnerDatabase;
+  persistence?: RunnerPersistence;
+  db?: RunnerDatabase;
   runnerFactory?: RunServiceRunnerFactory;
   artifactService?: ArtifactService;
   runLogService?: RunLogService;
@@ -105,17 +88,17 @@ export interface CreateRunServiceInput {
 }
 
 export interface RunService {
-  createRun(input: { client: ClientConfig; request: CreateRunRequest }): CreateRunResult;
-  listRuns(input: { client: ClientConfig; query?: ListRunsQuery }): RunRecord[];
-  getRunStatus(input: { client: ClientConfig; runId: string }): RunRecord;
-  getRunDetail(input: { client: ClientConfig; runId: string }): RunDetailRecord;
+  createRun(input: { client: ClientConfig; request: CreateRunRequest }): Promise<CreateRunResult>;
+  listRuns(input: { client: ClientConfig; query?: ListRunsQuery }): Promise<RunRecord[]>;
+  getRunStatus(input: { client: ClientConfig; runId: string }): Promise<RunRecord>;
+  getRunDetail(input: { client: ClientConfig; runId: string }): Promise<RunDetailRecord>;
   getRequestedEventVisibility(runId: string): EventVisibility | undefined;
-  replayRunEvents(input: { client: ClientConfig; runId: string; after?: string | null }): BufferedRunEvent[];
+  replayRunEvents(input: { client: ClientConfig; runId: string; after?: string | null }): Promise<BufferedRunEvent[]>;
   subscribeRunEvents(
     input: { client: ClientConfig; runId: string; after?: string | null },
     listener: (record: BufferedRunEvent) => void,
-  ): { replay: BufferedRunEvent[]; terminal: boolean; unsubscribe: () => void };
-  cancelRun(input: { client: ClientConfig; runId: string }): { ok: true };
+  ): Promise<{ replay: BufferedRunEvent[]; terminal: boolean; unsubscribe: () => void }>;
+  cancelRun(input: { client: ClientConfig; runId: string }): Promise<{ ok: true }>;
   shutdownActive(input?: { graceMs?: number }): Promise<{ interrupted: number }>;
 }
 
@@ -198,9 +181,15 @@ export function createRunService(input: CreateRunServiceInput): RunService {
   const nextUserMessageId = input.ids?.userMessageId ?? (() => createId('msg'));
   const nextAssistantMessageId = input.ids?.assistantMessageId ?? (() => createId('msg'));
   const runnerFactory = input.runnerFactory ?? defaultRunnerFactory;
+  const resolvedPersistence =
+    input.persistence ?? (input.db ? createSqliteRunnerPersistence(input.db) : null);
+  if (!resolvedPersistence) {
+    throw new Error('RunService requires persistence');
+  }
+  const persistence = resolvedPersistence;
   const artifactService =
-    input.artifactService ?? createArtifactService({ config: input.config, db: input.db, clock: now });
-  const runLogService = input.runLogService ?? createRunLogService({ config: input.config, db: input.db });
+    input.artifactService ?? createArtifactService({ config: input.config, persistence, clock: now });
+  const runLogService = input.runLogService ?? createRunLogService({ config: input.config, persistence });
   const capabilityProbe =
     input.capabilityProbe ??
     ((profile: ProfileConfig) => probeClaudeCapabilities({ claudeBin: profile.claudeBin }));
@@ -292,10 +281,10 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     }
 
     const startedAt = now();
-    const run = updateRunStarted(input.db, { runId: state.runId, startedAt, now: startedAt });
+    const run = await persistence.updateRunStarted({ runId: state.runId, startedAt, now: startedAt });
     state.queueStatus = 'running';
     state.accumulator = createMessageAccumulator({
-      db: input.db,
+      persistence,
       messageId: state.assistantMessageId,
       workspaceId: state.workspace.id,
       conversationId: state.conversationId,
@@ -305,8 +294,8 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       clock: { now },
       timer,
     });
-    state.accumulator.startRun({ startedAt });
-    state.logHandle = runLogService.openRunLogs({ runId: state.runId });
+    await state.accumulator.startRun({ startedAt });
+    state.logHandle = await runLogService.openRunLogs({ runId: state.runId });
     scheduleRunTimeout(state);
     emitRunEvent(state, { type: 'status', label: 'running' });
     let prompt = state.prompt;
@@ -356,12 +345,14 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     const conversationContext =
       state.promptMode === 'daemon-composed'
         ? buildConversationPromptContext(
-            listConversationMessagesForPrompt(input.db, {
+            (
+              await persistence.listConversationMessagesForPrompt({
               workspaceId: state.workspace.id,
               conversationId: state.conversationId,
               excludeRunId: state.runId,
               limit: normalizeContextPolicy(state.contextPolicy).recentMessages,
-            }).map((message) => ({ role: message.role, content: message.content })),
+              })
+            ).map((message) => ({ role: message.role, content: message.content })),
             state.contextPolicy,
           )
         : null;
@@ -395,7 +386,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     }
 
     const promptSnapshot = createTextSnapshot(prompt);
-    upsertRunPromptSnapshot(input.db, {
+    await persistence.upsertRunPromptSnapshot({
       runId: state.runId,
       promptSnapshot: persistFullSnapshots ? prompt : null,
       promptSnapshotHash: promptSnapshot.hash,
@@ -404,7 +395,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       persisted: persistFullSnapshots,
       now: startedAt,
     });
-    updateRunPromptSnapshotFields(input.db, {
+    await persistence.updateRunPromptSnapshotFields({
       runId: state.runId,
       promptSnapshotHash: promptSnapshot.hash,
       charCount: promptSnapshot.charCount,
@@ -415,7 +406,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
 
     if (resolvedSkill) {
       const skillBodySnapshot = createTextSnapshot(resolvedSkill.body);
-      upsertRunSkillSnapshot(input.db, {
+      await persistence.upsertRunSkillSnapshot({
         runId: state.runId,
         skillId: resolvedSkill.id,
         skillName: resolvedSkill.name,
@@ -574,12 +565,12 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     emitRunEvent(state, { type: 'end', status: finalStatus });
     const finishedAt = now();
     if (state.accumulator) {
-      state.accumulator.flushTerminal({
+      await state.accumulator.flushTerminal({
         runStatus: finalStatus,
         endedAt: finishedAt,
       });
     } else {
-      updateAssistantMessageTerminal(input.db, {
+      await persistence.updateAssistantMessageTerminal({
         messageId: state.assistantMessageId,
         runStatus: finalStatus,
         lastRunEventId: state.events.at(-1)?.id ?? null,
@@ -588,7 +579,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       });
     }
 
-    updateRunTerminal(input.db, {
+    await persistence.updateRunTerminal({
       runId: state.runId,
       status: finalStatus,
       finishedAt,
@@ -679,8 +670,8 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     });
   }
 
-  function assertRunReadable(client: ClientConfig, runId: string): RunRecord {
-    const run = getRunForClient(input.db, { runId, clientId: client.id, isAdmin: client.isAdmin });
+  async function assertRunReadable(client: ClientConfig, runId: string): Promise<RunRecord> {
+    const run = await persistence.getRunForClient({ runId, clientId: client.id, isAdmin: client.isAdmin });
     if (!run) {
       throw notFound('Run not found');
     }
@@ -688,12 +679,12 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     return run;
   }
 
-  function replayIdempotentRun(replayInput: {
+  async function replayIdempotentRun(replayInput: {
     client: ClientConfig;
     existing: RunRecord;
     expectedFingerprint: string | null;
     requestConversationId?: string;
-  }): CreateRunResult {
+  }): Promise<CreateRunResult> {
     if (
       !replayInput.expectedFingerprint ||
       replayInput.existing.idempotencyFingerprint !== replayInput.expectedFingerprint
@@ -704,7 +695,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
         409,
       );
     }
-    const detail = getRunDetail(input.db, {
+    const detail = await persistence.getRunDetail({
       runId: replayInput.existing.id,
       clientId: replayInput.client.id,
       isAdmin: replayInput.client.isAdmin,
@@ -723,7 +714,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
   }
 
   return {
-    createRun({ client, request }) {
+    async createRun({ client, request }) {
       requireProfileAccess(client, request.profileId);
       const profile = getProfile(input.config, request.profileId);
 
@@ -755,7 +746,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
         });
       }
 
-      const workspace = getWorkspaceForClient(input.db, {
+      const workspace = await persistence.getWorkspaceForClient({
         workspaceId: request.workspaceId,
         clientId: client.id,
         isAdmin: client.isAdmin,
@@ -768,10 +759,10 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       }
       if (
         request.conversationId &&
-        !getConversationForWorkspace(input.db, {
+        !(await persistence.getConversationForWorkspace({
           conversationId: request.conversationId,
           workspaceId: workspace.id,
-        })
+        }))
       ) {
         throw badRequest('Conversation does not belong to requested workspace');
       }
@@ -803,14 +794,14 @@ export function createRunService(input: CreateRunServiceInput): RunService {
         : null;
 
       if (request.idempotencyKey) {
-        const existing = getRunByIdempotencyKey(input.db, {
+        const existing = await persistence.getRunByIdempotencyKey({
           clientId: client.id,
           profileId: profile.id,
           workspaceId: workspace.id,
           idempotencyKey: request.idempotencyKey,
         });
         if (existing) {
-          return replayIdempotentRun({
+          return await replayIdempotentRun({
             client,
             existing,
             expectedFingerprint: idempotencyFingerprint,
@@ -830,9 +821,9 @@ export function createRunService(input: CreateRunServiceInput): RunService {
         throw daemonError('RUN_QUEUE_FULL', 'Run queue is full', 429);
       }
 
-      let created: ReturnType<typeof createRunQueuedWithMessagesAndSnapshot>;
+      let created: Awaited<ReturnType<RunnerPersistence['createRunQueuedWithMessagesAndSnapshot']>>;
       try {
-        created = createRunQueuedWithMessagesAndSnapshot(input.db, {
+        created = await persistence.createRunQueuedWithMessagesAndSnapshot({
           runId,
           conversationId: request.conversationId,
           defaultConversationId: nextConversationId(),
@@ -862,15 +853,15 @@ export function createRunService(input: CreateRunServiceInput): RunService {
           now: now(),
         });
       } catch (error) {
-        if (request.idempotencyKey && isSqliteUniqueConstraintError(error)) {
-          const existing = getRunByIdempotencyKey(input.db, {
+        if (request.idempotencyKey && persistence.isUniqueConstraintError(error)) {
+          const existing = await persistence.getRunByIdempotencyKey({
             clientId: client.id,
             profileId: profile.id,
             workspaceId: workspace.id,
             idempotencyKey: request.idempotencyKey,
           });
           if (existing) {
-            return replayIdempotentRun({
+            return await replayIdempotentRun({
               client,
               existing,
               expectedFingerprint: idempotencyFingerprint,
@@ -923,21 +914,21 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       };
     },
 
-    listRuns({ client, query = {} }) {
-      return listRunsForClient(input.db, {
+    async listRuns({ client, query = {} }) {
+      return persistence.listRunsForClient({
         clientId: client.id,
         isAdmin: client.isAdmin,
         ...query,
       });
     },
 
-    getRunStatus({ client, runId }) {
+    async getRunStatus({ client, runId }) {
       return assertRunReadable(client, runId);
     },
 
-    getRunDetail({ client, runId }) {
-      assertRunReadable(client, runId);
-      const detail = getRunDetail(input.db, {
+    async getRunDetail({ client, runId }) {
+      await assertRunReadable(client, runId);
+      const detail = await persistence.getRunDetail({
         runId,
         clientId: client.id,
         isAdmin: client.isAdmin,
@@ -952,8 +943,8 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       return states.get(runId)?.requestEventVisibility;
     },
 
-    replayRunEvents({ client, runId, after = null }) {
-      assertRunReadable(client, runId);
+    async replayRunEvents({ client, runId, after = null }) {
+      await assertRunReadable(client, runId);
       const state = states.get(runId);
       if (!state) {
         throw notFound('Run event stream not found');
@@ -961,8 +952,8 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       return state.events.filter((record) => shouldReplayEventAfter(record.id, after));
     },
 
-    subscribeRunEvents({ client, runId, after = null }, listener) {
-      const replay = this.replayRunEvents({ client, runId, after });
+    async subscribeRunEvents({ client, runId, after = null }, listener) {
+      const replay = await this.replayRunEvents({ client, runId, after });
       const state = states.get(runId);
       if (!state) {
         throw notFound('Run event stream not found');
@@ -980,8 +971,8 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       };
     },
 
-    cancelRun({ client, runId }) {
-      const run = assertRunReadable(client, runId);
+    async cancelRun({ client, runId }) {
+      const run = await assertRunReadable(client, runId);
       if (isTerminalRunStatus(run.status)) {
         throw daemonError('RUN_NOT_CANCELABLE', 'Run is not cancelable', 409);
       }

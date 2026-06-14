@@ -88,10 +88,10 @@ const logClient = (input: Partial<RunLogClient> = {}): RunLogClient => ({
 });
 
 describe('run log service', () => {
-  it('creates log files and a relative run_logs row', () => {
+  it('creates log files and a relative run_logs row', async () => {
     const { db, dataDir, service } = setup();
 
-    const logs = service.openRunLogs({ runId: 'run_1' });
+    const logs = await service.openRunLogs({ runId: 'run_1' });
     logs.stdout('hello stdout\n');
     logs.stderr('hello stderr\n');
     logs.debugEvent({ type: 'stderr', text: 'debug line' });
@@ -110,10 +110,10 @@ describe('run log service', () => {
     expect(readFileSync(path.join(dataDir, row!.debugEventsLogPath!), 'utf8')).toContain('debug line');
   });
 
-  it('sanitizes secrets and absolute paths before writing', () => {
+  it('sanitizes secrets and absolute paths before writing', async () => {
     const { dataDir, service } = setup();
 
-    const logs = service.openRunLogs({ runId: 'run_1' });
+    const logs = await service.openRunLogs({ runId: 'run_1' });
     logs.stdout('authorization: Bearer secret /home/orangels/private.txt output/report.docx');
     logs.stderr('CLAUDE_CONFIG_DIR=/tmp/claude token=my-token');
     logs.close();
@@ -127,10 +127,10 @@ describe('run log service', () => {
     expect(stderr).not.toContain('my-token');
   });
 
-  it('caps log size and appends one truncation marker', () => {
+  it('caps log size and appends one truncation marker', async () => {
     const { dataDir, service } = setup({ maxLogBytesPerRun: 12 });
 
-    const logs = service.openRunLogs({ runId: 'run_1' });
+    const logs = await service.openRunLogs({ runId: 'run_1' });
     logs.stdout('1234567890');
     logs.stdout('abcdef');
     logs.stdout('ignored');
@@ -143,16 +143,16 @@ describe('run log service', () => {
     expect(stdout).not.toContain('ignored');
   });
 
-  it('returns public tails only for clients allowed to read logs', () => {
+  it('returns public tails only for clients allowed to read logs', async () => {
     const { service } = setup();
-    const logs = service.openRunLogs({ runId: 'run_1' });
+    const logs = await service.openRunLogs({ runId: 'run_1' });
     logs.stdout('safe tail');
     logs.close();
 
-    expect(() =>
+    await expect(
       service.getRunLogs({ runId: 'run_1', client: logClient({ canReadLogs: false }) }),
-    ).toThrow(expect.objectContaining({ code: 'FORBIDDEN', status: 403 }));
-    expect(service.getRunLogs({ runId: 'run_1', client: logClient() })).toEqual({
+    ).rejects.toThrow(expect.objectContaining({ code: 'FORBIDDEN', status: 403 }));
+    await expect(service.getRunLogs({ runId: 'run_1', client: logClient() })).resolves.toEqual({
       runId: 'run_1',
       logs: {
         stdout: { available: true, size: 9, tail: 'safe tail' },
@@ -162,86 +162,86 @@ describe('run log service', () => {
     });
   });
 
-  it('returns not found for another client unless admin', () => {
+  it('returns not found for another client unless admin', async () => {
     const { service } = setup();
-    service.openRunLogs({ runId: 'run_1' }).close();
+    (await service.openRunLogs({ runId: 'run_1' })).close();
 
-    expect(() => service.getRunLogs({ runId: 'run_1', client: logClient({ id: 'other' }) })).toThrow(
+    await expect(service.getRunLogs({ runId: 'run_1', client: logClient({ id: 'other' }) })).rejects.toThrow(
       expect.objectContaining({ code: 'NOT_FOUND', status: 404 }),
     );
-    expect(service.getRunLogs({ runId: 'run_1', client: logClient({ id: 'admin', isAdmin: true }) }).runId).toBe(
+    expect((await service.getRunLogs({ runId: 'run_1', client: logClient({ id: 'admin', isAdmin: true }) })).runId).toBe(
       'run_1',
     );
   });
 
-  it('marks missing log files unavailable instead of throwing', () => {
+  it('marks missing log files unavailable instead of throwing', async () => {
     const { service } = setup();
-    const logs = service.openRunLogs({ runId: 'run_1' });
+    const logs = await service.openRunLogs({ runId: 'run_1' });
     logs.stdout('gone');
     logs.close();
     rmSync(path.join(service.dataDir, 'logs/runs/run_1/stdout.log'));
 
-    expect(service.getRunLogs({ runId: 'run_1', client: logClient() }).logs.stdout).toEqual({
+    expect((await service.getRunLogs({ runId: 'run_1', client: logClient() })).logs.stdout).toEqual({
       available: false,
       size: 0,
       tail: '',
     });
   });
 
-  it('returns complete stdout and stderr download handles for authorized clients', () => {
+  it('returns complete stdout and stderr download handles for authorized clients', async () => {
     const { dataDir, service } = setup();
-    const logs = service.openRunLogs({ runId: 'run_1' });
+    const logs = await service.openRunLogs({ runId: 'run_1' });
     logs.stdout('full stdout');
     logs.stderr('full stderr');
     logs.close();
 
-    expect(service.getRunLogDownload({ runId: 'run_1', kind: 'stdout', client: logClient() })).toEqual({
+    await expect(service.getRunLogDownload({ runId: 'run_1', kind: 'stdout', client: logClient() })).resolves.toEqual({
       filePath: path.join(dataDir, 'logs/runs/run_1/stdout.log'),
       fileName: 'stdout.log',
       mimeType: 'text/plain; charset=utf-8',
       size: 'full stdout'.length,
     });
-    expect(service.getRunLogDownload({ runId: 'run_1', kind: 'stderr', client: logClient() }).fileName).toBe(
+    expect((await service.getRunLogDownload({ runId: 'run_1', kind: 'stderr', client: logClient() })).fileName).toBe(
       'stderr.log',
     );
   });
 
-  it('requires debug-event permission for complete debug event downloads', () => {
+  it('requires debug-event permission for complete debug event downloads', async () => {
     const { service } = setup();
-    const logs = service.openRunLogs({ runId: 'run_1' });
+    const logs = await service.openRunLogs({ runId: 'run_1' });
     logs.debugEvent({ type: 'stderr', text: 'debug line' });
     logs.close();
 
-    expect(() =>
+    await expect(
       service.getRunLogDownload({ runId: 'run_1', kind: 'debug-events', client: logClient() }),
-    ).toThrow(expect.objectContaining({ code: 'FORBIDDEN', status: 403 }));
+    ).rejects.toThrow(expect.objectContaining({ code: 'FORBIDDEN', status: 403 }));
     expect(
-      service.getRunLogDownload({
+      (await service.getRunLogDownload({
         runId: 'run_1',
         kind: 'debug-events',
         client: logClient({ canReadDebugEvents: true }),
-      }).fileName,
+      })).fileName,
     ).toBe('debug-events.ndjson');
   });
 
-  it('returns not found when a complete log file is missing or belongs to another client', () => {
+  it('returns not found when a complete log file is missing or belongs to another client', async () => {
     const { service } = setup();
-    const logs = service.openRunLogs({ runId: 'run_1' });
+    const logs = await service.openRunLogs({ runId: 'run_1' });
     logs.stdout('gone');
     logs.close();
     rmSync(path.join(service.dataDir, 'logs/runs/run_1/stdout.log'));
 
-    expect(() =>
+    await expect(
       service.getRunLogDownload({ runId: 'run_1', kind: 'stdout', client: logClient() }),
-    ).toThrow(expect.objectContaining({ code: 'NOT_FOUND', status: 404 }));
-    expect(() =>
+    ).rejects.toThrow(expect.objectContaining({ code: 'NOT_FOUND', status: 404 }));
+    await expect(
       service.getRunLogDownload({ runId: 'run_1', kind: 'stderr', client: logClient({ id: 'other' }) }),
-    ).toThrow(expect.objectContaining({ code: 'NOT_FOUND', status: 404 }));
+    ).rejects.toThrow(expect.objectContaining({ code: 'NOT_FOUND', status: 404 }));
   });
 
-  it('prunes expired log files without deleting durable run data', () => {
+  it('prunes expired log files without deleting durable run data', async () => {
     const { db, dataDir, service } = setup({ logRetentionMs: 1000 });
-    const logs = service.openRunLogs({ runId: 'run_1' });
+    const logs = await service.openRunLogs({ runId: 'run_1' });
     logs.stdout('old');
     logs.close();
     updateRunTerminal(db, {
@@ -259,7 +259,7 @@ describe('run log service', () => {
 
     const logDir = path.join(dataDir, 'logs/runs/run_1');
     writeFileSync(path.join(logDir, 'extra.txt'), 'also removed');
-    expect(service.pruneExpiredLogs({ now: 7001 })).toEqual({ pruned: 1 });
+    await expect(service.pruneExpiredLogs({ now: 7001 })).resolves.toEqual({ pruned: 1 });
 
     expect(getRunLogForRunForClient(db, { runId: 'run_1', clientId: 'lqbot' })).toBeNull();
     expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.run.status).toBe('succeeded');

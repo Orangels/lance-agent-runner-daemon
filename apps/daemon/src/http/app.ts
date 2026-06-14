@@ -10,6 +10,8 @@ import type { UploadTempService } from '../core/upload-temp-service.js';
 import type { ReviewBundleService } from '../core/review-bundle-service.js';
 import type { RunFeedbackService } from '../core/run-feedback-service.js';
 import type { RunnerDatabase } from '../db/connection.js';
+import { createSqliteRunnerPersistence } from '../db/sqlite-persistence.js';
+import type { RunnerPersistence } from '../db/types.js';
 import { noopDaemonLogger, type DaemonLogger } from '../core/daemon-logger.js';
 import { zodErrorToDaemonError } from './validation.js';
 import { createArtifactsRouter } from './artifacts-routes.js';
@@ -24,7 +26,8 @@ import { createWorkspacesRouter } from './workspaces-routes.js';
 
 interface CreateAppDependencies {
   config: DaemonConfig;
-  db: RunnerDatabase;
+  persistence?: RunnerPersistence;
+  db?: RunnerDatabase;
   workspaceService: WorkspaceService;
   runService?: RunService;
   runLogService?: RunLogService;
@@ -38,6 +41,12 @@ interface CreateAppDependencies {
 export function createApp(dependencies: CreateAppDependencies): express.Express {
   const app = express();
   const daemonLogger = dependencies.daemonLogger ?? noopDaemonLogger;
+  const persistence =
+    dependencies.persistence ??
+    (dependencies.db ? createSqliteRunnerPersistence(dependencies.db) : undefined);
+  if (!persistence) {
+    throw new Error('createApp requires persistence');
+  }
 
   app.use(createRequestLogger(daemonLogger));
   app.use(express.json({ limit: '1mb' }));
@@ -87,7 +96,7 @@ export function createApp(dependencies: CreateAppDependencies): express.Express 
       '/api/workspaces',
       createWorkspaceFilesRouter({
         config: dependencies.config,
-        db: dependencies.db,
+        persistence,
         workspaceService: dependencies.workspaceService,
         uploadTempService: dependencies.uploadTempService,
       }),
@@ -97,7 +106,7 @@ export function createApp(dependencies: CreateAppDependencies): express.Express 
     '/api/workspaces',
     createWorkspacesRouter({
       config: dependencies.config,
-      db: dependencies.db,
+      persistence,
       workspaceService: dependencies.workspaceService,
     }),
   );

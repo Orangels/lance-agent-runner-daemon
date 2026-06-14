@@ -38,6 +38,9 @@ function makeConfig(root: string): DaemonConfig {
         dataDir: path.join(root, 'data'),
         globalConcurrency: 4,
         maxQueueSize: 100,
+        persistence: {
+          databaseUrl: 'postgres://user:pass@localhost:5432/lance_agent_daemon_test',
+        },
       },
       clients: [
         { id: 'lqbot', apiKey: 'secret', allowedProfileIds: ['report-docx'] },
@@ -284,11 +287,11 @@ describe('artifact service', () => {
       artifactRuleIds: ['report-docx'],
     });
 
-    expect(service.listRunArtifacts({ client, runId: 'run_1' })).toEqual([
+    await expect(service.listRunArtifacts({ client, runId: 'run_1' })).resolves.toEqual([
       expect.objectContaining({ id: 'artifact_1', relativePath: 'output/report.docx' }),
     ]);
-    expect(service.listRunArtifacts({ client: adminClient, runId: 'run_1' })).toHaveLength(1);
-    expect(() => service.listRunArtifacts({ client: otherClient, runId: 'run_1' })).toThrow(
+    await expect(service.listRunArtifacts({ client: adminClient, runId: 'run_1' })).resolves.toHaveLength(1);
+    await expect(service.listRunArtifacts({ client: otherClient, runId: 'run_1' })).rejects.toThrow(
       expect.objectContaining({ code: 'NOT_FOUND' }),
     );
 

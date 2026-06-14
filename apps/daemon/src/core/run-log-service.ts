@@ -9,14 +9,8 @@ import {
 import path from 'node:path';
 import type { ServerConfig } from '../config/profiles.js';
 import type { RunnerDatabase } from '../db/connection.js';
-import {
-  deleteRunLogRows,
-  getRunForClient,
-  getRunLogForRunForClient,
-  listRunLogsFinishedBefore,
-  upsertRunLogPaths,
-  type RunLogRecord,
-} from '../db/repositories.js';
+import { createSqliteRunnerPersistence } from '../db/sqlite-persistence.js';
+import type { RunnerPersistence, RunLogRecord } from '../db/types.js';
 import { forbidden, notFound } from './errors.js';
 import { sanitizeLogText } from './log-sanitizer.js';
 import type { RunEvent } from './run-events.js';
@@ -61,18 +55,19 @@ export interface RunLogDownload {
 
 export interface RunLogService {
   readonly dataDir: string;
-  openRunLogs(input: { runId: string }): RunLogHandle;
-  getRunLogs(input: { runId: string; client: RunLogClient }): PublicRunLogs;
+  openRunLogs(input: { runId: string }): Promise<RunLogHandle>;
+  getRunLogs(input: { runId: string; client: RunLogClient }): Promise<PublicRunLogs>;
   getRunLogDownload(input: {
     runId: string;
     kind: RunLogDownloadKind;
     client: RunLogClient;
-  }): RunLogDownload;
-  pruneExpiredLogs(input: { now: number }): { pruned: number };
+  }): Promise<RunLogDownload>;
+  pruneExpiredLogs(input: { now: number }): Promise<{ pruned: number }>;
 }
 
 interface CreateRunLogServiceInput {
-  db: RunnerDatabase;
+  persistence?: RunnerPersistence;
+  db?: RunnerDatabase;
   config: { server: ServerConfig };
   clock?: () => number;
 }
@@ -84,10 +79,15 @@ export function createRunLogService(input: CreateRunLogServiceInput): RunLogServ
   const dataDir = path.resolve(input.config.server.dataDir);
   const logRoot = path.join(dataDir, 'logs', 'runs');
   const now = input.clock ?? Date.now;
+  const persistence =
+    input.persistence ?? (input.db ? createSqliteRunnerPersistence(input.db) : null);
+  if (!persistence) {
+    throw new Error('RunLogService requires persistence');
+  }
 
   return {
     dataDir,
-    openRunLogs: ({ runId }) => {
+    openRunLogs: async ({ runId }) => {
       const runDirRelative = path.join('logs', 'runs', runId);
       const runDir = resolveInsideDataDir(dataDir, runDirRelative);
       mkdirSync(runDir, { recursive: true });
@@ -103,7 +103,7 @@ export function createRunLogService(input: CreateRunLogServiceInput): RunLogServ
         input.config.server.maxLogBytesPerRun,
       );
 
-      upsertRunLogPaths(input.db, {
+      await persistence.upsertRunLogPaths({
         runId,
         stdoutLogPath,
         stderrLogPath,
@@ -118,12 +118,12 @@ export function createRunLogService(input: CreateRunLogServiceInput): RunLogServ
         close: () => {},
       };
     },
-    getRunLogs: ({ runId, client }) => {
+    getRunLogs: async ({ runId, client }) => {
       if (!client.canReadLogs) {
         throw forbidden('Client is not allowed to read run logs');
       }
 
-      const run = getRunForClient(input.db, {
+      const run = await persistence.getRunForClient({
         runId,
         clientId: client.id,
         isAdmin: client.isAdmin,
@@ -132,7 +132,7 @@ export function createRunLogService(input: CreateRunLogServiceInput): RunLogServ
         throw notFound('Run not found');
       }
 
-      const record = getRunLogForRunForClient(input.db, {
+      const record = await persistence.getRunLogForRunForClient({
         runId,
         clientId: client.id,
         isAdmin: client.isAdmin,
@@ -147,7 +147,7 @@ export function createRunLogService(input: CreateRunLogServiceInput): RunLogServ
         },
       };
     },
-    getRunLogDownload: ({ runId, kind, client }) => {
+    getRunLogDownload: async ({ runId, kind, client }) => {
       if (kind === 'debug-events') {
         if (!client.canReadDebugEvents) {
           throw forbidden('Client is not allowed to read debug run logs');
@@ -156,7 +156,7 @@ export function createRunLogService(input: CreateRunLogServiceInput): RunLogServ
         throw forbidden('Client is not allowed to read run logs');
       }
 
-      const record = getRunLogForRunForClient(input.db, {
+      const record = await persistence.getRunLogForRunForClient({
         runId,
         clientId: client.id,
         isAdmin: client.isAdmin,
@@ -185,9 +185,9 @@ export function createRunLogService(input: CreateRunLogServiceInput): RunLogServ
         size: safeStat.size,
       };
     },
-    pruneExpiredLogs: ({ now: pruneNow }) => {
+    pruneExpiredLogs: async ({ now: pruneNow }) => {
       const cutoff = pruneNow - input.config.server.logRetentionMs;
-      const expired = listRunLogsFinishedBefore(input.db, {
+      const expired = await persistence.listRunLogsFinishedBefore({
         finishedBefore: cutoff,
         limit: 500,
       });
@@ -199,7 +199,7 @@ export function createRunLogService(input: CreateRunLogServiceInput): RunLogServ
         }
       }
 
-      return { pruned: deleteRunLogRows(input.db, expired.map((record) => record.runId)) };
+      return { pruned: await persistence.deleteRunLogRows(expired.map((record) => record.runId)) };
     },
   };
 }

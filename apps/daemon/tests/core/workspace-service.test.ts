@@ -50,10 +50,10 @@ function setup() {
 }
 
 describe('workspace creation', () => {
-  it('creates the workspace directory skeleton', () => {
+  it('creates the workspace directory skeleton', async () => {
     const { profile, service } = setup();
 
-    const workspace = service.createOrGetWorkspace({
+    const workspace = await service.createOrGetWorkspace({
       clientId: 'lqbot',
       profile,
       workspace: { originId: 'lqbot', userId: 'user_1', projectId: 'project_123' },
@@ -74,15 +74,15 @@ describe('workspace creation', () => {
     expect(statSync(path.join(cwd, '.claude-runner-skills')).isDirectory()).toBe(true);
   });
 
-  it('returns the existing workspace id on create-or-get', () => {
+  it('returns the existing workspace id on create-or-get', async () => {
     const { profile, service } = setup();
 
-    service.createOrGetWorkspace({
+    await service.createOrGetWorkspace({
       clientId: 'lqbot',
       profile,
       workspace: { originId: 'lqbot', userId: 'user_1', projectId: 'project_123' },
     });
-    const again = service.createOrGetWorkspace({
+    const again = await service.createOrGetWorkspace({
       clientId: 'lqbot',
       profile,
       workspace: { originId: 'lqbot', userId: 'user_1', projectId: 'project_123' },
@@ -91,10 +91,10 @@ describe('workspace creation', () => {
     expect(again.workspaceId).toBe('ws_1');
   });
 
-  it('does not expose absolute workspace paths in the public response', () => {
+  it('does not expose absolute workspace paths in the public response', async () => {
     const { profile, service } = setup();
 
-    const workspace = service.createOrGetWorkspace({
+    const workspace = await service.createOrGetWorkspace({
       clientId: 'lqbot',
       profile,
       workspace: { originId: 'lqbot', userId: 'user_1', projectId: 'project_123' },
@@ -105,9 +105,9 @@ describe('workspace creation', () => {
 });
 
 describe('workspace prepare', () => {
-  it('rejects source paths outside allowed input roots', () => {
+  it('rejects source paths outside allowed input roots', async () => {
     const { root, profile, service } = setup();
-    const workspace = service.createOrGetWorkspace({
+    const workspace = await service.createOrGetWorkspace({
       clientId: 'lqbot',
       profile,
       workspace: { originId: 'lqbot', userId: 'user_1', projectId: 'project_123' },
@@ -115,19 +115,19 @@ describe('workspace prepare', () => {
     const outside = path.join(root, 'outside.docx');
     writeFileSync(outside, 'outside');
 
-    expect(() =>
+    await expect(
       service.prepareWorkspaceFiles({
         clientId: 'lqbot',
         profile,
         workspaceId: workspace.workspaceId,
         files: [{ sourcePath: outside, targetPath: 'input/outside.docx' }],
       }),
-    ).toThrow(DaemonError);
+    ).rejects.toThrow(DaemonError);
   });
 
-  it('copies allowed source files to safe workspace-relative targets', () => {
+  it('copies allowed source files to safe workspace-relative targets', async () => {
     const { uploadsRoot, profile, service } = setup();
-    const workspace = service.createOrGetWorkspace({
+    const workspace = await service.createOrGetWorkspace({
       clientId: 'lqbot',
       profile,
       workspace: { originId: 'lqbot', userId: 'user_1', projectId: 'project_123' },
@@ -135,7 +135,7 @@ describe('workspace prepare', () => {
     const sourcePath = path.join(uploadsRoot, 'source.docx');
     writeFileSync(sourcePath, 'source content');
 
-    const prepared = service.prepareWorkspaceFiles({
+    const prepared = await service.prepareWorkspaceFiles({
       clientId: 'lqbot',
       profile,
       workspaceId: workspace.workspaceId,
@@ -152,9 +152,9 @@ describe('workspace prepare', () => {
     expect(JSON.stringify(prepared)).not.toContain(profile.sandboxRoot);
   });
 
-  it('rejects protected skill staging targets', () => {
+  it('rejects protected skill staging targets', async () => {
     const { uploadsRoot, profile, service } = setup();
-    const workspace = service.createOrGetWorkspace({
+    const workspace = await service.createOrGetWorkspace({
       clientId: 'lqbot',
       profile,
       workspace: { originId: 'lqbot', userId: 'user_1', projectId: 'project_123' },
@@ -162,7 +162,7 @@ describe('workspace prepare', () => {
     const sourcePath = path.join(uploadsRoot, 'SKILL.md');
     writeFileSync(sourcePath, 'skill');
 
-    expect(() =>
+    await expect(
       service.prepareWorkspaceFiles({
         clientId: 'lqbot',
         profile,
@@ -174,14 +174,14 @@ describe('workspace prepare', () => {
           },
         ],
       }),
-    ).toThrow(DaemonError);
+    ).rejects.toThrow(DaemonError);
   });
 });
 
 describe('workspace uploaded file import', () => {
-  it('copies a daemon temp file to input/upload.docx and returns public file metadata', () => {
+  it('copies a daemon temp file to input/upload.docx and returns public file metadata', async () => {
     const { root, profile, service } = setup();
-    const workspace = service.createOrGetWorkspace({
+    const workspace = await service.createOrGetWorkspace({
       clientId: 'lqbot',
       profile,
       workspace: { originId: 'lqbot', userId: 'user_1', projectId: 'project_123' },
@@ -190,7 +190,7 @@ describe('workspace uploaded file import', () => {
     mkdirSync(path.dirname(sourcePath), { recursive: true });
     writeFileSync(sourcePath, 'uploaded content');
 
-    const uploaded = service.prepareUploadedWorkspaceFile({
+    const uploaded = await service.prepareUploadedWorkspaceFile({
       clientId: 'lqbot',
       profile,
       workspaceId: workspace.workspaceId,
@@ -218,9 +218,9 @@ describe('workspace uploaded file import', () => {
     expect(readFileSync(path.join(cwd, 'input/upload.docx'), 'utf8')).toBe('uploaded content');
   });
 
-  it('does not expose temp, workspace, sandbox, or allowed input paths in the response', () => {
+  it('does not expose temp, workspace, sandbox, or allowed input paths in the response', async () => {
     const { root, profile, service } = setup();
-    const workspace = service.createOrGetWorkspace({
+    const workspace = await service.createOrGetWorkspace({
       clientId: 'lqbot',
       profile,
       workspace: { originId: 'lqbot', userId: 'user_1', projectId: 'project_123' },
@@ -229,7 +229,7 @@ describe('workspace uploaded file import', () => {
     mkdirSync(path.dirname(sourcePath), { recursive: true });
     writeFileSync(sourcePath, 'uploaded content');
 
-    const uploaded = service.prepareUploadedWorkspaceFile({
+    const uploaded = await service.prepareUploadedWorkspaceFile({
       clientId: 'lqbot',
       profile,
       workspaceId: workspace.workspaceId,
@@ -253,9 +253,9 @@ describe('workspace uploaded file import', () => {
     }
   });
 
-  it('overwrites an existing file at input/upload.docx', () => {
+  it('overwrites an existing file at input/upload.docx', async () => {
     const { root, profile, service } = setup();
-    const workspace = service.createOrGetWorkspace({
+    const workspace = await service.createOrGetWorkspace({
       clientId: 'lqbot',
       profile,
       workspace: { originId: 'lqbot', userId: 'user_1', projectId: 'project_123' },
@@ -270,7 +270,7 @@ describe('workspace uploaded file import', () => {
     mkdirSync(path.dirname(sourcePath), { recursive: true });
     writeFileSync(sourcePath, 'new upload');
 
-    const uploaded = service.prepareUploadedWorkspaceFile({
+    const uploaded = await service.prepareUploadedWorkspaceFile({
       clientId: 'lqbot',
       profile,
       workspaceId: workspace.workspaceId,
@@ -289,9 +289,9 @@ describe('workspace uploaded file import', () => {
     expect(readFileSync(path.join(cwd, 'input/upload.docx'), 'utf8')).toBe('new upload');
   });
 
-  it('rejects targetPath input when input is an existing directory', () => {
+  it('rejects targetPath input when input is an existing directory', async () => {
     const { root, profile, service } = setup();
-    const workspace = service.createOrGetWorkspace({
+    const workspace = await service.createOrGetWorkspace({
       clientId: 'lqbot',
       profile,
       workspace: { originId: 'lqbot', userId: 'user_1', projectId: 'project_123' },
@@ -300,7 +300,7 @@ describe('workspace uploaded file import', () => {
     mkdirSync(path.dirname(sourcePath), { recursive: true });
     writeFileSync(sourcePath, 'uploaded content');
 
-    expect(() =>
+    await expect(
       service.prepareUploadedWorkspaceFile({
         clientId: 'lqbot',
         profile,
@@ -310,12 +310,12 @@ describe('workspace uploaded file import', () => {
         originalName: 'upload.docx',
         mimeType: null,
       }),
-    ).toThrow(expect.objectContaining({ code: 'PATH_NOT_ALLOWED' }));
+    ).rejects.toThrow(expect.objectContaining({ code: 'PATH_NOT_ALLOWED' }));
   });
 
-  it('rejects protected skill staging targets', () => {
+  it('rejects protected skill staging targets', async () => {
     const { root, profile, service } = setup();
-    const workspace = service.createOrGetWorkspace({
+    const workspace = await service.createOrGetWorkspace({
       clientId: 'lqbot',
       profile,
       workspace: { originId: 'lqbot', userId: 'user_1', projectId: 'project_123' },
@@ -324,7 +324,7 @@ describe('workspace uploaded file import', () => {
     mkdirSync(path.dirname(sourcePath), { recursive: true });
     writeFileSync(sourcePath, 'uploaded content');
 
-    expect(() =>
+    await expect(
       service.prepareUploadedWorkspaceFile({
         clientId: 'lqbot',
         profile,
@@ -334,12 +334,12 @@ describe('workspace uploaded file import', () => {
         originalName: 'upload.docx',
         mimeType: null,
       }),
-    ).toThrow(expect.objectContaining({ code: 'PATH_NOT_ALLOWED' }));
+    ).rejects.toThrow(expect.objectContaining({ code: 'PATH_NOT_ALLOWED' }));
   });
 
-  it('returns not found when another client imports into this workspace', () => {
+  it('returns not found when another client imports into this workspace', async () => {
     const { root, profile, service } = setup();
-    const workspace = service.createOrGetWorkspace({
+    const workspace = await service.createOrGetWorkspace({
       clientId: 'lqbot',
       profile,
       workspace: { originId: 'lqbot', userId: 'user_1', projectId: 'project_123' },
@@ -348,7 +348,7 @@ describe('workspace uploaded file import', () => {
     mkdirSync(path.dirname(sourcePath), { recursive: true });
     writeFileSync(sourcePath, 'uploaded content');
 
-    expect(() =>
+    await expect(
       service.prepareUploadedWorkspaceFile({
         clientId: 'another-client',
         profile,
@@ -358,6 +358,6 @@ describe('workspace uploaded file import', () => {
         originalName: 'upload.docx',
         mimeType: null,
       }),
-    ).toThrow(expect.objectContaining({ code: 'NOT_FOUND' }));
+    ).rejects.toThrow(expect.objectContaining({ code: 'NOT_FOUND' }));
   });
 });

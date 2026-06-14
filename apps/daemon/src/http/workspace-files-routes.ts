@@ -6,14 +6,13 @@ import { badRequest, daemonError, type DaemonError, notFound } from '../core/err
 import type { UploadWorkspaceFileResponse } from '../core/run-types.js';
 import type { UploadTempService } from '../core/upload-temp-service.js';
 import type { WorkspaceService } from '../core/workspace-service.js';
-import type { RunnerDatabase } from '../db/connection.js';
-import { getWorkspaceForClient } from '../db/repositories.js';
+import type { RunnerPersistence } from '../db/types.js';
 import { requireAuth, type AuthenticatedRequest } from './auth-middleware.js';
 import { workspaceUploadFieldsSchema } from './validation.js';
 
 interface CreateWorkspaceFilesRouterDependencies {
   config: DaemonConfig;
-  db: RunnerDatabase;
+  persistence: RunnerPersistence;
   workspaceService: WorkspaceService;
   uploadTempService: UploadTempService;
 }
@@ -68,7 +67,7 @@ export function createWorkspaceFilesRouter(dependencies: CreateWorkspaceFilesRou
         }
 
         const workspaceId = String(uploadRequest.params.workspaceId);
-        const workspace = getWorkspaceForClient(dependencies.db, {
+        const workspace = await dependencies.persistence.getWorkspaceForClient({
           workspaceId,
           clientId: client.id,
           isAdmin: client.isAdmin,
@@ -80,7 +79,7 @@ export function createWorkspaceFilesRouter(dependencies: CreateWorkspaceFilesRou
         requireProfileAccess(client, workspace.profileId);
         const profile = getProfile(dependencies.config, workspace.profileId);
         const sourcePath = dependencies.uploadTempService.assertTempPath(uploadRequest.file.path);
-        result = dependencies.workspaceService.prepareUploadedWorkspaceFile({
+        result = await dependencies.workspaceService.prepareUploadedWorkspaceFile({
           clientId: client.id,
           isAdmin: client.isAdmin,
           profile,

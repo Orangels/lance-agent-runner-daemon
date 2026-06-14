@@ -18,6 +18,9 @@ function makeConfig(root: string, input: { uploadTempRetentionMs?: number } = {}
         globalConcurrency: 4,
         maxQueueSize: 100,
         uploadTempRetentionMs: input.uploadTempRetentionMs,
+        persistence: {
+          databaseUrl: 'postgres://user:pass@localhost:5432/lance_agent_daemon_test',
+        },
       },
       clients: [{ id: 'lqbot', apiKey: 'secret', allowedProfileIds: ['report-docx'] }],
       profiles: [
@@ -50,7 +53,7 @@ function makeConfig(root: string, input: { uploadTempRetentionMs?: number } = {}
 }
 
 describe('server startup context', () => {
-  it('applies schema and marks old queued runs interrupted', () => {
+  it('applies schema and marks old queued runs interrupted', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'runner-index-test-'));
     const config = makeConfig(root);
     const setupDb = openRunnerDatabase(config.server.dataDir);
@@ -75,7 +78,7 @@ describe('server startup context', () => {
     });
     setupDb.close();
 
-    const context = createServerContext(config, { clock: () => 2000 });
+    const context = await createServerContext(config, { clock: () => 2000 });
 
     expect(context.runService).toBeDefined();
     expect(context.artifactService).toBeDefined();
@@ -89,7 +92,7 @@ describe('server startup context', () => {
     context.db.close();
   });
 
-  it('prunes stale upload temp directories on startup while preserving fresh ones', () => {
+  it('prunes stale upload temp directories on startup while preserving fresh ones', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'runner-index-test-'));
     const config = makeConfig(root, { uploadTempRetentionMs: 1000 });
     const tempRoot = path.join(config.server.dataDir, 'uploads', 'tmp');
@@ -102,7 +105,7 @@ describe('server startup context', () => {
     utimesSync(staleUploadDir, new Date(8000), new Date(8000));
     utimesSync(freshUploadDir, new Date(9500), new Date(9500));
 
-    const context = createServerContext(config, { clock: () => 10_000 });
+    const context = await createServerContext(config, { clock: () => 10_000 });
 
     expect(existsSync(staleUploadDir)).toBe(false);
     expect(existsSync(freshUploadDir)).toBe(true);
@@ -140,10 +143,10 @@ describe('server shutdown handlers', () => {
     const runService = {
       shutdownActive: vi.fn(async () => ({ interrupted: 2 })),
     };
-    const db = { close: vi.fn() };
+    const persistence = { close: vi.fn(async () => undefined) };
     const context = {
       config,
-      db,
+      persistence,
       runService,
     };
 
@@ -152,7 +155,7 @@ describe('server shutdown handlers', () => {
 
     expect(server.close).toHaveBeenCalledTimes(1);
     expect(runService.shutdownActive).toHaveBeenCalledWith({ graceMs: 100 });
-    expect(db.close).toHaveBeenCalledTimes(1);
+    expect(persistence.close).toHaveBeenCalledTimes(1);
     expect(signalTarget.exitCode).toBe(0);
   });
 });

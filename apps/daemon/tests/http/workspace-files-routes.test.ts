@@ -48,6 +48,9 @@ function makeConfig(root: string, input: { maxUploadBytesPerFile?: number } = {}
         globalConcurrency: 4,
         maxQueueSize: 100,
         maxUploadBytesPerFile: input.maxUploadBytesPerFile,
+        persistence: {
+          databaseUrl: 'postgres://user:pass@localhost:5432/lance_agent_daemon_test',
+        },
       },
       clients: [
         {
@@ -123,7 +126,7 @@ async function withApp(
     ids: { workspaceId: () => 'ws_1' },
     clock: () => 1000,
   });
-  const workspace = workspaceService.createOrGetWorkspace({
+  const workspace = await workspaceService.createOrGetWorkspace({
     clientId: 'lqbot',
     profile: config.profiles[0],
     workspace: { originId: 'lqbot', userId: 'user_1', projectId: 'project_123' },

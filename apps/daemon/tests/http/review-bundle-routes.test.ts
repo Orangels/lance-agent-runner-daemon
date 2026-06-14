@@ -35,6 +35,9 @@ function makeConfig(root: string): DaemonConfig {
         dataDir: path.join(root, 'data'),
         globalConcurrency: 4,
         maxQueueSize: 100,
+        persistence: {
+          databaseUrl: 'postgres://user:pass@localhost:5432/lance_agent_daemon_test',
+        },
       },
       clients: [
         { id: 'lqbot', apiKey: 'secret', allowedProfileIds: ['report-docx'], canReadLogs: true },
@@ -104,7 +107,7 @@ async function withApp(callback: (context: { baseUrl: string }) => Promise<void>
     now: 2100,
   });
   const runLogService = createRunLogService({ config, db });
-  const logs = runLogService.openRunLogs({ runId: 'run_1' });
+  const logs = await runLogService.openRunLogs({ runId: 'run_1' });
   logs.stdout('stdout');
   logs.close();
   const reviewBundleService = createReviewBundleService({ config, db, runLogService });

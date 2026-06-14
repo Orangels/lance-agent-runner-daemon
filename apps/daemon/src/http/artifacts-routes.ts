@@ -14,12 +14,12 @@ export function createArtifactsRouter(dependencies: CreateArtifactsRouterDepende
   const router = Router({ mergeParams: true });
   const auth = requireAuth(dependencies.config);
 
-  router.get('/', auth, (request, response, next) => {
+  router.get('/', auth, async (request, response, next) => {
     try {
       const client = (request as AuthenticatedRequest).client;
       const runId = String(request.params.runId);
       response.json({
-        artifacts: dependencies.artifactService.listRunArtifacts({ client, runId }),
+        artifacts: await dependencies.artifactService.listRunArtifacts({ client, runId }),
       });
     } catch (error) {
       next(error);

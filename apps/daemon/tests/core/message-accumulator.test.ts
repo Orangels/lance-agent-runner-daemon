@@ -82,10 +82,10 @@ describe('message accumulator', () => {
     insertAssistantRunMessage.mockReset();
   });
 
-  it('marks the assistant message running with startedAt when the run starts', () => {
+  it('marks the assistant message running with startedAt when the run starts', async () => {
     const { accumulator, db, runtime } = createAccumulator({ messageId: 'assistant-1' });
 
-    accumulator.startRun({ startedAt: 1_234 });
+    await accumulator.startRun({ startedAt: 1_234 });
 
     expect(updateAssistantMessageStarted).toHaveBeenCalledWith(db, {
       messageId: 'assistant-1',
@@ -94,12 +94,12 @@ describe('message accumulator', () => {
     });
   });
 
-  it('appends text_delta events to assistant content on flush', () => {
+  it('appends text_delta events to assistant content on flush', async () => {
     const { accumulator, db, runtime } = createAccumulator({ messageId: 'assistant-1' });
 
     accumulator.consume({ type: 'text_delta', delta: 'hello ' }, '1');
     accumulator.consume({ type: 'text_delta', delta: 'world' }, '2');
-    accumulator.forceFlush();
+    await accumulator.forceFlush();
 
     expect(updateRunMessage).toHaveBeenCalledTimes(1);
     expect(updateRunMessage).toHaveBeenCalledWith(db, {
@@ -115,7 +115,7 @@ describe('message accumulator', () => {
     });
   });
 
-  it('appends status, thinking, tool, usage, error, and end events to events_json', () => {
+  it('appends status, thinking, tool, usage, error, and end events to events_json', async () => {
     const { accumulator, db, runtime } = createAccumulator();
     const events: RunEvent[] = [
       { type: 'status', label: 'initializing', model: 'claude-sonnet-4-5' },
@@ -129,7 +129,7 @@ describe('message accumulator', () => {
     ];
 
     events.forEach((event, index) => accumulator.consume(event, String(index + 1)));
-    accumulator.forceFlush();
+    await accumulator.forceFlush();
 
     expect(updateRunMessage).toHaveBeenCalledWith(db, {
       messageId: 'message-1',
@@ -147,13 +147,13 @@ describe('message accumulator', () => {
     });
   });
 
-  it('does not persist stderr or raw events by default', () => {
+  it('does not persist stderr or raw events by default', async () => {
     const { accumulator, db, runtime } = createAccumulator();
 
     accumulator.consume({ type: 'stderr', text: 'debug noise' }, '1');
     accumulator.consume({ type: 'raw', line: '{"debug":true}' }, '2');
     accumulator.consume({ type: 'status', label: 'still alive' }, '3');
-    accumulator.forceFlush();
+    await accumulator.forceFlush();
 
     expect(updateRunMessage).toHaveBeenCalledWith(db, {
       messageId: 'message-1',
@@ -165,7 +165,7 @@ describe('message accumulator', () => {
     });
   });
 
-  it('throttles DB writes to the run message flush policy', () => {
+  it('throttles DB writes to the run message flush policy', async () => {
     const { accumulator, runtime } = createAccumulator();
 
     accumulator.consume({ type: 'text_delta', delta: 'a' }, '1');
@@ -176,25 +176,26 @@ describe('message accumulator', () => {
     expect(runtime.pendingTimers()[0]?.delayMs).toBe(runMessageFlushPolicy.throttleMs);
 
     runtime.runNextTimer();
+    await Promise.resolve();
 
     expect(updateRunMessage).toHaveBeenCalledTimes(1);
   });
 
-  it('forceFlush writes pending content and events immediately', () => {
+  it('forceFlush writes pending content and events immediately', async () => {
     const { accumulator, runtime } = createAccumulator();
 
     accumulator.consume({ type: 'text_delta', delta: 'pending' }, '1');
-    accumulator.forceFlush();
+    await accumulator.forceFlush();
 
     expect(updateRunMessage).toHaveBeenCalledTimes(1);
     expect(runtime.pendingTimers()).toHaveLength(0);
   });
 
-  it('terminal flush writes runStatus, endedAt, and lastRunEventId after pending updates', () => {
+  it('terminal flush writes runStatus, endedAt, and lastRunEventId after pending updates', async () => {
     const { accumulator, db, runtime } = createAccumulator({ messageId: 'assistant-1' });
 
     accumulator.consume({ type: 'text_delta', delta: 'done' }, '9');
-    accumulator.flushTerminal({ runStatus: 'succeeded', endedAt: 2_000 });
+    await accumulator.flushTerminal({ runStatus: 'succeeded', endedAt: 2_000 });
 
     expect(updateRunMessage).toHaveBeenCalledWith(db, {
       messageId: 'assistant-1',
@@ -214,7 +215,7 @@ describe('message accumulator', () => {
     expect(runtime.pendingTimers()).toHaveLength(0);
   });
 
-  it('keeps content, events, timers, and message ids isolated between accumulator instances', () => {
+  it('keeps content, events, timers, and message ids isolated between accumulator instances', async () => {
     const first = createAccumulator({ messageId: 'assistant-1', startNow: 100 });
     const second = createAccumulator({ messageId: 'assistant-2', startNow: 200 });
 
@@ -222,6 +223,7 @@ describe('message accumulator', () => {
     second.accumulator.consume({ type: 'status', label: 'second' }, '7');
 
     first.runtime.runNextTimer();
+    await Promise.resolve();
 
     expect(updateRunMessage).toHaveBeenCalledTimes(1);
     expect(updateRunMessage).toHaveBeenCalledWith(first.db, {
@@ -235,6 +237,7 @@ describe('message accumulator', () => {
     expect(second.runtime.pendingTimers()).toHaveLength(1);
 
     second.runtime.runNextTimer();
+    await Promise.resolve();
 
     expect(updateRunMessage).toHaveBeenCalledTimes(2);
     expect(updateRunMessage).toHaveBeenLastCalledWith(second.db, {

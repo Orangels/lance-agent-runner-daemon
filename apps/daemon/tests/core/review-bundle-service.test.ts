@@ -26,7 +26,7 @@ afterEach(() => {
   }
 });
 
-function setup(input: { canReadDebugEvents?: boolean; maxReviewBundleBytes?: number } = {}) {
+async function setup(input: { canReadDebugEvents?: boolean; maxReviewBundleBytes?: number } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'review-bundle-test-'));
   tempDirs.push(root);
   const config = parseDaemonConfig(
@@ -38,6 +38,9 @@ function setup(input: { canReadDebugEvents?: boolean; maxReviewBundleBytes?: num
         globalConcurrency: 4,
         maxQueueSize: 100,
         maxReviewBundleBytes: input.maxReviewBundleBytes ?? 1024 * 1024,
+        persistence: {
+          databaseUrl: 'postgres://user:pass@localhost:5432/lance_agent_daemon_test',
+        },
       },
       clients: [{ id: 'lqbot', apiKey: 'secret', allowedProfileIds: ['report-docx'], canReadLogs: true }],
       profiles: [
@@ -152,7 +155,7 @@ function setup(input: { canReadDebugEvents?: boolean; maxReviewBundleBytes?: num
     now: 2600,
   });
   const runLogService = createRunLogService({ config, db });
-  const logs = runLogService.openRunLogs({ runId: 'run_1' });
+  const logs = await runLogService.openRunLogs({ runId: 'run_1' });
   logs.stdout(`stdout ${config.profiles[0]!.sandboxRoot} output/report.docx`);
   logs.stderr('stderr');
   logs.debugEvent({ type: 'tool_result', content: 'token=my-token' } as never);
@@ -171,7 +174,7 @@ function setup(input: { canReadDebugEvents?: boolean; maxReviewBundleBytes?: num
 
 describe('review bundle service', () => {
   it('exports a sanitized generic bundle for authorized clients', async () => {
-    const { service, client, config } = setup();
+    const { service, client, config } = await setup();
 
     const bundle = await service.createRunReviewBundle({ runId: 'run_1', client });
     const entries = readStoredEntries(bundle.buffer);
@@ -199,7 +202,7 @@ describe('review bundle service', () => {
   });
 
   it('includes debug-only files for clients with debug event permission', async () => {
-    const { service, client } = setup({ canReadDebugEvents: true });
+    const { service, client } = await setup({ canReadDebugEvents: true });
 
     const entries = readStoredEntries((await service.createRunReviewBundle({ runId: 'run_1', client })).buffer);
 
@@ -209,7 +212,7 @@ describe('review bundle service', () => {
   });
 
   it('enforces permissions and bundle size limits', async () => {
-    const { service, client } = setup({ maxReviewBundleBytes: 10 });
+    const { service, client } = await setup({ maxReviewBundleBytes: 10 });
 
     await expect(
       service.createRunReviewBundle({

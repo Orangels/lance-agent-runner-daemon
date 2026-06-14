@@ -40,6 +40,9 @@ function makeConfig(root: string): DaemonConfig {
         dataDir: path.join(root, 'data'),
         globalConcurrency: 4,
         maxQueueSize: 100,
+        persistence: {
+          databaseUrl: 'postgres://user:pass@localhost:5432/lance_agent_daemon_test',
+        },
       },
       clients: [
         { id: 'lqbot', apiKey: 'secret', allowedProfileIds: ['report-docx'], canReadLogs: true },
@@ -110,7 +113,7 @@ async function withApp(callback: (context: { baseUrl: string; config: DaemonConf
     now: 2000,
   });
   const runLogService = createRunLogService({ config, db });
-  const logs = runLogService.openRunLogs({ runId: 'run_1' });
+  const logs = await runLogService.openRunLogs({ runId: 'run_1' });
   logs.stdout(`authorization: Bearer secret-token ${config.profiles[0]!.sandboxRoot} output/report.docx`);
   logs.stderr('stderr tail');
   logs.debugEvent({ type: 'stderr', text: 'debug tail' });

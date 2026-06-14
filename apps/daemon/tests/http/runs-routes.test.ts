@@ -34,6 +34,9 @@ function makeConfig(root: string): DaemonConfig {
         dataDir: path.join(root, 'data'),
         globalConcurrency: 4,
         maxQueueSize: 100,
+        persistence: {
+          databaseUrl: 'postgres://user:pass@localhost:5432/lance_agent_daemon_test',
+        },
       },
       clients: [
         { id: 'lqbot', apiKey: 'secret', allowedProfileIds: ['report-docx'], canReadDebugEvents: false },
@@ -174,7 +177,9 @@ async function withApp(
     runNextTimer: timerHarness.runNextTimer,
     startNextRun: async () => {
       timerHarness.runNextTimer();
-      await Promise.resolve();
+      for (let index = 0; index < 5; index += 1) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
     },
     runAllTimers: () => {
       while (true) {

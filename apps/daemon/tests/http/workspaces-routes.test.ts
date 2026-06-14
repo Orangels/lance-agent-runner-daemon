@@ -31,6 +31,9 @@ function makeConfig(root: string): DaemonConfig {
         dataDir: path.join(root, 'data'),
         globalConcurrency: 4,
         maxQueueSize: 100,
+        persistence: {
+          databaseUrl: 'postgres://user:pass@localhost:5432/lance_agent_daemon_test',
+        },
       },
       clients: [
         {

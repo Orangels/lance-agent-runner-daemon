@@ -1,11 +1,6 @@
 import type { RunnerDatabase } from '../db/connection.js';
-import {
-  insertAssistantRunMessage,
-  updateAssistantMessageStarted,
-  updateAssistantMessageTerminal,
-  updateAssistantMessagesTerminalForRun,
-  updateRunMessage,
-} from '../db/repositories.js';
+import { createSqliteRunnerPersistence } from '../db/sqlite-persistence.js';
+import type { RunnerPersistence } from '../db/types.js';
 import type { RunEvent } from './run-events.js';
 import { runMessageFlushPolicy, type RunStatus } from './run-types.js';
 
@@ -19,7 +14,8 @@ export interface MessageAccumulatorTimer {
 }
 
 export interface CreateMessageAccumulatorInput {
-  db: RunnerDatabase;
+  persistence?: RunnerPersistence;
+  db?: RunnerDatabase;
   messageId: string;
   workspaceId?: string;
   conversationId?: string;
@@ -60,7 +56,7 @@ export function createMessageAccumulator(input: CreateMessageAccumulatorInput) {
 }
 
 class MessageAccumulator {
-  private readonly db: RunnerDatabase;
+  private readonly persistence: RunnerPersistence;
   private messageId: string;
   private readonly workspaceId: string | null;
   private readonly conversationId: string | null;
@@ -77,9 +73,15 @@ class MessageAccumulator {
   private usage: UsageSnapshot | null = null;
   private flushTimer: unknown = null;
   private dirty = false;
+  private writeQueue: Promise<void> = Promise.resolve();
 
   constructor(input: CreateMessageAccumulatorInput) {
-    this.db = input.db;
+    const persistence =
+      input.persistence ?? (input.db ? createSqliteRunnerPersistence(input.db) : null);
+    if (!persistence) {
+      throw new Error('MessageAccumulator requires persistence');
+    }
+    this.persistence = persistence;
     this.messageId = input.messageId;
     this.workspaceId = input.workspaceId ?? null;
     this.conversationId = input.conversationId ?? null;
@@ -90,9 +92,9 @@ class MessageAccumulator {
     this.timer = input.timer ?? systemTimer;
   }
 
-  startRun(input: StartRunInput = {}): void {
+  async startRun(input: StartRunInput = {}): Promise<void> {
     const now = this.clock.now();
-    updateAssistantMessageStarted(this.db, {
+    await this.persistence.updateAssistantMessageStarted({
       messageId: this.messageId,
       startedAt: input.startedAt ?? now,
       now,
@@ -140,27 +142,28 @@ class MessageAccumulator {
     this.markDirty();
   }
 
-  forceFlush(): void {
+  async forceFlush(): Promise<void> {
     if (this.flushTimer !== null) {
       this.timer.clearTimeout(this.flushTimer);
       this.flushTimer = null;
     }
-    this.flushPending();
+    await this.flushPending();
+    await this.writeQueue;
   }
 
-  flushTerminal(input: TerminalFlushInput): void {
-    this.forceFlush();
+  async flushTerminal(input: TerminalFlushInput): Promise<void> {
+    await this.forceFlush();
 
     const now = this.clock.now();
     if (this.runId) {
-      updateAssistantMessagesTerminalForRun(this.db, {
+      await this.persistence.updateAssistantMessagesTerminalForRun({
         runId: this.runId,
         runStatus: input.runStatus,
         endedAt: input.endedAt ?? now,
         now,
       });
     }
-    updateAssistantMessageTerminal(this.db, {
+    await this.persistence.updateAssistantMessageTerminal({
       messageId: this.messageId,
       runStatus: input.runStatus,
       lastRunEventId: this.lastRunEventId,
@@ -186,7 +189,7 @@ class MessageAccumulator {
 
     this.flushTimer = this.timer.setTimeout(() => {
       this.flushTimer = null;
-      this.flushPending();
+      void this.flushPending();
     }, runMessageFlushPolicy.throttleMs);
   }
 
@@ -200,19 +203,23 @@ class MessageAccumulator {
       return;
     }
 
-    this.forceFlush();
+    void this.forceFlush();
     const now = this.clock.now();
     const messageId = this.nextMessageId!();
-    insertAssistantRunMessage(this.db, {
+    const workspaceId = this.workspaceId!;
+    const conversationId = this.conversationId!;
+    const runId = this.runId!;
+    const position = this.nextPosition;
+    this.enqueueWrite(() => this.persistence.insertAssistantRunMessage({
       id: messageId,
-      workspaceId: this.workspaceId!,
-      conversationId: this.conversationId!,
-      runId: this.runId!,
-      position: this.nextPosition,
+      workspaceId,
+      conversationId,
+      runId,
+      position,
       runStatus: 'running',
       startedAt: now,
       now,
-    });
+    }).then(() => undefined));
 
     this.messageId = messageId;
     this.nextPosition += 1;
@@ -226,17 +233,31 @@ class MessageAccumulator {
     return Boolean(this.workspaceId && this.conversationId && this.runId && this.nextMessageId);
   }
 
-  private flushPending(): void {
+  private async flushPending(): Promise<void> {
     if (!this.dirty) return;
 
     this.dirty = false;
-    updateRunMessage(this.db, {
-      messageId: this.messageId,
-      content: this.content,
-      thinkingContent: this.thinkingContent,
-      events: [...this.events],
-      lastRunEventId: this.lastRunEventId,
-      now: this.clock.now(),
-    });
+    const messageId = this.messageId;
+    const content = this.content;
+    const thinkingContent = this.thinkingContent;
+    const events = [...this.events];
+    const lastRunEventId = this.lastRunEventId;
+    const now = this.clock.now();
+    await this.enqueueWrite(() =>
+      this.persistence.updateRunMessage({
+        messageId,
+        content,
+        thinkingContent,
+        events,
+        lastRunEventId,
+        now,
+      }).then(() => undefined),
+    );
+  }
+
+  private enqueueWrite(operation: () => Promise<void>): Promise<void> {
+    const next = this.writeQueue.then(operation, operation);
+    this.writeQueue = next.catch(() => undefined);
+    return next;
   }
 }

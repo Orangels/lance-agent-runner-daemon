@@ -5,17 +5,14 @@ import type { PrepareWorkspaceFileRequest, WorkspaceIdentity } from './run-types
 import { assertSafePathSegment, assertWorkspaceRelativePath, isPathInsideRoot, resolveUnderRoot } from './path-safety.js';
 import { createId } from './ids.js';
 import type { RunnerDatabase } from '../db/connection.js';
-import {
-  getWorkspaceForClient,
-  upsertWorkspace,
-  type WorkspaceRecord,
-} from '../db/repositories.js';
+import { createSqliteRunnerPersistence } from '../db/sqlite-persistence.js';
+import type { RunnerPersistence, WorkspaceRecord } from '../db/types.js';
 import { DaemonError, daemonError, notFound } from './errors.js';
 
 export interface WorkspaceService {
-  createOrGetWorkspace(input: CreateOrGetWorkspaceInput): PublicWorkspace;
-  prepareWorkspaceFiles(input: PrepareWorkspaceFilesInput): PreparedWorkspaceFiles;
-  prepareUploadedWorkspaceFile(input: PrepareUploadedWorkspaceFileInput): UploadedWorkspaceFileResult;
+  createOrGetWorkspace(input: CreateOrGetWorkspaceInput): Promise<PublicWorkspace>;
+  prepareWorkspaceFiles(input: PrepareWorkspaceFilesInput): Promise<PreparedWorkspaceFiles>;
+  prepareUploadedWorkspaceFile(input: PrepareUploadedWorkspaceFileInput): Promise<UploadedWorkspaceFileResult>;
 }
 
 export interface PublicWorkspace {
@@ -70,7 +67,8 @@ interface PrepareUploadedWorkspaceFileInput {
 }
 
 interface WorkspaceServiceDependencies {
-  db: RunnerDatabase;
+  persistence?: RunnerPersistence;
+  db?: RunnerDatabase;
   ids?: {
     workspaceId?: () => string;
   };
@@ -80,11 +78,17 @@ interface WorkspaceServiceDependencies {
 export function createWorkspaceService(dependencies: WorkspaceServiceDependencies): WorkspaceService {
   const now = dependencies.clock ?? Date.now;
   const nextWorkspaceId = dependencies.ids?.workspaceId ?? (() => createId('ws'));
+  const persistence =
+    dependencies.persistence ??
+    (dependencies.db ? createSqliteRunnerPersistence(dependencies.db) : undefined);
+  if (!persistence) {
+    throw new Error('WorkspaceService requires persistence');
+  }
 
   return {
-    createOrGetWorkspace(input): PublicWorkspace {
+    async createOrGetWorkspace(input): Promise<PublicWorkspace> {
       assertWorkspaceIdentity(input.workspace);
-      const workspace = upsertWorkspace(dependencies.db, {
+      const workspace = await persistence.upsertWorkspace({
         id: nextWorkspaceId(),
         clientId: input.clientId,
         profileId: input.profile.id,
@@ -101,8 +105,8 @@ export function createWorkspaceService(dependencies: WorkspaceServiceDependencie
       return toPublicWorkspace(workspace);
     },
 
-    prepareWorkspaceFiles(input): PreparedWorkspaceFiles {
-      const workspace = getWorkspaceForClient(dependencies.db, {
+    async prepareWorkspaceFiles(input): Promise<PreparedWorkspaceFiles> {
+      const workspace = await persistence.getWorkspaceForClient({
         workspaceId: input.workspaceId,
         clientId: input.clientId,
         isAdmin: input.isAdmin,
@@ -123,8 +127,8 @@ export function createWorkspaceService(dependencies: WorkspaceServiceDependencie
       };
     },
 
-    prepareUploadedWorkspaceFile(input): UploadedWorkspaceFileResult {
-      const workspace = getWorkspaceForClient(dependencies.db, {
+    async prepareUploadedWorkspaceFile(input): Promise<UploadedWorkspaceFileResult> {
+      const workspace = await persistence.getWorkspaceForClient({
         workspaceId: input.workspaceId,
         clientId: input.clientId,
         isAdmin: input.isAdmin,
