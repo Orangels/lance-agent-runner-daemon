@@ -49,6 +49,9 @@ function setup(input: { maxLogBytesPerRun?: number; logRetentionMs?: number } = 
         maxReviewBundleBytes: 16 * 1024 * 1024,
         maxUploadBytesPerFile: 50 * 1024 * 1024,
         uploadTempRetentionMs: 24 * 60 * 60 * 1000,
+        persistence: {
+          databaseUrl: 'postgres://user:pass@localhost:5432/lance_agent_daemon_test',
+        },
       },
     },
   });

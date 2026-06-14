@@ -20,6 +20,9 @@ describe('loadDaemonConfig', () => {
           dataDir: 'data',
           globalConcurrency: 1,
           maxQueueSize: 10,
+          persistence: {
+            databaseUrl: 'env:CLAUDE_RUNNER_DATABASE_URL',
+          },
         },
         clients: [
           {
@@ -53,10 +56,15 @@ describe('loadDaemonConfig', () => {
       }),
     );
 
-    const config = loadDaemonConfig(configPath, { TEST_DAEMON_API_KEY: 'secret' });
+    const databaseUrl = 'postgres://user:pass@localhost:5432/lance_agent_daemon';
+    const config = loadDaemonConfig(configPath, {
+      TEST_DAEMON_API_KEY: 'secret',
+      CLAUDE_RUNNER_DATABASE_URL: databaseUrl,
+    });
     const profile = config.profiles[0];
 
     expect(config.server.dataDir).toBe(path.join(configDir, 'data'));
+    expect(config.server.persistence.databaseUrl).toBe(databaseUrl);
     expect(profile.sandboxRoot).toBe(path.join(configDir, 'workspaces/report-docx'));
     expect(profile.claudeConfigDir).toBe(path.join(configDir, 'profiles/report-docx/claude'));
     expect(profile.skillRoots).toEqual([path.join(root, 'apps/daemon/skills')]);

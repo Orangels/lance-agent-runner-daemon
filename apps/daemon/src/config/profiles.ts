@@ -12,6 +12,10 @@ import { findDisallowedProfileEnvKeys } from './env.js';
 export const permissionModes = ['default', 'acceptEdits', 'bypassPermissions'] as const;
 export type PermissionMode = (typeof permissionModes)[number];
 
+export interface PersistenceConfig {
+  databaseUrl: string;
+}
+
 export interface ServerConfig {
   host: string;
   port: number;
@@ -23,6 +27,7 @@ export interface ServerConfig {
   maxReviewBundleBytes: number;
   maxUploadBytesPerFile: number;
   uploadTempRetentionMs: number;
+  persistence: PersistenceConfig;
 }
 
 export interface ClientConfig {
@@ -87,6 +92,11 @@ const serverSchema = z
     maxReviewBundleBytes: z.number().int().min(1).default(16 * 1024 * 1024),
     maxUploadBytesPerFile: z.number().int().min(1).default(50 * 1024 * 1024),
     uploadTempRetentionMs: z.number().int().min(0).default(24 * 60 * 60 * 1000),
+    persistence: z
+      .object({
+        databaseUrl: nonEmptyString,
+      })
+      .strict(),
   })
   .strict();
 
@@ -198,9 +208,19 @@ export function parseDaemonConfig(
 
   return {
     ...parsed,
+    server: {
+      ...parsed.server,
+      persistence: {
+        databaseUrl: resolveConfigEnvReference(
+          parsed.server.persistence.databaseUrl,
+          env,
+          'databaseUrl',
+        ),
+      },
+    },
     clients: parsed.clients.map((client) => ({
       ...client,
-      apiKey: resolveConfigSecret(client.apiKey, env),
+      apiKey: resolveConfigEnvReference(client.apiKey, env, 'secret'),
     })),
   };
 }
@@ -225,9 +245,10 @@ export function getArtifactRule(profile: ProfileConfig, ruleId: string): Artifac
   return rule;
 }
 
-function resolveConfigSecret(
+function resolveConfigEnvReference(
   value: string,
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+  label: 'databaseUrl' | 'secret',
 ): string {
   if (!value.startsWith('env:')) {
     return value;
@@ -235,12 +256,12 @@ function resolveConfigSecret(
 
   const key = value.slice('env:'.length);
   if (!key) {
-    throw new Error('env: secret reference is missing a variable name');
+    throw new Error(`env: ${label} reference is missing a variable name`);
   }
 
   const resolved = env[key];
   if (!resolved) {
-    throw new Error(`Missing required environment variable for secret: ${key}`);
+    throw new Error(`Missing required environment variable for ${label}: ${key}`);
   }
 
   return resolved;

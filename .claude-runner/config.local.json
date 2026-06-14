@@ -8,7 +8,10 @@
     "logRetentionMs": 604800000,
     "maxLogBytesPerRun": 4194304,
     "maxUploadBytesPerFile": 52428800,
-    "uploadTempRetentionMs": 86400000
+    "uploadTempRetentionMs": 86400000,
+    "persistence": {
+      "databaseUrl": "env:CLAUDE_RUNNER_DATABASE_URL"
+    }
   },
   "clients": [
     {
