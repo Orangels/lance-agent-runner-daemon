@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import type { DaemonConfig } from '../config/profiles.js';
 import type { RunnerPersistence, RunMessageRecord, RunPromptSnapshotRecord } from '../db/types.js';
 import { daemonError, forbidden, notFound, type DaemonError } from './errors.js';
@@ -256,7 +256,7 @@ async function readLogEntry(
     const download = await runLogService.getRunLogDownload(input);
     return {
       path: input.path,
-      content: sanitizeLogText(readFileSync(download.filePath, 'utf8')),
+      content: sanitizeLogText(await readFile(download.filePath, 'utf8')),
     };
   } catch (error) {
     if (isNotFoundError(error)) {
