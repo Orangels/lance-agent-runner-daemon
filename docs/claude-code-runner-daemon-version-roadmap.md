@@ -132,6 +132,7 @@ The following capabilities are intentionally deferred to later versions. Do not 
 - Preserve run-create idempotency guarantees with PostgreSQL unique constraints or equivalent transactional behavior.
 - Revisit startup interruption handling, queue consistency, and transaction isolation under PostgreSQL.
 - Add deployment configuration, local development setup, migration tooling, backup/restore notes, and rollback guidance.
+- Keep request-serving daemon database and filesystem operations asynchronous; offline migration tools may keep synchronous helpers where they do not block the daemon runtime.
 - Preserve SQLite only as a read-only migration source and historical backup after cutover.
 
 ### Queue Scale-Out

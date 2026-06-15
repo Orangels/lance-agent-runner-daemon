@@ -181,6 +181,7 @@ async function withApp(
       timerHarness.runNextTimer();
       for (let index = 0; index < 5; index += 1) {
         await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setTimeout(resolve, 0));
       }
     },
     runAllTimers: () => {
