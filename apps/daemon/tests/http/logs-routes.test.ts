@@ -119,7 +119,7 @@ async function withApp(callback: (context: { baseUrl: string; config: DaemonConf
   logs.stdout(`authorization: Bearer secret-token ${config.profiles[0]!.sandboxRoot} output/report.docx`);
   logs.stderr('stderr tail');
   logs.debugEvent({ type: 'stderr', text: 'debug tail' });
-  logs.close();
+  await logs.close();
 
   const app = createApp({
     config,

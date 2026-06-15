@@ -22,6 +22,7 @@ import {
 import { badRequest, daemonError, notFound } from './errors.js';
 import { createId } from './ids.js';
 import { createMessageAccumulator } from './message-accumulator.js';
+import { noopDaemonLogger, type DaemonLogger } from './daemon-logger.js';
 import { composeRunPrompt } from './prompt-composer.js';
 import { createSanitizedProfileSnapshot } from './profile-snapshot.js';
 import {
@@ -71,6 +72,7 @@ export interface CreateRunServiceInput {
   runnerFactory?: RunServiceRunnerFactory;
   artifactService?: ArtifactService;
   runLogService?: RunLogService;
+  daemonLogger?: DaemonLogger;
   capabilityProbe?: (profile: ProfileConfig) => Promise<ClaudeCapabilities>;
   clock?: () => number;
   timer?: RunServiceTimer;
@@ -186,6 +188,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
   const artifactService =
     input.artifactService ?? createArtifactService({ config: input.config, persistence, clock: now });
   const runLogService = input.runLogService ?? createRunLogService({ config: input.config, persistence });
+  const daemonLogger = input.daemonLogger ?? noopDaemonLogger;
   const capabilityProbe =
     input.capabilityProbe ??
     ((profile: ProfileConfig) => probeClaudeCapabilities({ claudeBin: profile.claudeBin }));
@@ -558,6 +561,24 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       }
     }
 
+    if (state.logHandle) {
+      try {
+        await state.logHandle.close();
+      } catch (error) {
+        daemonLogger.warn('run_log_write_failed', {
+          error,
+          runId: state.runId,
+        });
+        emitRunEvent(state, {
+          type: 'warning',
+          code: 'RUN_LOG_WRITE_FAILED',
+          message: 'Run log write failed.',
+        });
+      } finally {
+        state.logHandle = null;
+      }
+    }
+
     emitRunEvent(state, { type: 'end', status: finalStatus });
     const finishedAt = now();
     if (state.accumulator) {
@@ -588,8 +609,6 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       now: finishedAt,
     });
 
-    state.logHandle?.close();
-    state.logHandle = null;
     state.terminal = true;
     state.queueStatus = 'terminal';
     state.finishing = false;

@@ -15,11 +15,13 @@ import {
 import { applySchema } from '../../src/db/schema.js';
 import { createSqliteRunnerPersistence } from '../../src/db/sqlite-persistence.js';
 import { DaemonError } from '../../src/core/errors.js';
+import type { DaemonLogger } from '../../src/core/daemon-logger.js';
 import {
   buildClaudeRunInvocation,
   createRunService,
   type RunServiceRunnerFactory,
 } from '../../src/core/run-service.js';
+import type { RunLogService } from '../../src/core/run-log-service.js';
 import { createTextSnapshot, stableJsonHash } from '../../src/core/snapshot-service.js';
 import type { ClaudeCliRunResult } from '../../src/core/cli-runner.js';
 import { getWorkspaceCwd } from '../../src/core/workspace-service.js';
@@ -116,6 +118,8 @@ function setup(
   options: {
     capabilities?: Parameters<RunServiceRunnerFactory>[0]['capabilities'];
     configure?: (config: DaemonConfig) => void;
+    runLogService?: RunLogService;
+    daemonLogger?: DaemonLogger;
   } = {},
 ) {
   const root = mkdtempSync(path.join(tmpdir(), 'runner-service-test-'));
@@ -158,6 +162,8 @@ function setup(
     config,
     persistence,
     runnerFactory,
+    runLogService: options.runLogService,
+    daemonLogger: options.daemonLogger,
     capabilityProbe: async () => options.capabilities ?? {},
     timer: timerHarness.timer,
     clock: () => 5000,
@@ -187,6 +193,7 @@ async function runScheduledStart(runNextTimer: () => unknown): Promise<void> {
 async function flushAsync(): Promise<void> {
   for (let index = 0; index < 10; index += 1) {
     await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 0));
   }
 }
 
@@ -1218,6 +1225,79 @@ describe('run service', () => {
     const eventTypes = (detail?.messages[1]?.events as Array<{ type: string }>).map((event) => event.type);
     expect(eventTypes).toEqual(expect.arrayContaining(['artifact_finalized', 'end']));
     expect(eventTypes.indexOf('artifact_finalized')).toBeLessThan(eventTypes.indexOf('end'));
+  });
+
+  it('persists run log close warning before terminal end without changing final status', async () => {
+    const daemonLogger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const closeError = new Error('disk full');
+    const runLogService = {
+      dataDir: '',
+      openRunLogs: vi.fn(async () => ({
+        stdout: vi.fn(),
+        stderr: vi.fn(),
+        debugEvent: vi.fn(),
+        close: vi.fn(async () => {
+          throw closeError;
+        }),
+      })),
+      getRunLogs: vi.fn(),
+      getRunLogDownload: vi.fn(),
+      pruneExpiredLogs: vi.fn(),
+    } satisfies RunLogService;
+    const { root, config, db, workspace, workspaceCwd, service, runners, runNextTimer } = setup({
+      daemonLogger,
+      runLogService,
+    });
+    writeSkill(root);
+
+    await service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'generate',
+        prompt: 'Write the report.',
+        skillId: 'report-writer',
+      },
+    });
+    await runScheduledStart(runNextTimer);
+    await vi.waitFor(() => expect(runners).toHaveLength(1));
+    writeFileSync(path.join(workspaceCwd, 'output', 'report.docx'), 'docx');
+
+    runners[0]!.complete({
+      status: 'succeeded',
+      exitCode: 0,
+      signal: null,
+      stdoutTail: '',
+      stderrTail: '',
+    });
+    await flushAsync();
+
+    await vi.waitFor(() => {
+      expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.run.status).toBe('succeeded');
+    });
+    const detail = getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' });
+    const events = detail?.messages[1]?.events as Array<{ type: string; code?: string }>;
+    const eventTypes = events.map((event) => event.type);
+    expect(detail?.run.status).toBe('succeeded');
+    expect(eventTypes).toEqual(expect.arrayContaining(['artifact_finalized', 'warning', 'end']));
+    expect(eventTypes.indexOf('artifact_finalized')).toBeLessThan(eventTypes.indexOf('warning'));
+    expect(eventTypes.indexOf('warning')).toBeLessThan(eventTypes.indexOf('end'));
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'warning',
+        code: 'RUN_LOG_WRITE_FAILED',
+      }),
+    );
+    expect(daemonLogger.warn).toHaveBeenCalledWith('run_log_write_failed', {
+      error: closeError,
+      runId: 'run_1',
+    });
   });
 
   it('rewrites successful runs to failed when required artifacts are missing', async () => {

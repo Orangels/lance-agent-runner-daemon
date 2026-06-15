@@ -161,7 +161,7 @@ async function setup(input: { canReadDebugEvents?: boolean; maxReviewBundleBytes
   logs.stdout(`stdout ${config.profiles[0]!.sandboxRoot} output/report.docx`);
   logs.stderr('stderr');
   logs.debugEvent({ type: 'tool_result', content: 'token=my-token' } as never);
-  logs.close();
+  await logs.close();
   const service = createReviewBundleService({ config, persistence, runLogService });
   return {
     config,

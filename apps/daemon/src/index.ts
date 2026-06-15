@@ -61,7 +61,14 @@ export async function createServerContext(
   const runLogService = createRunLogService({ config, persistence });
   const reviewBundleService = createReviewBundleService({ config, persistence, runLogService });
   const feedbackService = createRunFeedbackService({ persistence, clock: options.clock });
-  const runService = createRunService({ config, persistence, artifactService, runLogService, clock: options.clock });
+  const runService = createRunService({
+    config,
+    persistence,
+    artifactService,
+    runLogService,
+    daemonLogger,
+    clock: options.clock,
+  });
   const uploadTempService = createUploadTempService({ config });
   await uploadTempService.pruneExpiredUploads({ now: startupNow });
   const app = createApp({

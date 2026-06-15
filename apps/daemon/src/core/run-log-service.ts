@@ -1,11 +1,10 @@
 import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+  mkdir,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import path from 'node:path';
 import type { ServerConfig } from '../config/profiles.js';
 import type { RunnerPersistence, RunLogRecord } from '../db/types.js';
@@ -24,7 +23,7 @@ export interface RunLogHandle {
   stdout(chunk: string): void;
   stderr(chunk: string): void;
   debugEvent(event: RunEvent): void;
-  close(): void;
+  close(): Promise<void>;
 }
 
 export interface PublicRunLogSummary {
@@ -86,7 +85,7 @@ export function createRunLogService(input: CreateRunLogServiceInput): RunLogServ
     openRunLogs: async ({ runId }) => {
       const runDirRelative = path.join('logs', 'runs', runId);
       const runDir = resolveInsideDataDir(dataDir, runDirRelative);
-      mkdirSync(runDir, { recursive: true });
+      await mkdir(runDir, { recursive: true });
 
       const stdoutLogPath = path.join(runDirRelative, 'stdout.log');
       const stderrLogPath = path.join(runDirRelative, 'stderr.log');
@@ -98,6 +97,7 @@ export function createRunLogService(input: CreateRunLogServiceInput): RunLogServ
         debugEventsLogPath,
         input.config.server.maxLogBytesPerRun,
       );
+      await Promise.all([stdout.open(), stderr.open(), debugEvents.open()]);
 
       await persistence.upsertRunLogPaths({
         runId,
@@ -111,7 +111,17 @@ export function createRunLogService(input: CreateRunLogServiceInput): RunLogServ
         stdout: (chunk) => stdout.append(sanitizeLogText(chunk)),
         stderr: (chunk) => stderr.append(sanitizeLogText(chunk)),
         debugEvent: (event) => debugEvents.append(`${sanitizeLogText(JSON.stringify(event))}\n`),
-        close: () => {},
+        close: async () => {
+          const results = await Promise.allSettled([
+            stdout.close(),
+            stderr.close(),
+            debugEvents.close(),
+          ]);
+          const rejected = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+          if (rejected) {
+            throw rejected.reason;
+          }
+        },
       };
     },
     getRunLogs: async ({ runId, client }) => {
@@ -134,12 +144,18 @@ export function createRunLogService(input: CreateRunLogServiceInput): RunLogServ
         isAdmin: client.isAdmin,
       });
 
+      const [stdout, stderr, debugEvents] = await Promise.all([
+        summarizeLogFile(dataDir, record?.stdoutLogPath ?? null),
+        summarizeLogFile(dataDir, record?.stderrLogPath ?? null),
+        summarizeLogFile(dataDir, record?.debugEventsLogPath ?? null),
+      ]);
+
       return {
         runId,
         logs: {
-          stdout: summarizeLogFile(dataDir, record?.stdoutLogPath ?? null),
-          stderr: summarizeLogFile(dataDir, record?.stderrLogPath ?? null),
-          debugEvents: summarizeLogFile(dataDir, record?.debugEventsLogPath ?? null),
+          stdout,
+          stderr,
+          debugEvents,
         },
       };
     },
@@ -166,11 +182,8 @@ export function createRunLogService(input: CreateRunLogServiceInput): RunLogServ
         throw notFound('Run log not found');
       }
       const absolutePath = resolveInsideDataDir(dataDir, relativePath);
-      if (!existsSync(absolutePath)) {
-        throw notFound('Run log not found');
-      }
-      const safeStat = statSync(absolutePath);
-      if (!safeStat.isFile()) {
+      const safeStat = await stat(absolutePath).catch(() => null);
+      if (!safeStat?.isFile()) {
         throw notFound('Run log not found');
       }
 
@@ -191,7 +204,7 @@ export function createRunLogService(input: CreateRunLogServiceInput): RunLogServ
       for (const record of expired) {
         const runDir = path.join(logRoot, record.runId);
         if (isPathInside(dataDir, runDir)) {
-          rmSync(runDir, { recursive: true, force: true });
+          await rm(runDir, { recursive: true, force: true });
         }
       }
 
@@ -217,53 +230,69 @@ function fileNameForKind(kind: RunLogDownloadKind): string {
 
 function createBoundedWriter(dataDir: string, relativePath: string, maxBytes: number) {
   const absolutePath = resolveInsideDataDir(dataDir, relativePath);
-  mkdirSync(path.dirname(absolutePath), { recursive: true });
-  writeFileSync(absolutePath, '');
   let bytes = 0;
   let truncated = false;
+  let queue = Promise.resolve();
+  let failure: unknown = null;
+
+  const enqueue = (operation: () => Promise<void>) => {
+    queue = queue.then(operation).catch((error) => {
+      failure = error;
+    });
+  };
 
   return {
+    async open(): Promise<void> {
+      await mkdir(path.dirname(absolutePath), { recursive: true });
+      await writeFile(absolutePath, '');
+    },
     append: (text: string) => {
       if (truncated) return;
 
-      const availableBytes = maxBytes - bytes;
       const buffer = Buffer.from(text, 'utf8');
-      if (buffer.byteLength <= availableBytes) {
-        writeFileSync(absolutePath, buffer, { flag: 'a' });
-        bytes += buffer.byteLength;
-        return;
-      }
+      enqueue(async () => {
+        if (truncated) return;
 
-      if (availableBytes > 0) {
-        writeFileSync(absolutePath, buffer.subarray(0, availableBytes), { flag: 'a' });
-        bytes += availableBytes;
+        const availableBytes = maxBytes - bytes;
+        if (buffer.byteLength <= availableBytes) {
+          await writeFile(absolutePath, buffer, { flag: 'a' });
+          bytes += buffer.byteLength;
+          return;
+        }
+
+        if (availableBytes > 0) {
+          await writeFile(absolutePath, buffer.subarray(0, availableBytes), { flag: 'a' });
+          bytes += availableBytes;
+        }
+        await writeFile(absolutePath, truncationMarker, { flag: 'a' });
+        truncated = true;
+      });
+    },
+    async close(): Promise<void> {
+      await queue;
+      if (failure) {
+        throw failure;
       }
-      writeFileSync(absolutePath, truncationMarker, { flag: 'a' });
-      truncated = true;
     },
   };
 }
 
-function summarizeLogFile(dataDir: string, relativePath: string | null): PublicRunLogSummary {
+async function summarizeLogFile(dataDir: string, relativePath: string | null): Promise<PublicRunLogSummary> {
   if (relativePath === null) {
     return unavailableLog();
   }
 
   const absolutePath = resolveInsideDataDir(dataDir, relativePath);
-  if (!existsSync(absolutePath)) {
+  const safeStat = await stat(absolutePath).catch(() => null);
+  if (!safeStat?.isFile()) {
     return unavailableLog();
   }
 
-  const stat = statSync(absolutePath);
-  if (!stat.isFile()) {
-    return unavailableLog();
-  }
-
-  const content = readFileSync(absolutePath);
+  const content = await readFile(absolutePath);
   const tail = content.subarray(Math.max(0, content.byteLength - logTailBytes)).toString('utf8');
   return {
     available: true,
-    size: stat.size,
+    size: safeStat.size,
     tail,
   };
 }

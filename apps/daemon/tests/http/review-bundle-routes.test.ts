@@ -111,7 +111,7 @@ async function withApp(callback: (context: { baseUrl: string }) => Promise<void>
   const runLogService = createRunLogService({ config, persistence });
   const logs = await runLogService.openRunLogs({ runId: 'run_1' });
   logs.stdout('stdout');
-  logs.close();
+  await logs.close();
   const reviewBundleService = createReviewBundleService({ config, persistence, runLogService });
   const app = createApp({
     config,

@@ -97,7 +97,7 @@ describe('run log service', () => {
     logs.stdout('hello stdout\n');
     logs.stderr('hello stderr\n');
     logs.debugEvent({ type: 'stderr', text: 'debug line' });
-    logs.close();
+    await logs.close();
 
     const row = getRunLogForRunForClient(db, { runId: 'run_1', clientId: 'lqbot' });
     expect(row).toEqual({
@@ -118,7 +118,7 @@ describe('run log service', () => {
     const logs = await service.openRunLogs({ runId: 'run_1' });
     logs.stdout('authorization: Bearer secret /home/orangels/private.txt output/report.docx');
     logs.stderr('CLAUDE_CONFIG_DIR=/tmp/claude token=my-token');
-    logs.close();
+    await logs.close();
 
     const stdout = readFileSync(path.join(dataDir, 'logs/runs/run_1/stdout.log'), 'utf8');
     const stderr = readFileSync(path.join(dataDir, 'logs/runs/run_1/stderr.log'), 'utf8');
@@ -136,7 +136,7 @@ describe('run log service', () => {
     logs.stdout('1234567890');
     logs.stdout('abcdef');
     logs.stdout('ignored');
-    logs.close();
+    await logs.close();
 
     const stdout = readFileSync(path.join(dataDir, 'logs/runs/run_1/stdout.log'), 'utf8');
     expect(stdout).toContain('1234567890ab');
@@ -149,7 +149,7 @@ describe('run log service', () => {
     const { service } = setup();
     const logs = await service.openRunLogs({ runId: 'run_1' });
     logs.stdout('safe tail');
-    logs.close();
+    await logs.close();
 
     await expect(
       service.getRunLogs({ runId: 'run_1', client: logClient({ canReadLogs: false }) }),
@@ -166,7 +166,7 @@ describe('run log service', () => {
 
   it('returns not found for another client unless admin', async () => {
     const { service } = setup();
-    (await service.openRunLogs({ runId: 'run_1' })).close();
+    await (await service.openRunLogs({ runId: 'run_1' })).close();
 
     await expect(service.getRunLogs({ runId: 'run_1', client: logClient({ id: 'other' }) })).rejects.toThrow(
       expect.objectContaining({ code: 'NOT_FOUND', status: 404 }),
@@ -180,7 +180,7 @@ describe('run log service', () => {
     const { service } = setup();
     const logs = await service.openRunLogs({ runId: 'run_1' });
     logs.stdout('gone');
-    logs.close();
+    await logs.close();
     rmSync(path.join(service.dataDir, 'logs/runs/run_1/stdout.log'));
 
     expect((await service.getRunLogs({ runId: 'run_1', client: logClient() })).logs.stdout).toEqual({
@@ -195,7 +195,7 @@ describe('run log service', () => {
     const logs = await service.openRunLogs({ runId: 'run_1' });
     logs.stdout('full stdout');
     logs.stderr('full stderr');
-    logs.close();
+    await logs.close();
 
     await expect(service.getRunLogDownload({ runId: 'run_1', kind: 'stdout', client: logClient() })).resolves.toEqual({
       filePath: path.join(dataDir, 'logs/runs/run_1/stdout.log'),
@@ -212,7 +212,7 @@ describe('run log service', () => {
     const { service } = setup();
     const logs = await service.openRunLogs({ runId: 'run_1' });
     logs.debugEvent({ type: 'stderr', text: 'debug line' });
-    logs.close();
+    await logs.close();
 
     await expect(
       service.getRunLogDownload({ runId: 'run_1', kind: 'debug-events', client: logClient() }),
@@ -230,7 +230,7 @@ describe('run log service', () => {
     const { service } = setup();
     const logs = await service.openRunLogs({ runId: 'run_1' });
     logs.stdout('gone');
-    logs.close();
+    await logs.close();
     rmSync(path.join(service.dataDir, 'logs/runs/run_1/stdout.log'));
 
     await expect(
@@ -245,7 +245,7 @@ describe('run log service', () => {
     const { db, dataDir, service } = setup({ logRetentionMs: 1000 });
     const logs = await service.openRunLogs({ runId: 'run_1' });
     logs.stdout('old');
-    logs.close();
+    await logs.close();
     updateRunTerminal(db, {
       runId: 'run_1',
       status: 'succeeded',
