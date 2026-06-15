@@ -282,6 +282,8 @@ GET /api/runs/run_xxx/status
 - `queued` 可适当拉长。
 - `terminal=true` 后停止轮询。
 
+daemon 会在 terminal 状态写入前尽量 flush 本次 run logs。极端慢盘或日志写入异常时，Claude 子进程结束到 `/status` 返回 `terminal=true` 之间可能有短暂尾延迟。业务端不需要改流程，只要继续轮询到 `terminal=true`。
+
 成功后获取 artifacts：
 
 ```text
@@ -336,6 +338,7 @@ thinking_delta          thinking 增量，normal 可见
 tool_use                工具调用，normal 可见
 artifact_finalized      artifact 已扫描落库
 error                   run 错误
+warning                 非终态降级事件，例如 RUN_LOG_WRITE_FAILED
 end                     run 终态
 ```
 
@@ -345,6 +348,7 @@ end                     run 终态
 - 收到 `text_delta`：追加到当前 assistant 气泡。
 - 收到 `thinking_delta`：追加到当前 assistant thinking 区。
 - 收到 `artifact_finalized`：记录 artifact id，但仍建议 terminal 后再 list artifacts 对账。
+- 收到 `warning`：记录或忽略；不要把它当作 run failed。
 - 收到 `end`：关闭 SSE，然后调用：
 
 ```text
@@ -353,6 +357,8 @@ GET /api/runs/:runId/artifacts
 ```
 
 `GET /api/runs/:runId` 是 durable detail，用于 terminal 对账、SSE 断线恢复、历史查看。不要把 SSE 当长期历史存储。
+
+SSE 客户端必须容忍未知 `data.type`。daemon 可能新增非终态事件类型；业务端应使用默认分支忽略或记录未知事件，而不是抛错中断整个流。
 
 断线恢复：
 
@@ -493,6 +499,7 @@ GET /api/runs/:runId
 - 只需要最后一次 assistant 回复：取最后一条非空 assistant `content`。
 - 报告生成结果：以 artifacts/download 为准，assistant `content` 只作为过程摘要。
 - `thinkingContent` 只在允许可见性下返回；没有 thinking 时为空字符串。
+- `messages[].events` 与 SSE 使用同一类 RunEvent 结构，可能包含 `warning` 或后续新增事件类型；解析时也要容忍未知 `type`。
 
 ## 取消
 
@@ -543,6 +550,8 @@ GET /api/runs/:runId/logs
 ```
 
 该接口仅 `client.canReadLogs=true` 时可用，不建议暴露给普通用户。
+
+`RUN_LOG_WRITE_FAILED` 这类 warning 只表示日志诊断材料写入降级，不代表报告生成本身失败。业务端判断任务成功/失败仍以 run status、errorCode/errorMessage 和 artifacts 为准。
 
 ## Web Test Console 对照
 

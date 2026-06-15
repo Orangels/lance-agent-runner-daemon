@@ -250,6 +250,8 @@ GET /api/runs/:runId/artifacts/:artifactId/download
 
 `GET /api/runs/:runId/status` 不返回 `messages/events/content/thinkingContent`，适合高频 poll。`GET /api/runs/:runId` 仍保留为完整详情接口，用于历史查看、诊断或需要还原 agent 过程输出的场景。
 
+daemon 会在 terminal 状态写入前尽量 flush 本次 run logs。因此 Poll 模式下，Claude 子进程实际结束到 `/status` 返回 `terminal=true` 之间可能有很短尾延迟。业务端不需要改变调用方式，继续按 2-5 秒间隔轮询即可。
+
 ### 6. 订阅 SSE
 
 ```text
@@ -277,6 +279,10 @@ data: {"type":"artifact_finalized","artifact":{"id":"artifact_xxx","runId":"run_
 
 id: 5
 event: agent
+data: {"type":"warning","code":"RUN_LOG_WRITE_FAILED","message":"Run log write failed."}
+
+id: 6
+event: agent
 data: {"type":"end","status":"succeeded"}
 ```
 
@@ -288,7 +294,10 @@ data: {"type":"end","status":"succeeded"}
 - `text_delta`：追加到当前 assistant 消息。
 - `artifact_finalized`：记录 artifact id 和相对路径。
 - `error`：记录错误码和消息。
+- `warning`：记录非终态降级事件，或直接忽略；不要把它当作 run failed。
 - `end`：停止 SSE，随后调用 run detail 和 artifacts API 做最终对账。
+
+业务端必须容忍未知 `data.type`，并保留默认分支忽略或记录未知事件。RunEvent 类型可能随 daemon 能力扩展而增加。
 
 SSE 只保证在线和短期断线 replay。长期事后查看必须使用 `GET /api/runs/:runId`。
 
@@ -309,6 +318,8 @@ GET /api/runs/:runId
 - `messages[].content`
 - `messages[].thinkingContent`
 - `messages[].events`
+
+`messages[].events` 与 SSE 使用同一类 RunEvent 结构，也可能包含 `warning` 或后续新增事件类型。业务端解析 run detail 时也应容忍未知 event type。
 
 `messages` 按 `position ASC` 返回。一个 run 通常有一条 user message，并可能有多条 assistant messages：
 
@@ -578,6 +589,8 @@ failed       失败，展示 errorCode/errorMessage，可读取 run detail/logs
 canceled     用户取消
 interrupted  daemon 重启或关闭中断，建议允许用户重新发起 run
 ```
+
+`warning` RunEvent 不属于状态机，不会把 run status 改为 `failed`。失败判断以 `run.status`、`run.errorCode` 和 `run.errorMessage` 为准。
 
 ## Queue 与并发
 

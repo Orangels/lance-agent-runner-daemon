@@ -60,6 +60,11 @@ Content-Type: text/event-stream
 
 当前持久化迁移到 PostgreSQL 不改变 HTTP/SSE API 的请求或响应结构。业务端仍按本文件的 workspace、upload/prepare、generate/revise、poll/SSE、cancel、artifacts、logs 和 idempotency 流程调用。
 
+daemon 的请求服务路径使用异步数据库和文件 IO。对调用方可见的主要影响是：
+
+- run 进入 terminal 状态前会尽量 flush run logs，因此 `GET /api/runs/:runId/status` 看到 terminal 的时间可能比 Claude 子进程退出略晚。
+- run log 写入失败不会改变 run 的 terminal status；daemon 会通过 `warning` RunEvent 暴露该降级事件。
+
 ### 错误响应
 
 统一结构：
@@ -695,6 +700,8 @@ Authorization: Bearer <api-key>
 
 `terminal` 在 `status` 为 `succeeded`、`failed`、`canceled`、`interrupted` 时为 `true`。报告生成场景推荐先轮询该接口，`terminal: true` 后再调用 artifacts API。
 
+terminal 状态表示 daemon 已完成 durable run 状态更新。由于 daemon 会在 terminal 前 flush 本次 run logs，慢盘或日志写入异常可能让 terminal 可见时间略晚；业务端应继续按轮询间隔等待，不需要改变调用方式。
+
 ### Common Errors
 
 | Status | Code | Meaning |
@@ -761,6 +768,7 @@ Keepalive comment:
 { type: 'text_delta'; delta: string }
 { type: 'usage'; usage: unknown; costUsd: unknown; durationMs: unknown; stopReason: unknown }
 { type: 'error'; message: string; code?: string; details?: unknown }
+{ type: 'warning'; message: string; code?: string; details?: unknown }
 { type: 'artifact_finalized'; artifact: PublicArtifactWithoutWorkspaceId }
 { type: 'end'; status?: RunStatus }
 ```
@@ -787,6 +795,8 @@ Keepalive comment:
 - client 没有 `canReadDebugEvents=true` 时，即使请求 debug 也最多得到 normal。
 - `stderr/raw` 会截断并脱敏。
 - `tool_result` 会保存在内部 `events_json` 和 debug log 中，但不会通过 SSE 或 run detail 的 `messages[].events` 返回。
+- `warning` 表示非终态的运行降级，不等同于 run failed。当前可能出现的 code 包括 `RUN_LOG_WRITE_FAILED`，表示 run log 写入/关闭失败；业务端应记录或忽略，不应把它当作 terminal failure。
+- 业务端 SSE 和 run detail 解析必须容忍未知 `type`。新增 RunEvent 类型不应导致客户端解析失败。
 
 ### Common Errors
 
@@ -905,6 +915,8 @@ Content-Disposition: attachment; filename="<ascii-fallback>"; filename*=UTF-8''<
 读取受控 run logs 摘要。只有 `client.canReadLogs=true` 的 client 可以调用。
 
 这些是 run 级 Claude Code CLI 诊断日志，不是 daemon 服务级日志。daemon 服务级日志写在本地 `server.dataDir/logs/daemon.log` 和 `server.dataDir/logs/daemon-error.log`，不通过 HTTP API 暴露。
+
+正常 terminal run 会在 terminal 状态写入前 flush 已排队的 stdout、stderr 和 debug event logs。取消、超时或 daemon shutdown 这类终止路径仍应把 logs 视为 best-effort 诊断材料；业务结果判断以 run status、errorCode/errorMessage 和 artifacts 为准。
 
 ### Request
 
