@@ -154,6 +154,31 @@ describe('workspace prepare', () => {
     expect(JSON.stringify(prepared)).not.toContain(profile.sandboxRoot);
   });
 
+  it('rejects duplicate workspace target paths before copying files concurrently', async () => {
+    const { uploadsRoot, profile, service } = setup();
+    const workspace = await service.createOrGetWorkspace({
+      clientId: 'lqbot',
+      profile,
+      workspace: { originId: 'lqbot', userId: 'user_1', projectId: 'project_123' },
+    });
+    const firstSourcePath = path.join(uploadsRoot, 'first.docx');
+    const secondSourcePath = path.join(uploadsRoot, 'second.docx');
+    writeFileSync(firstSourcePath, 'first');
+    writeFileSync(secondSourcePath, 'second');
+
+    await expect(
+      service.prepareWorkspaceFiles({
+        clientId: 'lqbot',
+        profile,
+        workspaceId: workspace.workspaceId,
+        files: [
+          { sourcePath: firstSourcePath, targetPath: 'input/source.docx' },
+          { sourcePath: secondSourcePath, targetPath: 'input/source.docx' },
+        ],
+      }),
+    ).rejects.toThrow(expect.objectContaining({ code: 'BAD_REQUEST' }));
+  });
+
   it('rejects protected skill staging targets', async () => {
     const { uploadsRoot, profile, service } = setup();
     const workspace = await service.createOrGetWorkspace({
