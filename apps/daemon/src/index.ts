@@ -12,6 +12,10 @@ import { createRunFeedbackService, type RunFeedbackService } from './core/run-fe
 import { createRunLogService, type RunLogService } from './core/run-log-service.js';
 import { createRunService, type RunService } from './core/run-service.js';
 import { createUploadTempService, type UploadTempService } from './core/upload-temp-service.js';
+import {
+  createWebhookDeliveryService,
+  type WebhookDeliveryService,
+} from './core/webhook-delivery-service.js';
 import { createWorkspaceService, type WorkspaceService } from './core/workspace-service.js';
 import { assertPostgresSchemaReady } from './db/postgres/migrate.js';
 import { createPostgresRunnerPersistence } from './db/postgres/repositories.js';
@@ -28,6 +32,7 @@ export interface ServerContext {
   feedbackService: RunFeedbackService;
   runService: RunService;
   uploadTempService: UploadTempService;
+  webhookDeliveryService: WebhookDeliveryService | null;
   daemonLogger: DaemonLogger;
   app: ReturnType<typeof createApp>;
   interruptedRuns: number;
@@ -36,6 +41,7 @@ export interface ServerContext {
 interface CreateServerContextOptions {
   clock?: () => number;
   daemonLogger?: DaemonLogger;
+  webhookDeliveryService?: WebhookDeliveryService;
 }
 
 interface SignalTarget {
@@ -52,6 +58,7 @@ export async function createServerContext(
   await assertPostgresSchemaReady(config.server.persistence.databaseUrl);
   const persistence = createPostgresRunnerPersistence({
     databaseUrl: config.server.persistence.databaseUrl,
+    poolMax: config.server.persistence.poolMax,
   });
   const now = options.clock ?? Date.now;
   const startupNow = now();
@@ -71,6 +78,17 @@ export async function createServerContext(
   });
   const uploadTempService = createUploadTempService({ config });
   await uploadTempService.pruneExpiredUploads({ now: startupNow });
+  const webhookDeliveryService = config.server.webhooks.enabled
+    ? options.webhookDeliveryService ??
+      createWebhookDeliveryService({
+        config: config.server.webhooks,
+        persistence,
+        databaseUrl: config.server.persistence.databaseUrl,
+        daemonLogger,
+        clock: options.clock,
+      })
+    : null;
+  webhookDeliveryService?.start();
   const app = createApp({
     config,
     persistence,
@@ -99,6 +117,7 @@ export async function createServerContext(
     feedbackService,
     runService,
     uploadTempService,
+    webhookDeliveryService,
     daemonLogger,
     app,
     interruptedRuns,
@@ -128,7 +147,10 @@ export function startServer(context: ServerContext): Server {
 }
 
 export function installShutdownHandlers(
-  context: Pick<ServerContext, 'config' | 'persistence' | 'runService'> & { daemonLogger?: DaemonLogger },
+  context: Pick<ServerContext, 'config' | 'persistence' | 'runService'> & {
+    daemonLogger?: DaemonLogger;
+    webhookDeliveryService?: WebhookDeliveryService | null;
+  },
   server: Pick<Server, 'close'>,
   signalTarget: SignalTarget = process,
 ): void {
@@ -144,6 +166,7 @@ export function installShutdownHandlers(
       server.close(() => resolve());
     });
     await context.runService.shutdownActive({ graceMs: getMaxCancelGraceMs(context.config) });
+    await context.webhookDeliveryService?.stop();
     await context.persistence.close();
     context.daemonLogger?.info('daemon_shutdown_complete');
     await context.daemonLogger?.flush();

@@ -14,6 +14,27 @@ export type PermissionMode = (typeof permissionModes)[number];
 
 export interface PersistenceConfig {
   databaseUrl: string;
+  poolMax: number;
+}
+
+export interface WebhookConfig {
+  enabled: boolean;
+  allowInsecureHttp: boolean;
+  allowPrivateNetworks: boolean;
+  allowedPrivateCidrs: string[];
+  allowedHosts: string[];
+  requestTimeoutMs: number;
+  maxAttempts: number;
+  lockTimeoutMs: number;
+  initialBackoffMs: number;
+  maxBackoffMs: number;
+  listenReconnectBackoffMs: number;
+  listenKeepaliveMs: number;
+  listenKeepaliveTimeoutMs: number;
+  claimLimit: number;
+  maxConcurrentDeliveries: number;
+  stopGraceMs: number;
+  responseBodyPreviewBytes: number;
 }
 
 export interface ServerConfig {
@@ -28,6 +49,7 @@ export interface ServerConfig {
   maxUploadBytesPerFile: number;
   uploadTempRetentionMs: number;
   persistence: PersistenceConfig;
+  webhooks: WebhookConfig;
 }
 
 export interface ClientConfig {
@@ -80,6 +102,47 @@ interface ParseDaemonConfigOptions {
 
 const nonEmptyString = z.string().min(1);
 
+const webhookSchema = z.preprocess(
+  (value) => (value === undefined ? {} : value),
+  z
+    .object({
+      enabled: z.boolean().default(true),
+      allowInsecureHttp: z.boolean().default(true),
+      allowPrivateNetworks: z.boolean().default(true),
+      allowedPrivateCidrs: z.array(nonEmptyString).default(['192.168.88.0/24']),
+      allowedHosts: z.array(nonEmptyString).default([]),
+      requestTimeoutMs: z.number().int().min(1).default(5000),
+      maxAttempts: z.number().int().min(1).default(8),
+      lockTimeoutMs: z.number().int().min(1).default(30000),
+      initialBackoffMs: z.number().int().min(0).default(1000),
+      maxBackoffMs: z.number().int().min(0).default(300000),
+      listenReconnectBackoffMs: z.number().int().min(1).default(1000),
+      listenKeepaliveMs: z.number().int().min(1).default(15000),
+      listenKeepaliveTimeoutMs: z.number().int().min(1).default(5000),
+      claimLimit: z.number().int().min(1).default(5),
+      maxConcurrentDeliveries: z.number().int().min(1).default(5),
+      stopGraceMs: z.number().int().min(0).default(10000),
+      responseBodyPreviewBytes: z.number().int().min(0).default(4096),
+    })
+    .strict()
+    .superRefine((value, context) => {
+      if (value.lockTimeoutMs <= value.requestTimeoutMs) {
+        context.addIssue({
+          code: 'custom',
+          message: 'lockTimeoutMs must be greater than requestTimeoutMs',
+          path: ['lockTimeoutMs'],
+        });
+      }
+      if (value.listenKeepaliveTimeoutMs > value.listenKeepaliveMs) {
+        context.addIssue({
+          code: 'custom',
+          message: 'listenKeepaliveTimeoutMs must be less than or equal to listenKeepaliveMs',
+          path: ['listenKeepaliveTimeoutMs'],
+        });
+      }
+    }),
+);
+
 const serverSchema = z
   .object({
     host: nonEmptyString,
@@ -95,8 +158,10 @@ const serverSchema = z
     persistence: z
       .object({
         databaseUrl: nonEmptyString,
+        poolMax: z.number().int().min(1).default(10),
       })
       .strict(),
+    webhooks: webhookSchema,
   })
   .strict();
 
@@ -216,6 +281,7 @@ export function parseDaemonConfig(
           env,
           'databaseUrl',
         ),
+        poolMax: parsed.server.persistence.poolMax,
       },
     },
     clients: parsed.clients.map((client) => ({

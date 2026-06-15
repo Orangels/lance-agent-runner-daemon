@@ -77,13 +77,22 @@ postgresDescribe('server startup context', () => {
         projectId: 'project_123',
         now: 1000,
       });
-      await setupPersistence.insertRunQueued({
+      const run = await setupPersistence.insertRunQueued({
         id: 'run_1',
         workspaceId: workspace.id,
         clientId: 'lqbot',
         profileId: 'report-docx',
         kind: 'revise',
         prompt: 'Queued run',
+        now: 1000,
+      });
+      await setupPersistence.insertRunWebhook({
+        id: 'wh_run_1',
+        runId: run.id,
+        clientId: 'lqbot',
+        url: 'http://192.168.88.20:8000/webhook',
+        statuses: ['interrupted'],
+        metadata: { businessTaskId: 'task_001' },
         now: 1000,
       });
     } finally {
@@ -106,6 +115,28 @@ postgresDescribe('server startup context', () => {
           finishedAt: 2000,
         },
       });
+      await expect(
+        context.persistence.claimDueWebhookDeliveries({
+          now: 2000,
+          staleDeliveringBefore: 0,
+          lockedBy: 'test_worker',
+          limit: 10,
+          maxAttempts: 8,
+        }),
+      ).resolves.toMatchObject({
+        abandonedIds: [],
+        claimed: [
+          expect.objectContaining({
+            runId: 'run_1',
+            runStatus: 'interrupted',
+            payload: expect.objectContaining({
+              run: expect.objectContaining({ id: 'run_1', status: 'interrupted' }),
+              metadata: { businessTaskId: 'task_001' },
+            }),
+          }),
+        ],
+      });
+      await context.webhookDeliveryService?.stop();
       await context.persistence.close();
     } finally {
       await releaseTestLock();
@@ -135,6 +166,7 @@ postgresDescribe('server startup context', () => {
       expect(existsSync(staleUploadDir)).toBe(false);
       expect(existsSync(freshUploadDir)).toBe(true);
       expect(readdirSync(tempRoot)).toEqual(['upload_fresh']);
+      await context.webhookDeliveryService?.stop();
       await context.persistence.close();
     } finally {
       await releaseTestLock();
@@ -146,6 +178,44 @@ postgresDescribe('server startup context', () => {
 
     expect(module.main).toBeTypeOf('function');
     expect(module.startServer).toBeTypeOf('function');
+  });
+
+  it('starts webhook worker when enabled and skips it when disabled', async () => {
+    const databaseUrl = requirePostgresTestUrl()!;
+    const releaseTestLock = await acquirePostgresTestLock(databaseUrl);
+    const root = mkdtempSync(path.join(tmpdir(), 'runner-index-test-'));
+    const config = makeConfig(root, { databaseUrl });
+    await resetPostgresSchema(databaseUrl);
+    await runPostgresMigrations({ databaseUrl, command: 'up' });
+    const worker = {
+      start: vi.fn(),
+      stop: vi.fn(async () => undefined),
+      drainDue: vi.fn(async () => 0),
+      recoverDueAndScheduleNext: vi.fn(async () => undefined),
+    };
+
+    try {
+      const enabledContext = await createServerContext(config, {
+        webhookDeliveryService: worker,
+      });
+      expect(worker.start).toHaveBeenCalledTimes(1);
+      expect(enabledContext.webhookDeliveryService).toBe(worker);
+      await enabledContext.webhookDeliveryService?.stop();
+      await enabledContext.persistence.close();
+
+      await resetPostgresSchema(databaseUrl);
+      await runPostgresMigrations({ databaseUrl, command: 'up' });
+      const disabledConfig = makeConfig(root, { databaseUrl });
+      disabledConfig.server.webhooks.enabled = false;
+      const disabledContext = await createServerContext(disabledConfig, {
+        webhookDeliveryService: worker,
+      });
+      expect(disabledContext.webhookDeliveryService).toBeNull();
+      expect(worker.start).toHaveBeenCalledTimes(1);
+      await disabledContext.persistence.close();
+    } finally {
+      await releaseTestLock();
+    }
   });
 });
 
@@ -172,6 +242,17 @@ describe('server shutdown handlers', () => {
       shutdownActive: vi.fn(async () => ({ interrupted: 2 })),
     };
     const persistence = { close: vi.fn(async () => undefined) };
+    const sequence: string[] = [];
+    persistence.close.mockImplementation(async () => {
+      sequence.push('persistence.close');
+    });
+    const webhookDeliveryService = {
+      start: vi.fn(),
+      stop: vi.fn(async () => {
+        sequence.push('webhook.stop');
+      }),
+      deliverDue: vi.fn(),
+    };
     const daemonLogger = {
       info: vi.fn(),
       flush: vi.fn(async () => undefined),
@@ -180,6 +261,7 @@ describe('server shutdown handlers', () => {
       config,
       persistence,
       runService,
+      webhookDeliveryService,
       daemonLogger,
     };
 
@@ -188,7 +270,9 @@ describe('server shutdown handlers', () => {
 
     expect(server.close).toHaveBeenCalledTimes(1);
     expect(runService.shutdownActive).toHaveBeenCalledWith({ graceMs: 100 });
+    expect(webhookDeliveryService.stop).toHaveBeenCalledTimes(1);
     expect(persistence.close).toHaveBeenCalledTimes(1);
+    expect(sequence).toEqual(['webhook.stop', 'persistence.close']);
     expect(daemonLogger.info).toHaveBeenCalledWith('daemon_shutdown_complete');
     expect(daemonLogger.flush).toHaveBeenCalledTimes(1);
     expect(signalTarget.exitCode).toBe(0);

@@ -14,6 +14,11 @@ import {
 } from '../../src/db/repositories.js';
 import { applySchema } from '../../src/db/schema.js';
 import { createSqliteRunnerPersistence } from '../../src/db/sqlite-persistence.js';
+import type {
+  CreateWebhookDeliveryForRunStatusInput,
+  InsertRunWebhookInput,
+  RunnerPersistence,
+} from '../../src/db/types.js';
 import { DaemonError } from '../../src/core/errors.js';
 import type { DaemonLogger } from '../../src/core/daemon-logger.js';
 import {
@@ -120,6 +125,7 @@ function setup(
     configure?: (config: DaemonConfig) => void;
     runLogService?: RunLogService;
     daemonLogger?: DaemonLogger;
+    withWebhookSpy?: boolean;
   } = {},
 ) {
   const root = mkdtempSync(path.join(tmpdir(), 'runner-service-test-'));
@@ -127,7 +133,9 @@ function setup(
   options.configure?.(config);
   const db = openInMemoryDatabase();
   applySchema(db);
-  const persistence = createSqliteRunnerPersistence(db);
+  const sqlitePersistence = createSqliteRunnerPersistence(db);
+  const webhookSpies = options.withWebhookSpy ? createWebhookSpyPersistence(sqlitePersistence) : null;
+  const persistence = webhookSpies?.persistence ?? sqlitePersistence;
   const workspace = upsertWorkspace(db, {
     id: 'ws_1',
     clientId: 'lqbot',
@@ -182,7 +190,57 @@ function setup(
     },
   });
 
-  return { root, config, db, workspace, workspaceCwd, service, runners, ...timerHarness };
+  return { root, config, db, workspace, workspaceCwd, service, runners, webhookSpies, ...timerHarness };
+}
+
+function createWebhookSpyPersistence(base: RunnerPersistence) {
+  const insertRunWebhook = vi.fn(async (input: InsertRunWebhookInput) => ({
+    id: input.id,
+    runId: input.runId,
+    clientId: input.clientId,
+    url: input.url,
+    secret: input.secret ?? null,
+    statuses: input.statuses,
+    metadata: input.metadata ?? null,
+    createdAt: input.now,
+    updatedAt: input.now,
+  }));
+  const createWebhookDeliveryForRunStatus = vi.fn(
+    async (input: CreateWebhookDeliveryForRunStatusInput) => ({
+      id: input.id,
+      runId: input.runId,
+      webhookId: input.webhookId,
+      clientId: input.clientId,
+      eventType: input.eventType,
+      runStatus: input.runStatus,
+      deliveryStatus: 'pending' as const,
+      payload: input.payload,
+      payloadSha256: input.payloadSha256,
+      attemptCount: 0,
+      nextAttemptAt: input.nextAttemptAt,
+      lockedAt: null,
+      lockedBy: null,
+      lastAttemptAt: null,
+      deliveredAt: null,
+      responseStatus: null,
+      responseBodyPreview: null,
+      errorMessage: null,
+      createdAt: input.now,
+      updatedAt: input.now,
+    }),
+  );
+
+  function wrap(persistence: RunnerPersistence): RunnerPersistence {
+    return {
+      ...persistence,
+      transaction: async <T,>(fn: (tx: RunnerPersistence) => Promise<T>) =>
+        persistence.transaction((tx) => fn(wrap(tx))),
+      insertRunWebhook,
+      createWebhookDeliveryForRunStatus,
+    };
+  }
+
+  return { persistence: wrap(base), insertRunWebhook, createWebhookDeliveryForRunStatus };
 }
 
 async function runScheduledStart(runNextTimer: () => unknown): Promise<void> {
@@ -323,6 +381,174 @@ describe('run service', () => {
         artifactRuleIds: ['report-docx'],
       }),
     );
+  });
+
+  it('stores run webhook config and creates a queued webhook delivery when requested', async () => {
+    const { config, workspace, service, webhookSpies } = setup({ withWebhookSpy: true });
+
+    await service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'generate',
+        skillId: 'report-writer',
+        prompt: 'Generate the report.',
+        webhook: {
+          url: 'http://192.168.88.20:8000/api/daemon/webhook',
+          secret: 'webhook-secret',
+          statuses: ['queued', 'running', 'succeeded'],
+          metadata: { businessTaskId: 'task_001' },
+        },
+      },
+    });
+
+    expect(webhookSpies?.insertRunWebhook).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 'run_1',
+        clientId: 'lqbot',
+        url: 'http://192.168.88.20:8000/api/daemon/webhook',
+        secret: 'webhook-secret',
+        statuses: ['queued', 'running', 'succeeded'],
+        metadata: { businessTaskId: 'task_001' },
+      }),
+    );
+    expect(webhookSpies?.createWebhookDeliveryForRunStatus).toHaveBeenCalledTimes(1);
+    expect(webhookSpies?.createWebhookDeliveryForRunStatus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 'run_1',
+        clientId: 'lqbot',
+        eventType: 'run.status_changed',
+        runStatus: 'queued',
+        payload: expect.objectContaining({
+          eventType: 'run.status_changed',
+          run: expect.objectContaining({ id: 'run_1', status: 'queued' }),
+          metadata: { businessTaskId: 'task_001' },
+        }),
+      }),
+    );
+  });
+
+  it('creates webhook deliveries for running and terminal status changes', async () => {
+    const { config, workspace, service, runners, runNextTimer, webhookSpies } = setup({
+      withWebhookSpy: true,
+    });
+
+    await service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'revise',
+        prompt: 'Revise.',
+        artifactRuleIds: [],
+        webhook: {
+          url: 'http://192.168.88.20:8000/api/daemon/webhook',
+          statuses: ['running', 'succeeded'],
+        },
+      },
+    });
+    await runScheduledStart(runNextTimer);
+    await vi.waitFor(() => expect(runners).toHaveLength(1));
+
+    runners[0]!.complete({
+      status: 'succeeded',
+      exitCode: 0,
+      signal: null,
+      stdoutTail: '',
+      stderrTail: '',
+    });
+    await flushAsync();
+
+    await vi.waitFor(() => {
+      const statuses = webhookSpies?.createWebhookDeliveryForRunStatus.mock.calls.map(
+        ([delivery]) => delivery.runStatus,
+      );
+      expect(statuses).toEqual(['running', 'succeeded']);
+    });
+    expect(webhookSpies?.createWebhookDeliveryForRunStatus.mock.calls[0]?.[0].payload).toEqual(
+      expect.objectContaining({
+        run: expect.objectContaining({ id: 'run_1', status: 'running' }),
+      }),
+    );
+    expect(webhookSpies?.createWebhookDeliveryForRunStatus.mock.calls[1]?.[0].payload).toEqual(
+      expect.objectContaining({
+        run: expect.objectContaining({ id: 'run_1', status: 'succeeded' }),
+      }),
+    );
+  });
+
+  it('rejects idempotency key reuse when webhook parameters differ', async () => {
+    const { config, workspace, service } = setup({ withWebhookSpy: true });
+
+    await service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'generate',
+        skillId: 'report-writer',
+        prompt: 'Generate the report.',
+        idempotencyKey: 'dispatch:1',
+        webhook: {
+          url: 'http://192.168.88.20:8000/api/daemon/webhook',
+          statuses: ['succeeded'],
+        },
+      },
+    });
+
+    await expect(
+      service.createRun({
+        client: config.clients[0]!,
+        request: {
+          profileId: 'report-docx',
+          workspaceId: workspace.id,
+          kind: 'generate',
+          skillId: 'report-writer',
+          prompt: 'Generate the report.',
+          idempotencyKey: 'dispatch:1',
+          webhook: {
+            url: 'http://192.168.88.21:8000/api/daemon/webhook',
+            statuses: ['succeeded'],
+          },
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: 'IDEMPOTENCY_KEY_CONFLICT',
+      status: 409,
+    });
+  });
+
+  it('replays an existing webhook run before applying current URL policy checks', async () => {
+    const { config, workspace, service } = setup({ withWebhookSpy: true });
+    const request = {
+      profileId: 'report-docx',
+      workspaceId: workspace.id,
+      kind: 'generate' as const,
+      skillId: 'report-writer',
+      prompt: 'Generate the report.',
+      idempotencyKey: 'dispatch:webhook-policy',
+      webhook: {
+        url: 'http://192.168.88.20:8000/api/daemon/webhook',
+        statuses: ['succeeded' as const],
+      },
+    };
+
+    const first = await service.createRun({
+      client: config.clients[0]!,
+      request,
+    });
+    config.server.webhooks.allowPrivateNetworks = false;
+
+    await expect(
+      service.createRun({
+        client: config.clients[0]!,
+        request,
+      }),
+    ).resolves.toEqual({
+      ...first,
+      idempotentReplay: true,
+    });
   });
 
   it('replays an existing idempotency key before queue capacity checks', async () => {
@@ -539,6 +765,88 @@ describe('run service', () => {
       }),
     ).rejects.toThrow(expect.objectContaining({ code: 'COLLECTION_MODE_NOT_ALLOWED', status: 403 }));
     expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })).toBeNull();
+  });
+
+  it('rejects webhook requests when webhooks are disabled before inserting a run', async () => {
+    const { config, db, workspace, service, webhookSpies } = setup({ withWebhookSpy: true });
+    config.server.webhooks.enabled = false;
+
+    await expect(
+      service.createRun({
+        client: config.clients[0]!,
+        request: {
+          profileId: 'report-docx',
+          workspaceId: workspace.id,
+          kind: 'generate',
+          skillId: 'report-writer',
+          prompt: 'Generate a report.',
+          artifactRuleIds: [],
+          webhook: { url: 'http://192.168.88.20:8000/api/daemon/webhook' },
+        },
+      }),
+    ).rejects.toThrow(
+      expect.objectContaining({
+        code: 'BAD_REQUEST',
+        details: { reason: 'webhooks_disabled' },
+        status: 400,
+      }),
+    );
+    expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })).toBeNull();
+    expect(webhookSpies?.insertRunWebhook).not.toHaveBeenCalled();
+    expect(webhookSpies?.createWebhookDeliveryForRunStatus).not.toHaveBeenCalled();
+  });
+
+  it('rejects disallowed webhook URLs before inserting a run', async () => {
+    const { config, db, workspace, service, webhookSpies } = setup({ withWebhookSpy: true });
+
+    await expect(
+      service.createRun({
+        client: config.clients[0]!,
+        request: {
+          profileId: 'report-docx',
+          workspaceId: workspace.id,
+          kind: 'generate',
+          skillId: 'report-writer',
+          prompt: 'Generate a report.',
+          artifactRuleIds: [],
+          webhook: { url: 'http://127.0.0.1:8000/api/daemon/webhook' },
+        },
+      }),
+    ).rejects.toThrow(expect.objectContaining({ code: 'WEBHOOK_URL_NOT_ALLOWED', status: 400 }));
+    expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })).toBeNull();
+    expect(webhookSpies?.insertRunWebhook).not.toHaveBeenCalled();
+    expect(webhookSpies?.createWebhookDeliveryForRunStatus).not.toHaveBeenCalled();
+  });
+
+  it('rejects oversized webhook metadata before inserting a run', async () => {
+    const { config, db, workspace, service, webhookSpies } = setup({ withWebhookSpy: true });
+
+    await expect(
+      service.createRun({
+        client: config.clients[0]!,
+        request: {
+          profileId: 'report-docx',
+          workspaceId: workspace.id,
+          kind: 'generate',
+          skillId: 'report-writer',
+          prompt: 'Generate a report.',
+          artifactRuleIds: [],
+          webhook: {
+            url: 'http://192.168.88.20:8000/api/daemon/webhook',
+            metadata: { payload: 'x'.repeat(20_000) },
+          },
+        },
+      }),
+    ).rejects.toThrow(
+      expect.objectContaining({
+        code: 'BAD_REQUEST',
+        details: expect.objectContaining({ reason: 'webhook_metadata_too_large' }),
+        status: 400,
+      }),
+    );
+    expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })).toBeNull();
+    expect(webhookSpies?.insertRunWebhook).not.toHaveBeenCalled();
+    expect(webhookSpies?.createWebhookDeliveryForRunStatus).not.toHaveBeenCalled();
   });
 
   it('stores business context snapshots at create time even if the queued run is canceled', async () => {

@@ -58,6 +58,8 @@ postgresDescribe('postgres-backed api flow', () => {
         conversationId: () => 'conv_pg_http',
         userMessageId: () => 'msg_pg_http_user',
         assistantMessageId: () => 'msg_pg_http_assistant',
+        webhookId: () => 'wh_pg_http',
+        webhookDeliveryId: () => 'whd_pg_http',
       },
     });
     const app = createApp({
@@ -94,6 +96,11 @@ postgresDescribe('postgres-backed api flow', () => {
         skillId: 'report-writer',
         prompt: 'Generate.',
         idempotencyKey: 'pg-http-key',
+        webhook: {
+          url: 'http://192.168.88.20:8000/webhook',
+          statuses: ['succeeded'],
+          metadata: { businessTaskId: 'task_001' },
+        },
       };
       const createRunResponse = await postJson(`${baseUrl}/api/runs`, runBody);
       expect(createRunResponse).toMatchObject({
@@ -108,6 +115,15 @@ postgresDescribe('postgres-backed api flow', () => {
         runId: 'run_pg_http',
         idempotentReplay: true,
       });
+      await expect(
+        harness!.persistence.claimDueWebhookDeliveries({
+          now: 2000,
+          staleDeliveringBefore: 0,
+          lockedBy: 'test_worker',
+          limit: 10,
+          maxAttempts: 8,
+        }),
+      ).resolves.toMatchObject({ claimed: [], abandonedIds: [] });
 
       const status = await getJson(`${baseUrl}/api/runs/run_pg_http/status`);
       expect(status).toMatchObject({
@@ -155,6 +171,37 @@ postgresDescribe('postgres-backed api flow', () => {
       ]);
       const logs = await getJson(`${baseUrl}/api/runs/run_pg_http/logs`);
       expect(logs).toMatchObject({ runId: 'run_pg_http' });
+      await expect(
+        harness!.persistence.claimDueWebhookDeliveries({
+          now: 2000,
+          staleDeliveringBefore: 0,
+          lockedBy: 'test_worker',
+          limit: 10,
+          maxAttempts: 8,
+        }),
+      ).resolves.toMatchObject({
+        abandonedIds: [],
+        claimed: [
+          expect.objectContaining({
+            id: 'whd_pg_http',
+            runId: 'run_pg_http',
+            runStatus: 'succeeded',
+            webhookUrl: 'http://192.168.88.20:8000/webhook',
+            payload: expect.objectContaining({
+              eventId: 'whd_pg_http',
+              eventType: 'run.status_changed',
+              run: expect.objectContaining({ id: 'run_pg_http', status: 'succeeded' }),
+              artifacts: [
+                expect.objectContaining({
+                  id: 'artifact_pg_http',
+                  relativePath: 'output/report.docx',
+                }),
+              ],
+              metadata: { businessTaskId: 'task_001' },
+            }),
+          }),
+        ],
+      });
     } finally {
       await harness!.cleanup();
     }

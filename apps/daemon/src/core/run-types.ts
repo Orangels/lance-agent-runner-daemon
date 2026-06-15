@@ -55,6 +55,7 @@ export const daemonErrorCodes = [
   'CLAUDE_AUTH_FAILED',
   'CLAUDE_CLI_FAILED',
   'COLLECTION_MODE_NOT_ALLOWED',
+  'WEBHOOK_URL_NOT_ALLOWED',
   'REVIEW_BUNDLE_TOO_LARGE',
   'INTERNAL_ERROR',
   'PATH_NOT_ALLOWED',
@@ -130,6 +131,14 @@ export interface CreateRunRequest {
   eventVisibility?: EventVisibility;
   metadata?: Record<string, unknown>;
   idempotencyKey?: string;
+  webhook?: CreateRunWebhookRequest;
+}
+
+export interface CreateRunWebhookRequest {
+  url: string;
+  secret?: string;
+  statuses?: RunStatus[];
+  metadata?: Record<string, unknown>;
 }
 
 export interface ContextPolicy {

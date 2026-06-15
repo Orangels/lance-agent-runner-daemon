@@ -29,6 +29,7 @@ import {
   createTextSnapshot,
   shouldPersistFullSnapshot,
   stableJsonHash,
+  stableJsonStringify,
 } from './snapshot-service.js';
 import {
   countQueued,
@@ -47,6 +48,7 @@ import {
   type ActivePromptMode,
   type CollectionMode,
   type ContextPolicy,
+  type CreateRunWebhookRequest,
   type CreateRunRequest,
   type EventVisibility,
   type ListRunsQuery,
@@ -59,6 +61,12 @@ import {
   type SkillRecord,
 } from './skill-registry.js';
 import { stageSkillIntoWorkspace, type StagedSkill } from './skill-staging.js';
+import {
+  buildWebhookRunStatusPayload,
+  webhookRunStatusEventType,
+  type WebhookRunStatusPayload,
+} from './webhook-payload.js';
+import { assertWebhookUrlAllowed, type WebhookDnsLookup } from './webhook-url-policy.js';
 import { getWorkspaceCwd } from './workspace-service.js';
 
 export interface BufferedRunEvent {
@@ -74,6 +82,7 @@ export interface CreateRunServiceInput {
   runLogService?: RunLogService;
   daemonLogger?: DaemonLogger;
   capabilityProbe?: (profile: ProfileConfig) => Promise<ClaudeCapabilities>;
+  webhookLookup?: WebhookDnsLookup;
   clock?: () => number;
   timer?: RunServiceTimer;
   eventBufferTtlMs?: number;
@@ -83,6 +92,8 @@ export interface CreateRunServiceInput {
     conversationId?: () => string;
     userMessageId?: () => string;
     assistantMessageId?: () => string;
+    webhookId?: () => string;
+    webhookDeliveryId?: () => string;
   };
 }
 
@@ -144,6 +155,7 @@ interface RunState {
   businessContext?: Record<string, unknown>;
   model?: string;
   requestEventVisibility?: EventVisibility;
+  webhook: RunStateWebhook | null;
   events: BufferedRunEvent[];
   nextEventId: number;
   subscribers: Set<(record: BufferedRunEvent) => void>;
@@ -158,6 +170,30 @@ interface RunState {
   finishing: boolean;
   terminal: boolean;
   cleanupTimer: unknown;
+}
+
+interface RunStateWebhook {
+  id: string;
+  statuses: RunStatus[];
+  metadata: unknown;
+}
+
+interface NormalizedWebhookRequest {
+  url: string;
+  secret: string | null;
+  statuses: RunStatus[];
+  metadata: unknown;
+}
+
+interface WebhookArtifactSummary {
+  id: string;
+  ruleId: string;
+  role: WebhookRunStatusPayload['artifacts'][number]['role'];
+  relativePath: string;
+  fileName: string;
+  mimeType: string | null;
+  size: number | null;
+  sha256: string | null;
 }
 
 const defaultTimer: RunServiceTimer = {
@@ -179,6 +215,8 @@ export function createRunService(input: CreateRunServiceInput): RunService {
   const nextConversationId = input.ids?.conversationId ?? (() => createId('conv'));
   const nextUserMessageId = input.ids?.userMessageId ?? (() => createId('msg'));
   const nextAssistantMessageId = input.ids?.assistantMessageId ?? (() => createId('msg'));
+  const nextWebhookId = input.ids?.webhookId ?? (() => createId('wh'));
+  const nextWebhookDeliveryId = input.ids?.webhookDeliveryId ?? (() => createId('whd'));
   const runnerFactory = input.runnerFactory ?? defaultRunnerFactory;
   const resolvedPersistence = input.persistence;
   if (!resolvedPersistence) {
@@ -280,7 +318,16 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     }
 
     const startedAt = now();
-    const run = await persistence.updateRunStarted({ runId: state.runId, startedAt, now: startedAt });
+    const run = await persistence.transaction(async (tx) => {
+      const startedRun = await tx.updateRunStarted({ runId: state.runId, startedAt, now: startedAt });
+      await maybeCreateWebhookDelivery(tx, {
+        webhook: state.webhook,
+        run: startedRun,
+        status: 'running',
+        createdAt: startedAt,
+      });
+      return startedRun;
+    });
     state.queueStatus = 'running';
     state.accumulator = createMessageAccumulator({
       persistence,
@@ -510,6 +557,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     let finalStatus = result.status;
     let finalErrorCode = result.errorCode ?? null;
     let finalErrorMessage = result.errorMessage ?? null;
+    let finalizedArtifacts: WebhookArtifactSummary[] = [];
 
     if (options.finalizeArtifacts !== false) {
       try {
@@ -519,6 +567,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
           runId: state.runId,
           artifactRuleIds: state.artifactRuleIds,
         });
+        finalizedArtifacts = finalized.artifacts;
 
         for (const artifact of finalized.artifacts) {
           emitRunEvent(state, {
@@ -596,17 +645,26 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       });
     }
 
-    await persistence.updateRunTerminal({
-      runId: state.runId,
-      status: finalStatus,
-      finishedAt,
-      exitCode: result.exitCode,
-      signal: result.signal,
-      errorCode: finalErrorCode,
-      errorMessage: finalErrorMessage,
-      usage: state.accumulator?.getUsage() ?? null,
-      lastRunEventId: state.events.at(-1)?.id ?? null,
-      now: finishedAt,
+    await persistence.transaction(async (tx) => {
+      const terminalRun = await tx.updateRunTerminal({
+        runId: state.runId,
+        status: finalStatus,
+        finishedAt,
+        exitCode: result.exitCode,
+        signal: result.signal,
+        errorCode: finalErrorCode,
+        errorMessage: finalErrorMessage,
+        usage: state.accumulator?.getUsage() ?? null,
+        lastRunEventId: state.events.at(-1)?.id ?? null,
+        now: finishedAt,
+      });
+      await maybeCreateWebhookDelivery(tx, {
+        webhook: state.webhook,
+        run: terminalRun,
+        status: finalStatus,
+        createdAt: finishedAt,
+        artifacts: finalizedArtifacts,
+      });
     });
 
     state.terminal = true;
@@ -728,6 +786,43 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     };
   }
 
+  async function maybeCreateWebhookDelivery(
+    targetPersistence: RunnerPersistence,
+    input: {
+      webhook: RunStateWebhook | null;
+      run: RunRecord;
+      status: RunStatus;
+      createdAt: number;
+      artifacts?: WebhookArtifactSummary[];
+    },
+  ): Promise<void> {
+    if (!input.webhook || !input.webhook.statuses.includes(input.status)) {
+      return;
+    }
+
+    const deliveryId = nextWebhookDeliveryId();
+    const payload = buildWebhookRunStatusPayload({
+      eventId: deliveryId,
+      createdAt: input.createdAt,
+      deliveryAttempt: 1,
+      run: input.run,
+      artifacts: input.artifacts,
+      metadata: input.webhook.metadata,
+    });
+    await targetPersistence.createWebhookDeliveryForRunStatus({
+      id: deliveryId,
+      runId: input.run.id,
+      webhookId: input.webhook.id,
+      clientId: input.run.clientId,
+      eventType: webhookRunStatusEventType,
+      runStatus: input.status,
+      payload,
+      payloadSha256: stableJsonHash(payload),
+      nextAttemptAt: input.createdAt,
+      now: input.createdAt,
+    });
+  }
+
   return {
     async createRun({ client, request }) {
       requireProfileAccess(client, request.profileId);
@@ -751,6 +846,9 @@ export function createRunService(input: CreateRunServiceInput): RunService {
         activePromptMode === 'legacy' ? request.prompt : request.currentPrompt;
       if (!currentPrompt) {
         throw badRequest(`${activePromptMode} promptMode requires a prompt`);
+      }
+      if (request.webhook && !input.config.server.webhooks.enabled) {
+        throw badRequest('Webhooks are disabled', { reason: 'webhooks_disabled' });
       }
 
       const selectedModel = request.model ?? profile.defaultModel;
@@ -791,6 +889,10 @@ export function createRunService(input: CreateRunServiceInput): RunService {
         request.businessContext === undefined ? null : stableJsonHash(request.businessContext);
       const persistBusinessContext =
         request.businessContext !== undefined && shouldPersistFullSnapshot(collectionMode);
+      const normalizedWebhook = normalizeWebhookRequest(request.webhook);
+      if (normalizedWebhook) {
+        validateWebhookMetadataSize(normalizedWebhook.metadata);
+      }
       const idempotencyFingerprint = request.idempotencyKey
         ? buildRunIdempotencyFingerprint({
             profileId: profile.id,
@@ -805,6 +907,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
             businessContextHash,
             model: selectedModel,
             artifactRuleIds: selectedArtifactRuleIds,
+            webhook: normalizedWebhook,
           })
         : null;
 
@@ -825,9 +928,18 @@ export function createRunService(input: CreateRunServiceInput): RunService {
         }
       }
 
+      if (normalizedWebhook) {
+        await assertWebhookUrlAllowed({
+          url: normalizedWebhook.url,
+          config: input.config.server.webhooks,
+          lookup: input.webhookLookup,
+        });
+      }
+
       const runId = nextRunId();
       const sequence = nextSequence++;
       const assistantMessageId = nextAssistantMessageId();
+      const webhookId = normalizedWebhook ? nextWebhookId() : null;
 
       if (
         !canStartNewRun(profile, workspace, sequence) &&
@@ -837,36 +949,66 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       }
 
       let created: Awaited<ReturnType<RunnerPersistence['createRunQueuedWithMessagesAndSnapshot']>>;
+      let webhook: RunStateWebhook | null = null;
       try {
-        created = await persistence.createRunQueuedWithMessagesAndSnapshot({
-          runId,
-          conversationId: request.conversationId,
-          defaultConversationId: nextConversationId(),
-          userMessageId: nextUserMessageId(),
-          assistantMessageId,
-          workspaceId: workspace.id,
-          profileId: profile.id,
-          clientId: client.id,
-          kind: request.kind,
-          skillId: request.skillId,
-          prompt: currentPrompt,
-          promptMode: activePromptMode,
-          currentPrompt,
-          contextPolicy: request.contextPolicy,
-          collectionMode,
-          businessContext: request.businessContext,
-          businessContextHash,
-          persistBusinessContext,
-          artifactRuleIds: selectedArtifactRuleIds,
-          idempotencyKey: request.idempotencyKey,
-          idempotencyFingerprint,
-          metadata: request.metadata,
-          profileSnapshot: createSanitizedProfileSnapshot(profile, {
-            selectedModel,
-            selectedArtifactRuleIds,
-          }),
-          now: now(),
+        const createResult = await persistence.transaction(async (tx) => {
+          const createdRun = await tx.createRunQueuedWithMessagesAndSnapshot({
+            runId,
+            conversationId: request.conversationId,
+            defaultConversationId: nextConversationId(),
+            userMessageId: nextUserMessageId(),
+            assistantMessageId,
+            workspaceId: workspace.id,
+            profileId: profile.id,
+            clientId: client.id,
+            kind: request.kind,
+            skillId: request.skillId,
+            prompt: currentPrompt,
+            promptMode: activePromptMode,
+            currentPrompt,
+            contextPolicy: request.contextPolicy,
+            collectionMode,
+            businessContext: request.businessContext,
+            businessContextHash,
+            persistBusinessContext,
+            artifactRuleIds: selectedArtifactRuleIds,
+            idempotencyKey: request.idempotencyKey,
+            idempotencyFingerprint,
+            metadata: request.metadata,
+            profileSnapshot: createSanitizedProfileSnapshot(profile, {
+              selectedModel,
+              selectedArtifactRuleIds,
+            }),
+            now: now(),
+          });
+          let createdWebhook: RunStateWebhook | null = null;
+          if (normalizedWebhook && webhookId) {
+            const storedWebhook = await tx.insertRunWebhook({
+              id: webhookId,
+              runId: createdRun.run.id,
+              clientId: client.id,
+              url: normalizedWebhook.url,
+              secret: normalizedWebhook.secret,
+              statuses: normalizedWebhook.statuses,
+              metadata: normalizedWebhook.metadata,
+              now: createdRun.run.createdAt,
+            });
+            createdWebhook = {
+              id: storedWebhook.id,
+              statuses: storedWebhook.statuses,
+              metadata: storedWebhook.metadata,
+            };
+            await maybeCreateWebhookDelivery(tx, {
+              webhook: createdWebhook,
+              run: createdRun.run,
+              status: 'queued',
+              createdAt: createdRun.run.createdAt,
+            });
+          }
+          return { createdRun, createdWebhook };
         });
+        created = createResult.createdRun;
+        webhook = createResult.createdWebhook;
       } catch (error) {
         if (request.idempotencyKey && persistence.isUniqueConstraintError(error)) {
           const existing = await persistence.getRunByIdempotencyKey({
@@ -901,6 +1043,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
         businessContext: request.businessContext,
         model: request.model,
         requestEventVisibility: request.eventVisibility,
+        webhook,
         events: [],
         nextEventId: 1,
         subscribers: new Set(),
@@ -1074,8 +1217,9 @@ function buildRunIdempotencyFingerprint(input: {
   businessContextHash: string | null;
   model: string | null;
   artifactRuleIds: string[];
+  webhook: NormalizedWebhookRequest | null;
 }): string {
-  return stableJsonHash({
+  const fingerprint: Record<string, unknown> = {
     version: 1,
     profileId: input.profileId,
     workspaceId: input.workspaceId,
@@ -1089,11 +1233,48 @@ function buildRunIdempotencyFingerprint(input: {
     businessContextHash: input.businessContextHash,
     model: input.model,
     artifactRuleIds: input.artifactRuleIds,
-  });
+  };
+  if (input.webhook) {
+    fingerprint.webhook = {
+      url: input.webhook.url,
+      secretHash: input.webhook.secret ? hashSensitiveText(input.webhook.secret) : null,
+      statuses: input.webhook.statuses,
+      metadataHash: stableJsonHash(input.webhook.metadata ?? null),
+    };
+  }
+  return stableJsonHash(fingerprint);
 }
 
 function hashSensitiveText(value: string): string {
   return createHash('sha256').update(value).digest('hex');
+}
+
+function normalizeWebhookRequest(webhook: CreateRunWebhookRequest | undefined): NormalizedWebhookRequest | null {
+  if (!webhook) {
+    return null;
+  }
+  return {
+    url: webhook.url,
+    secret: webhook.secret ?? null,
+    statuses: webhook.statuses ?? ['succeeded', 'failed', 'canceled', 'interrupted'],
+    metadata: webhook.metadata ?? null,
+  };
+}
+
+const webhookMetadataMaxBytes = 16 * 1024;
+
+function validateWebhookMetadataSize(metadata: unknown): void {
+  if (metadata === null || metadata === undefined) {
+    return;
+  }
+  const byteCount = Buffer.byteLength(stableJsonStringify(metadata), 'utf8');
+  if (byteCount > webhookMetadataMaxBytes) {
+    throw badRequest('webhook metadata is too large', {
+      byteCount,
+      maxBytes: webhookMetadataMaxBytes,
+      reason: 'webhook_metadata_too_large',
+    });
+  }
 }
 
 function assertPromptModeRequestShape(

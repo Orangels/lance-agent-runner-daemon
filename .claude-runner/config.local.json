@@ -9,8 +9,28 @@
     "maxLogBytesPerRun": 4194304,
     "maxUploadBytesPerFile": 52428800,
     "uploadTempRetentionMs": 86400000,
+    "webhooks": {
+      "enabled": true,
+      "allowInsecureHttp": true,
+      "allowPrivateNetworks": true,
+      "allowedPrivateCidrs": ["192.168.88.0/24"],
+      "allowedHosts": [],
+      "requestTimeoutMs": 5000,
+      "maxAttempts": 8,
+      "lockTimeoutMs": 30000,
+      "initialBackoffMs": 1000,
+      "maxBackoffMs": 300000,
+      "listenReconnectBackoffMs": 1000,
+      "listenKeepaliveMs": 15000,
+      "listenKeepaliveTimeoutMs": 5000,
+      "claimLimit": 5,
+      "maxConcurrentDeliveries": 5,
+      "stopGraceMs": 10000,
+      "responseBodyPreviewBytes": 4096
+    },
     "persistence": {
-      "databaseUrl": "env:CLAUDE_RUNNER_DATABASE_URL"
+      "databaseUrl": "env:CLAUDE_RUNNER_DATABASE_URL",
+      "poolMax": 10
     }
   },
   "clients": [

@@ -41,6 +41,13 @@ export interface ContextPolicy {
   includeRunWarnings?: boolean;
 }
 
+export interface CreateRunWebhookRequest {
+  url: string;
+  secret?: string;
+  statuses?: RunStatus[];
+  metadata?: Record<string, unknown>;
+}
+
 export interface CreateRunRequest {
   profileId: string;
   workspaceId: string;
@@ -58,6 +65,7 @@ export interface CreateRunRequest {
   eventVisibility?: EventVisibility;
   metadata?: Record<string, unknown>;
   idempotencyKey?: string;
+  webhook?: CreateRunWebhookRequest;
 }
 
 export interface CreateRunResponse {

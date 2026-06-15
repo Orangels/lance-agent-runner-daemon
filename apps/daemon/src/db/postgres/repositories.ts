@@ -9,29 +9,44 @@ import type {
   RunKind,
   RunStatus,
 } from '../../core/run-types.js';
+import { createId } from '../../core/ids.js';
+import { stableJsonHash } from '../../core/snapshot-service.js';
+import {
+  buildWebhookRunStatusPayload,
+  webhookRunStatusEventType,
+} from '../../core/webhook-payload.js';
 import type { PostgresClient, PostgresPool } from './connection.js';
 import { createPostgresPool } from './connection.js';
 import { isPostgresUniqueConstraintError } from './errors.js';
 import type {
   ArtifactRecord,
+  ClaimWebhookDeliveriesResult,
   ConversationRecord,
   CreateRunQueuedWithMessagesAndSnapshotInput,
   CreateRunQueuedWithMessagesAndSnapshotResult,
+  ClaimWebhookDeliveriesInput,
+  CreateWebhookDeliveryForRunStatusInput,
   GetArtifactForRunForClientInput,
   GetConversationForWorkspaceInput,
   GetOrCreateDefaultConversationInput,
   GetRunByIdempotencyKeyInput,
   GetRunLogForRunForClientInput,
   GetWorkspaceForClientInput,
+  GetNextWebhookDeliveryDueAtInput,
   InsertAssistantRunMessageInput,
   InsertRunFeedbackInput,
   InsertRunMessagesForRunCreateInput,
   InsertRunQueuedInput,
+  InsertRunWebhookInput,
+  InsertWebhookDeliveryAttemptInput,
   ListArtifactsForRunInput,
   ListConversationMessagesForPromptInput,
   ListRunFeedbackForClientInput,
   ListRunLogsFinishedBeforeInput,
   ListRunsForClientInput,
+  MarkWebhookDeliveryAbandonedInput,
+  MarkWebhookDeliveryRetryingInput,
+  MarkWebhookDeliverySucceededInput,
   ProfileSnapshotRecord,
   ReplaceArtifactsForRunInput,
   RunContextSnapshotRecord,
@@ -45,6 +60,7 @@ import type {
   RunRecord,
   RunSkillSnapshotRecord,
   RunWithWorkspaceRecord,
+  RunWebhookRecord,
   UpdateAssistantMessageStartedInput,
   UpdateAssistantMessagesTerminalForRunInput,
   UpdateAssistantMessageTerminalInput,
@@ -57,11 +73,18 @@ import type {
   UpsertRunPromptSnapshotInput,
   UpsertRunSkillSnapshotInput,
   UpsertWorkspaceInput,
+  WebhookDeliveryAttemptRecord,
+  WebhookDeliveryJobRecord,
+  WebhookDeliveryRecord,
+  WebhookDeliveryStatus,
   WorkspaceRecord,
 } from '../types.js';
 
+export const webhookDeliveryNotifyChannel = 'daemon_webhook_delivery';
+
 interface CreatePostgresRunnerPersistenceInput {
   databaseUrl?: string;
+  poolMax?: number;
   pool?: PostgresPool;
 }
 
@@ -213,6 +236,59 @@ interface RunFeedbackRow {
   created_at: number;
 }
 
+interface RunWebhookRow {
+  id: string;
+  run_id: string;
+  client_id: string;
+  url: string;
+  secret: string | null;
+  statuses_json: string;
+  metadata_json: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+interface WebhookDeliveryRow {
+  id: string;
+  run_id: string;
+  webhook_id: string;
+  client_id: string;
+  event_type: string;
+  run_status: RunStatus;
+  delivery_status: WebhookDeliveryStatus;
+  payload_json: string;
+  payload_sha256: string;
+  attempt_count: number;
+  next_attempt_at: number;
+  locked_at: number | null;
+  locked_by: string | null;
+  last_attempt_at: number | null;
+  delivered_at: number | null;
+  response_status: number | null;
+  response_body_preview: string | null;
+  error_message: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+interface WebhookDeliveryJobRow extends WebhookDeliveryRow {
+  webhook_url: string;
+  webhook_secret: string | null;
+}
+
+interface WebhookDeliveryAttemptRow {
+  id: string;
+  delivery_id: string;
+  attempt: number;
+  attempted_at: number;
+  duration_ms: number;
+  success: number;
+  response_status: number | null;
+  response_body_preview: string | null;
+  error_message: string | null;
+  created_at: number;
+}
+
 type Queryable = {
   query<T extends pg.QueryResultRow = pg.QueryResultRow>(
     text: string,
@@ -226,7 +302,9 @@ export function createPostgresRunnerPersistence(
   if (!input.pool && !input.databaseUrl) {
     throw new Error('databaseUrl or pool is required to create PostgreSQL persistence');
   }
-  const pool = input.pool ?? createPostgresPool({ databaseUrl: input.databaseUrl! });
+  const pool =
+    input.pool ??
+    createPostgresPool({ databaseUrl: input.databaseUrl!, poolMax: input.poolMax });
   return new PostgresRunnerPersistence(pool, true);
 }
 
@@ -648,19 +726,56 @@ class PostgresRunnerPersistence implements RunnerPersistence {
   }
 
   async markInterruptedRunsOnStartup(now: number): Promise<number> {
-    const result = await this.client.query(
-      `
-      UPDATE runs
-      SET status = 'interrupted',
-          finished_at = $1,
-          error_code = 'RUN_INTERRUPTED_BY_DAEMON_RESTART',
-          error_message = 'Run interrupted by daemon restart',
-          updated_at = $2
-      WHERE status IN ('queued', 'running')
-      `,
-      [now, now],
-    );
-    return result.rowCount ?? 0;
+    return this.transaction(async (tx) => {
+      const pgTx = tx as PostgresRunnerPersistence;
+      const result = await pgTx.client.query<RunRow>(
+        `
+        UPDATE runs
+        SET status = 'interrupted',
+            finished_at = $1,
+            error_code = 'RUN_INTERRUPTED_BY_DAEMON_RESTART',
+            error_message = 'Run interrupted by daemon restart',
+            updated_at = $2
+        WHERE status IN ('queued', 'running')
+        RETURNING *
+        `,
+        [now, now],
+      );
+      for (const row of result.rows) {
+        const run = mapRun(row);
+        const webhookResult = await pgTx.client.query<RunWebhookRow>(
+          'SELECT * FROM run_webhooks WHERE run_id = $1',
+          [run.id],
+        );
+        for (const webhookRow of webhookResult.rows) {
+          const webhook = mapRunWebhook(webhookRow);
+          if (!webhook.statuses.includes('interrupted')) {
+            continue;
+          }
+          const deliveryId = createId('whd');
+          const payload = buildWebhookRunStatusPayload({
+            eventId: deliveryId,
+            createdAt: now,
+            deliveryAttempt: 1,
+            run,
+            metadata: webhook.metadata,
+          });
+          await tx.createWebhookDeliveryForRunStatus({
+            id: deliveryId,
+            runId: run.id,
+            webhookId: webhook.id,
+            clientId: run.clientId,
+            eventType: webhookRunStatusEventType,
+            runStatus: 'interrupted',
+            payload,
+            payloadSha256: stableJsonHash(payload),
+            nextAttemptAt: now,
+            now,
+          });
+        }
+      }
+      return result.rowCount ?? 0;
+    });
   }
 
   async insertRunMessagesForRunCreate(
@@ -802,6 +917,310 @@ class PostgresRunnerPersistence implements RunnerPersistence {
       ],
     );
     return this.getRunById(input.runId);
+  }
+
+  async insertRunWebhook(input: InsertRunWebhookInput): Promise<RunWebhookRecord> {
+    const result = await this.client.query<RunWebhookRow>(
+      `
+      INSERT INTO run_webhooks (
+        id, run_id, client_id, url, secret, statuses_json, metadata_json, created_at, updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      RETURNING *
+      `,
+      [
+        input.id,
+        input.runId,
+        input.clientId,
+        input.url,
+        input.secret ?? null,
+        stringifyNullable(input.statuses),
+        stringifyNullable(input.metadata),
+        input.now,
+        input.now,
+      ],
+    );
+    return mapRunWebhook(result.rows[0]!);
+  }
+
+  async createWebhookDeliveryForRunStatus(
+    input: CreateWebhookDeliveryForRunStatusInput,
+  ): Promise<WebhookDeliveryRecord | null> {
+    if (isPool(this.client)) {
+      return this.transaction((tx) => tx.createWebhookDeliveryForRunStatus(input));
+    }
+
+    const result = await this.client.query<WebhookDeliveryRow>(
+      `
+      INSERT INTO webhook_deliveries (
+        id, run_id, webhook_id, client_id, event_type, run_status, delivery_status,
+        payload_json, payload_sha256, attempt_count, next_attempt_at,
+        created_at, updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, 0, $9, $10, $11)
+      ON CONFLICT (webhook_id, run_status) DO NOTHING
+      RETURNING *
+      `,
+      [
+        input.id,
+        input.runId,
+        input.webhookId,
+        input.clientId,
+        input.eventType,
+        input.runStatus,
+        stringifyNullable(input.payload),
+        input.payloadSha256,
+        input.nextAttemptAt,
+        input.now,
+        input.now,
+      ],
+    );
+    const row = result.rows[0];
+    if (!row) {
+      return null;
+    }
+    await notifyWebhookDelivery(this.client, {
+      deliveryId: row.id,
+      nextAttemptAt: row.next_attempt_at,
+    });
+    return mapWebhookDelivery(row);
+  }
+
+  async claimDueWebhookDeliveries(
+    input: ClaimWebhookDeliveriesInput,
+  ): Promise<ClaimWebhookDeliveriesResult> {
+    const result = await this.client.query<{
+      claimed: WebhookDeliveryJobRow[] | null;
+      abandoned_ids: string[] | null;
+    }>(
+      `
+      WITH exhausted AS (
+        SELECT id
+        FROM webhook_deliveries
+        WHERE (
+            (
+              delivery_status IN ('pending', 'retrying')
+              AND next_attempt_at <= $1
+            )
+            OR (
+              delivery_status = 'delivering'
+              AND locked_at IS NOT NULL
+              AND locked_at < $2
+            )
+          )
+          AND attempt_count >= $7
+        FOR UPDATE SKIP LOCKED
+      ),
+      abandoned AS (
+        UPDATE webhook_deliveries d
+        SET delivery_status = 'abandoned',
+            updated_at = $6
+        FROM exhausted
+        WHERE d.id = exhausted.id
+        RETURNING d.id
+      ),
+      due AS (
+        SELECT id
+        FROM webhook_deliveries
+        WHERE (
+            (
+              delivery_status IN ('pending', 'retrying')
+              AND next_attempt_at <= $1
+            )
+            OR (
+              delivery_status = 'delivering'
+              AND locked_at IS NOT NULL
+              AND locked_at < $2
+            )
+          )
+          AND attempt_count < $7
+        ORDER BY next_attempt_at ASC, created_at ASC
+        LIMIT $3
+        FOR UPDATE SKIP LOCKED
+      ),
+      claimed AS (
+        UPDATE webhook_deliveries d
+        SET delivery_status = 'delivering',
+            attempt_count = d.attempt_count + 1,
+            locked_at = $4,
+            locked_by = $5,
+            last_attempt_at = $6,
+            response_status = NULL,
+            response_body_preview = NULL,
+            error_message = NULL,
+            updated_at = $6
+        FROM due
+        WHERE d.id = due.id
+        RETURNING d.*
+      ),
+      claimed_jobs AS (
+        SELECT claimed.*, run_webhooks.url AS webhook_url, run_webhooks.secret AS webhook_secret
+        FROM claimed
+        JOIN run_webhooks ON run_webhooks.id = claimed.webhook_id
+      )
+      SELECT
+        COALESCE((SELECT json_agg(claimed_jobs ORDER BY next_attempt_at ASC, created_at ASC) FROM claimed_jobs), '[]'::json) AS claimed,
+        COALESCE((SELECT json_agg(abandoned.id) FROM abandoned), '[]'::json) AS abandoned_ids
+      `,
+      [
+        input.now,
+        input.staleDeliveringBefore,
+        input.limit,
+        input.now,
+        input.lockedBy,
+        input.now,
+        input.maxAttempts,
+      ],
+    );
+    const row = result.rows[0] ?? { claimed: [], abandoned_ids: [] };
+    return {
+      claimed: (row.claimed ?? []).map(mapWebhookDeliveryJob),
+      abandonedIds: row.abandoned_ids ?? [],
+    };
+  }
+
+  async getNextWebhookDeliveryDueAt(input: GetNextWebhookDeliveryDueAtInput): Promise<number | null> {
+    const result = await this.client.query<{ next_due_at: number | string | null }>(
+      `
+      SELECT MIN(next_due_at) AS next_due_at
+      FROM (
+        SELECT next_attempt_at AS next_due_at
+        FROM webhook_deliveries
+        WHERE delivery_status IN ('pending', 'retrying')
+
+        UNION ALL
+
+        SELECT locked_at + $1 AS next_due_at
+        FROM webhook_deliveries
+        WHERE delivery_status = 'delivering'
+          AND locked_at IS NOT NULL
+      ) due
+      `,
+      [input.lockTimeoutMs],
+    );
+    const value = result.rows[0]?.next_due_at ?? null;
+    return value === null ? null : Number(value);
+  }
+
+  async markWebhookDeliverySucceeded(
+    input: MarkWebhookDeliverySucceededInput,
+  ): Promise<WebhookDeliveryRecord> {
+    const result = await this.client.query<WebhookDeliveryRow>(
+      `
+      UPDATE webhook_deliveries
+      SET delivery_status = 'succeeded',
+          delivered_at = $1,
+          response_status = $2,
+          response_body_preview = $3,
+          error_message = NULL,
+          locked_at = NULL,
+          locked_by = NULL,
+          updated_at = $4
+      WHERE id = $5
+      RETURNING *
+      `,
+      [
+        input.now,
+        input.responseStatus ?? null,
+        input.responseBodyPreview ?? null,
+        input.now,
+        input.deliveryId,
+      ],
+    );
+    return mapWebhookDelivery(result.rows[0]!);
+  }
+
+  async markWebhookDeliveryRetrying(
+    input: MarkWebhookDeliveryRetryingInput,
+  ): Promise<WebhookDeliveryRecord> {
+    if (isPool(this.client)) {
+      return this.transaction((tx) => tx.markWebhookDeliveryRetrying(input));
+    }
+
+    const result = await this.client.query<WebhookDeliveryRow>(
+      `
+      UPDATE webhook_deliveries
+      SET delivery_status = 'retrying',
+          next_attempt_at = $1,
+          response_status = $2,
+          response_body_preview = $3,
+          error_message = $4,
+          locked_at = NULL,
+          locked_by = NULL,
+          updated_at = $5
+      WHERE id = $6
+      RETURNING *
+      `,
+      [
+        input.nextAttemptAt,
+        input.responseStatus ?? null,
+        input.responseBodyPreview ?? null,
+        input.errorMessage ?? null,
+        input.now,
+        input.deliveryId,
+      ],
+    );
+    const row = result.rows[0]!;
+    await notifyWebhookDelivery(this.client, {
+      deliveryId: row.id,
+      nextAttemptAt: row.next_attempt_at,
+    });
+    return mapWebhookDelivery(row);
+  }
+
+  async markWebhookDeliveryAbandoned(
+    input: MarkWebhookDeliveryAbandonedInput,
+  ): Promise<WebhookDeliveryRecord> {
+    const result = await this.client.query<WebhookDeliveryRow>(
+      `
+      UPDATE webhook_deliveries
+      SET delivery_status = 'abandoned',
+          response_status = $1,
+          response_body_preview = $2,
+          error_message = $3,
+          locked_at = NULL,
+          locked_by = NULL,
+          updated_at = $4
+      WHERE id = $5
+      RETURNING *
+      `,
+      [
+        input.responseStatus ?? null,
+        input.responseBodyPreview ?? null,
+        input.errorMessage ?? null,
+        input.now,
+        input.deliveryId,
+      ],
+    );
+    return mapWebhookDelivery(result.rows[0]!);
+  }
+
+  async insertWebhookDeliveryAttempt(
+    input: InsertWebhookDeliveryAttemptInput,
+  ): Promise<WebhookDeliveryAttemptRecord> {
+    const result = await this.client.query<WebhookDeliveryAttemptRow>(
+      `
+      INSERT INTO webhook_delivery_attempts (
+        id, delivery_id, attempt, attempted_at, duration_ms, success,
+        response_status, response_body_preview, error_message, created_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      RETURNING *
+      `,
+      [
+        input.id,
+        input.deliveryId,
+        input.attempt,
+        input.attemptedAt,
+        input.durationMs,
+        input.success ? 1 : 0,
+        input.responseStatus ?? null,
+        input.responseBodyPreview ?? null,
+        input.errorMessage ?? null,
+        input.now,
+      ],
+    );
+    return mapWebhookDeliveryAttempt(result.rows[0]!);
   }
 
   async updateAssistantMessageStarted(
@@ -1379,6 +1798,89 @@ function mapRun(row: RunRow): RunRecord {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function mapRunWebhook(row: RunWebhookRow): RunWebhookRecord {
+  return {
+    id: row.id,
+    runId: row.run_id,
+    clientId: row.client_id,
+    url: row.url,
+    secret: row.secret,
+    statuses: (parseNullable(row.statuses_json) as RunStatus[] | null) ?? [],
+    metadata: parseNullable(row.metadata_json),
+    createdAt: toNumber(row.created_at),
+    updatedAt: toNumber(row.updated_at),
+  };
+}
+
+function mapWebhookDelivery(row: WebhookDeliveryRow): WebhookDeliveryRecord {
+  return {
+    id: row.id,
+    runId: row.run_id,
+    webhookId: row.webhook_id,
+    clientId: row.client_id,
+    eventType: row.event_type,
+    runStatus: row.run_status,
+    deliveryStatus: row.delivery_status,
+    payload: parseNullable(row.payload_json),
+    payloadSha256: row.payload_sha256,
+    attemptCount: toNumber(row.attempt_count),
+    nextAttemptAt: toNumber(row.next_attempt_at),
+    lockedAt: toNullableNumber(row.locked_at),
+    lockedBy: row.locked_by,
+    lastAttemptAt: toNullableNumber(row.last_attempt_at),
+    deliveredAt: toNullableNumber(row.delivered_at),
+    responseStatus: row.response_status,
+    responseBodyPreview: row.response_body_preview,
+    errorMessage: row.error_message,
+    createdAt: toNumber(row.created_at),
+    updatedAt: toNumber(row.updated_at),
+  };
+}
+
+function mapWebhookDeliveryJob(row: WebhookDeliveryJobRow): WebhookDeliveryJobRecord {
+  return {
+    ...mapWebhookDelivery(row),
+    webhookUrl: row.webhook_url,
+    webhookSecret: row.webhook_secret,
+  };
+}
+
+function mapWebhookDeliveryAttempt(row: WebhookDeliveryAttemptRow): WebhookDeliveryAttemptRecord {
+  return {
+    id: row.id,
+    deliveryId: row.delivery_id,
+    attempt: row.attempt,
+    attemptedAt: toNumber(row.attempted_at),
+    durationMs: toNumber(row.duration_ms),
+    success: row.success === 1,
+    responseStatus: row.response_status,
+    responseBodyPreview: row.response_body_preview,
+    errorMessage: row.error_message,
+    createdAt: toNumber(row.created_at),
+  };
+}
+
+async function notifyWebhookDelivery(
+  client: PostgresClient,
+  input: { deliveryId: string; nextAttemptAt: number | string },
+): Promise<void> {
+  await client.query('SELECT pg_notify($1, $2)', [
+    webhookDeliveryNotifyChannel,
+    JSON.stringify({
+      deliveryId: input.deliveryId,
+      nextAttemptAt: toNumber(input.nextAttemptAt),
+    }),
+  ]);
+}
+
+function toNumber(value: number | string): number {
+  return typeof value === 'number' ? value : Number(value);
+}
+
+function toNullableNumber(value: number | string | null): number | null {
+  return value === null ? null : toNumber(value);
 }
 
 function mapRunMessage(row: RunMessageRow): RunMessageRecord {

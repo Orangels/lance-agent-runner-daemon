@@ -8,10 +8,12 @@ export type PostgresClient = pg.PoolClient | pg.Pool;
 
 export interface CreatePostgresPoolInput {
   databaseUrl: string;
+  poolMax?: number;
 }
 
 export function createPostgresPool(input: CreatePostgresPoolInput): PostgresPool {
   return new pg.Pool({
     connectionString: input.databaseUrl,
+    max: input.poolMax ?? 10,
   });
 }

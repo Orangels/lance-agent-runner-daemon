@@ -102,6 +102,7 @@ The following capabilities are intentionally deferred to later versions. Do not 
 
 ### Webhook Notifications
 
+- Dedicated implementation plan: `docs/webhook-notifications/implementation-plan.md`.
 - Optional business-callback webhook support for callers that do not want to rely only on polling or SSE.
 - Allow a run-create request to include a caller-provided webhook target and callback metadata after a dedicated API contract is defined.
 - This should not be implemented by polling run status from inside the daemon. The daemon already owns the status transition points, so webhook notification should be triggered from durable state changes.
@@ -139,6 +140,7 @@ The following capabilities are intentionally deferred to later versions. Do not 
 - Add deployment configuration, local development setup, migration tooling, backup/restore notes, and rollback guidance.
 - Keep request-serving daemon database and filesystem operations asynchronous; offline migration tools may keep synchronous helpers where they do not block the daemon runtime.
 - Preserve SQLite only as a read-only migration source and historical backup after cutover.
+- Remove remaining SQLite-backed unit-test fixtures, schema/repository test references, and `createSqliteRunnerPersistence` usages after the PostgreSQL runtime cutover is fully validated, so the automated test suite no longer relies on the legacy backend.
 
 ### Queue Scale-Out
 

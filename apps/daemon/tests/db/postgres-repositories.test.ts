@@ -1,5 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createPostgresRunnerPersistence } from '../../src/db/postgres/repositories.js';
+import {
+  createPostgresRunnerPersistence,
+  webhookDeliveryNotifyChannel,
+} from '../../src/db/postgres/repositories.js';
 import { runPostgresMigrations } from '../../src/db/postgres/migrate.js';
 import type { RunnerPersistence } from '../../src/db/types.js';
 import {
@@ -243,6 +246,316 @@ postgresDescribe('postgres runner persistence', () => {
     expect(typeof artifacts[0]?.size).toBe('number');
     expect(typeof artifacts[0]?.mtime).toBe('number');
   });
+
+  it('creates webhook config and de-duplicates deliveries by webhook and status', async () => {
+    const workspace = await insertWorkspaceFixture(persistence, { id: 'ws_webhook', now: 15_000 });
+    const run = await insertRunFixture(persistence, workspace, { id: 'run_webhook', now: 16_000 });
+    const webhook = await persistence.insertRunWebhook({
+      id: 'wh_run_webhook',
+      runId: run.id,
+      clientId: run.clientId,
+      url: 'http://192.168.88.20:8000/api/daemon/webhook',
+      secret: 'shared-secret',
+      statuses: ['queued', 'succeeded'],
+      metadata: { businessTaskId: 'task_001' },
+      now: 17_000,
+    });
+
+    expect(webhook).toMatchObject({
+      id: 'wh_run_webhook',
+      runId: run.id,
+      clientId: run.clientId,
+      statuses: ['queued', 'succeeded'],
+      metadata: { businessTaskId: 'task_001' },
+    });
+
+    const first = await persistence.createWebhookDeliveryForRunStatus({
+      id: 'whd_queued_1',
+      runId: run.id,
+      webhookId: webhook.id,
+      clientId: run.clientId,
+      eventType: 'run.status_changed',
+      runStatus: 'queued',
+      payload: { eventId: 'whd_queued_1', run: { id: run.id, status: 'queued' } },
+      payloadSha256: 'payload_hash_1',
+      nextAttemptAt: 18_000,
+      now: 18_000,
+    });
+    const duplicate = await persistence.createWebhookDeliveryForRunStatus({
+      id: 'whd_queued_2',
+      runId: run.id,
+      webhookId: webhook.id,
+      clientId: run.clientId,
+      eventType: 'run.status_changed',
+      runStatus: 'queued',
+      payload: { eventId: 'whd_queued_2', run: { id: run.id, status: 'queued' } },
+      payloadSha256: 'payload_hash_2',
+      nextAttemptAt: 18_001,
+      now: 18_001,
+    });
+
+    expect(first).toMatchObject({
+      id: 'whd_queued_1',
+      deliveryStatus: 'pending',
+      attemptCount: 0,
+      payload: { eventId: 'whd_queued_1', run: { id: run.id, status: 'queued' } },
+    });
+    expect(duplicate).toBeNull();
+
+    const count = await pool.query<{ count: number }>(
+      'SELECT COUNT(*)::int AS count FROM webhook_deliveries WHERE webhook_id = $1 AND run_status = $2',
+      [webhook.id, 'queued'],
+    );
+    expect(count.rows[0]?.count).toBe(1);
+
+    await persistence.markWebhookDeliverySucceeded({
+      deliveryId: first!.id,
+      responseStatus: 200,
+      now: 18_002,
+    });
+  });
+
+  it('notifies webhook workers when a delivery insert wins', async () => {
+    const listener = await pool.connect();
+    try {
+      const notification = new Promise<{ channel: string; payload?: string }>((resolve) => {
+        listener.on('notification', resolve);
+      });
+      await listener.query(`LISTEN ${webhookDeliveryNotifyChannel}`);
+
+      const workspace = await insertWorkspaceFixture(persistence, { id: 'ws_webhook_notify', now: 18_100 });
+      const run = await insertRunFixture(persistence, workspace, { id: 'run_webhook_notify', now: 18_200 });
+      const webhook = await persistence.insertRunWebhook({
+        id: 'wh_run_webhook_notify',
+        runId: run.id,
+        clientId: run.clientId,
+        url: 'http://192.168.88.20:8000/api/daemon/webhook',
+        statuses: ['queued'],
+        now: 18_300,
+      });
+
+      await persistence.createWebhookDeliveryForRunStatus({
+        id: 'whd_notify_insert',
+        runId: run.id,
+        webhookId: webhook.id,
+        clientId: run.clientId,
+        eventType: 'run.status_changed',
+        runStatus: 'queued',
+        payload: { eventId: 'whd_notify_insert' },
+        payloadSha256: 'payload_hash_notify',
+        nextAttemptAt: 18_400,
+        now: 18_400,
+      });
+
+      await expect(notification).resolves.toMatchObject({
+        channel: webhookDeliveryNotifyChannel,
+        payload: JSON.stringify({ deliveryId: 'whd_notify_insert', nextAttemptAt: 18_400 }),
+      });
+
+      const retryNotification = waitForNotification(listener, 1_000);
+      await persistence.markWebhookDeliveryRetrying({
+        deliveryId: 'whd_notify_insert',
+        nextAttemptAt: 18_900,
+        responseStatus: 500,
+        errorMessage: 'temporary failure',
+        now: 18_401,
+      });
+      await expect(retryNotification).resolves.toMatchObject({
+        channel: webhookDeliveryNotifyChannel,
+        payload: JSON.stringify({ deliveryId: 'whd_notify_insert', nextAttemptAt: 18_900 }),
+      });
+
+      const unexpectedSucceededNotification = waitForNotification(listener, 100);
+      await persistence.markWebhookDeliverySucceeded({
+        deliveryId: 'whd_notify_insert',
+        responseStatus: 200,
+        now: 18_902,
+      });
+      await expect(unexpectedSucceededNotification).resolves.toBeNull();
+
+      const unexpectedAbandonedNotification = waitForNotification(listener, 100);
+      await persistence.markWebhookDeliveryAbandoned({
+        deliveryId: 'whd_notify_insert',
+        responseStatus: 400,
+        errorMessage: 'business rejected webhook',
+        now: 18_903,
+      });
+      await expect(unexpectedAbandonedNotification).resolves.toBeNull();
+    } finally {
+      await listener.query(`UNLISTEN ${webhookDeliveryNotifyChannel}`).catch(() => undefined);
+      listener.release();
+    }
+  });
+
+  it('claims due webhook deliveries and reclaims stale delivering rows', async () => {
+    const workspace = await insertWorkspaceFixture(persistence, { id: 'ws_webhook_claim', now: 19_000 });
+    const run = await insertRunFixture(persistence, workspace, { id: 'run_webhook_claim', now: 20_000 });
+    const webhook = await persistence.insertRunWebhook({
+      id: 'wh_run_webhook_claim',
+      runId: run.id,
+      clientId: run.clientId,
+      url: 'http://192.168.88.20:8000/api/daemon/webhook',
+      statuses: ['running'],
+      now: 21_000,
+    });
+    await persistence.createWebhookDeliveryForRunStatus({
+      id: 'whd_running_claim',
+      runId: run.id,
+      webhookId: webhook.id,
+      clientId: run.clientId,
+      eventType: 'run.status_changed',
+      runStatus: 'running',
+      payload: { eventId: 'whd_running_claim' },
+      payloadSha256: 'payload_hash_claim',
+      nextAttemptAt: 22_000,
+      now: 22_000,
+    });
+
+    const claimed = await persistence.claimDueWebhookDeliveries({
+      now: 30_000,
+      staleDeliveringBefore: 0,
+      lockedBy: 'worker_a',
+      limit: 10,
+      maxAttempts: 8,
+    });
+    expect(claimed.claimed).toHaveLength(1);
+    expect(claimed.abandonedIds).toEqual([]);
+    expect(claimed.claimed[0]).toMatchObject({
+      id: 'whd_running_claim',
+      deliveryStatus: 'delivering',
+      attemptCount: 1,
+      lockedAt: 30_000,
+      lockedBy: 'worker_a',
+      lastAttemptAt: 30_000,
+    });
+
+    await expect(
+      persistence.claimDueWebhookDeliveries({
+        now: 31_000,
+        staleDeliveringBefore: 29_999,
+        lockedBy: 'worker_b',
+        limit: 10,
+        maxAttempts: 8,
+      }),
+    ).resolves.toMatchObject({ claimed: [], abandonedIds: [] });
+
+    const reclaimed = await persistence.claimDueWebhookDeliveries({
+      now: 32_000,
+      staleDeliveringBefore: 30_001,
+      lockedBy: 'worker_b',
+      limit: 10,
+      maxAttempts: 8,
+    });
+    expect(reclaimed.claimed).toHaveLength(1);
+    expect(reclaimed.claimed[0]).toMatchObject({
+      id: 'whd_running_claim',
+      deliveryStatus: 'delivering',
+      attemptCount: 2,
+      lockedAt: 32_000,
+      lockedBy: 'worker_b',
+    });
+  });
+
+  it('tracks webhook delivery attempts and terminal delivery states', async () => {
+    const workspace = await insertWorkspaceFixture(persistence, { id: 'ws_webhook_attempts', now: 23_000 });
+    const run = await insertRunFixture(persistence, workspace, { id: 'run_webhook_attempts', now: 24_000 });
+    const webhook = await persistence.insertRunWebhook({
+      id: 'wh_run_webhook_attempts',
+      runId: run.id,
+      clientId: run.clientId,
+      url: 'http://192.168.88.20:8000/api/daemon/webhook',
+      statuses: ['succeeded'],
+      now: 25_000,
+    });
+    const delivery = await persistence.createWebhookDeliveryForRunStatus({
+      id: 'whd_attempts',
+      runId: run.id,
+      webhookId: webhook.id,
+      clientId: run.clientId,
+      eventType: 'run.status_changed',
+      runStatus: 'succeeded',
+      payload: { eventId: 'whd_attempts' },
+      payloadSha256: 'payload_hash_attempts',
+      nextAttemptAt: 26_000,
+      now: 26_000,
+    });
+    expect(delivery).not.toBeNull();
+
+    const claimed = await persistence.claimDueWebhookDeliveries({
+      now: 27_000,
+      staleDeliveringBefore: 0,
+      lockedBy: 'worker_attempts',
+      limit: 10,
+      maxAttempts: 8,
+    });
+    const attempting = claimed.claimed[0]!;
+    expect(attempting).toMatchObject({
+      id: 'whd_attempts',
+      attemptCount: 1,
+      lastAttemptAt: 27_000,
+    });
+
+    const attempt = await persistence.insertWebhookDeliveryAttempt({
+      id: 'whda_1',
+      deliveryId: 'whd_attempts',
+      attempt: attempting.attemptCount,
+      attemptedAt: 27_000,
+      durationMs: 125,
+      success: false,
+      responseStatus: 500,
+      responseBodyPreview: 'server error',
+      errorMessage: 'HTTP 500',
+      now: 27_001,
+    });
+    expect(attempt).toMatchObject({
+      deliveryId: 'whd_attempts',
+      attempt: 1,
+      success: false,
+      responseStatus: 500,
+    });
+
+    const retrying = await persistence.markWebhookDeliveryRetrying({
+      deliveryId: 'whd_attempts',
+      nextAttemptAt: 35_000,
+      responseStatus: 500,
+      responseBodyPreview: 'server error',
+      errorMessage: 'HTTP 500',
+      now: 27_002,
+    });
+    expect(retrying).toMatchObject({
+      deliveryStatus: 'retrying',
+      nextAttemptAt: 35_000,
+      lockedAt: null,
+      lockedBy: null,
+      errorMessage: 'HTTP 500',
+    });
+
+    const succeeded = await persistence.markWebhookDeliverySucceeded({
+      deliveryId: 'whd_attempts',
+      responseStatus: 200,
+      responseBodyPreview: 'ok',
+      now: 36_000,
+    });
+    expect(succeeded).toMatchObject({
+      deliveryStatus: 'succeeded',
+      deliveredAt: 36_000,
+      responseStatus: 200,
+      errorMessage: null,
+    });
+
+    const abandoned = await persistence.markWebhookDeliveryAbandoned({
+      deliveryId: 'whd_attempts',
+      responseStatus: 400,
+      responseBodyPreview: 'bad request',
+      errorMessage: 'HTTP 400',
+      now: 37_000,
+    });
+    expect(abandoned).toMatchObject({
+      deliveryStatus: 'abandoned',
+      responseStatus: 400,
+      errorMessage: 'HTTP 400',
+    });
+  });
 });
 
 async function insertWorkspaceFixture(
@@ -262,8 +575,46 @@ async function insertWorkspaceFixture(
   });
 }
 
+async function insertRunFixture(
+  persistence: RunnerPersistence,
+  workspace: Awaited<ReturnType<typeof insertWorkspaceFixture>>,
+  options: { id?: string; now?: number } = {},
+) {
+  return persistence.insertRunQueued({
+    id: options.id ?? 'run_pg_repo',
+    workspaceId: workspace.id,
+    profileId: workspace.profileId,
+    clientId: workspace.clientId,
+    kind: 'generate',
+    prompt: 'prompt',
+    now: options.now ?? 2000,
+  });
+}
+
 function circularValue(): unknown {
   const value: { self?: unknown } = {};
   value.self = value;
   return value;
+}
+
+function waitForNotification(
+  listener: {
+    on(event: 'notification', handler: (message: { channel: string; payload?: string }) => void): unknown;
+    off(event: 'notification', handler: (message: { channel: string; payload?: string }) => void): unknown;
+  },
+  timeoutMs: number,
+): Promise<{ channel: string; payload?: string } | null> {
+  return new Promise((resolve) => {
+    let timeout: ReturnType<typeof setTimeout>;
+    const handler = (message: { channel: string; payload?: string }) => {
+      clearTimeout(timeout);
+      listener.off('notification', handler);
+      resolve(message);
+    };
+    timeout = setTimeout(() => {
+      listener.off('notification', handler);
+      resolve(null);
+    }, timeoutMs);
+    listener.on('notification', handler);
+  });
 }

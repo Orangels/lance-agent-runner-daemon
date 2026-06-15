@@ -8,15 +8,23 @@ import type {
   GetRunByIdempotencyKeyInput,
   GetRunLogForRunForClientInput,
   GetWorkspaceForClientInput,
+  GetNextWebhookDeliveryDueAtInput,
+  ClaimWebhookDeliveriesInput,
+  CreateWebhookDeliveryForRunStatusInput,
   InsertAssistantRunMessageInput,
   InsertRunFeedbackInput,
   InsertRunMessagesForRunCreateInput,
   InsertRunQueuedInput,
+  InsertRunWebhookInput,
+  InsertWebhookDeliveryAttemptInput,
   ListArtifactsForRunInput,
   ListConversationMessagesForPromptInput,
   ListRunFeedbackForClientInput,
   ListRunLogsFinishedBeforeInput,
   ListRunsForClientInput,
+  MarkWebhookDeliveryAbandonedInput,
+  MarkWebhookDeliveryRetryingInput,
+  MarkWebhookDeliverySucceededInput,
   ReplaceArtifactsForRunInput,
   RunForClientInput,
   RunnerPersistence,
@@ -110,6 +118,30 @@ export function createSqliteRunnerPersistence(db: RunnerDatabase): RunnerPersist
     async updateRunTerminal(input: UpdateRunTerminalInput) {
       return repositories.updateRunTerminal(db, input);
     },
+    async insertRunWebhook(_input: InsertRunWebhookInput) {
+      throw webhooksRequirePostgresPersistence();
+    },
+    async createWebhookDeliveryForRunStatus(_input: CreateWebhookDeliveryForRunStatusInput) {
+      throw webhooksRequirePostgresPersistence();
+    },
+    async claimDueWebhookDeliveries(_input: ClaimWebhookDeliveriesInput) {
+      throw webhooksRequirePostgresPersistence();
+    },
+    async getNextWebhookDeliveryDueAt(_input: GetNextWebhookDeliveryDueAtInput) {
+      throw webhooksRequirePostgresPersistence();
+    },
+    async markWebhookDeliverySucceeded(_input: MarkWebhookDeliverySucceededInput) {
+      throw webhooksRequirePostgresPersistence();
+    },
+    async markWebhookDeliveryRetrying(_input: MarkWebhookDeliveryRetryingInput) {
+      throw webhooksRequirePostgresPersistence();
+    },
+    async markWebhookDeliveryAbandoned(_input: MarkWebhookDeliveryAbandonedInput) {
+      throw webhooksRequirePostgresPersistence();
+    },
+    async insertWebhookDeliveryAttempt(_input: InsertWebhookDeliveryAttemptInput) {
+      throw webhooksRequirePostgresPersistence();
+    },
     async updateAssistantMessageStarted(input: UpdateAssistantMessageStartedInput) {
       return repositories.updateAssistantMessageStarted(db, input);
     },
@@ -163,4 +195,8 @@ export function createSqliteRunnerPersistence(db: RunnerDatabase): RunnerPersist
     },
   };
   return persistence;
+}
+
+function webhooksRequirePostgresPersistence(): Error {
+  return new Error('webhooks require postgres persistence');
 }

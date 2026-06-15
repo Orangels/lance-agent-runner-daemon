@@ -171,6 +171,109 @@ describe('run create request validation', () => {
     expect(parsed.idempotencyKey).toBe('origin:task_001:1');
   });
 
+  it('accepts a valid webhook on run create requests', () => {
+    const parsed = createRunRequestSchema.parse({
+      profileId: 'report-docx',
+      workspaceId: 'ws_1',
+      kind: 'generate',
+      skillId: 'report-gen',
+      prompt: 'Generate report.',
+      webhook: {
+        url: 'http://192.168.88.20:8000/api/daemon/webhook',
+        secret: 'shared-webhook-secret',
+        statuses: ['queued', 'running', 'succeeded', 'failed', 'canceled', 'interrupted'],
+        metadata: {
+          businessTaskId: 'task_001',
+        },
+      },
+    });
+
+    expect(parsed.webhook).toEqual({
+      url: 'http://192.168.88.20:8000/api/daemon/webhook',
+      secret: 'shared-webhook-secret',
+      statuses: ['queued', 'running', 'succeeded', 'failed', 'canceled', 'interrupted'],
+      metadata: {
+        businessTaskId: 'task_001',
+      },
+    });
+  });
+
+  it('accepts omitted webhook statuses on run create requests', () => {
+    const parsed = createRunRequestSchema.parse({
+      profileId: 'report-docx',
+      workspaceId: 'ws_1',
+      kind: 'generate',
+      skillId: 'report-gen',
+      prompt: 'Generate report.',
+      webhook: {
+        url: 'https://business.example.com/daemon/webhook',
+      },
+    });
+
+    expect(parsed.webhook).toEqual({
+      url: 'https://business.example.com/daemon/webhook',
+    });
+  });
+
+  it('rejects invalid webhook fields on run create requests', () => {
+    const baseRequest = {
+      profileId: 'report-docx',
+      workspaceId: 'ws_1',
+      kind: 'generate',
+      skillId: 'report-gen',
+      prompt: 'Generate report.',
+    } as const;
+
+    expect(() =>
+      createRunRequestSchema.parse({
+        ...baseRequest,
+        webhook: {},
+      }),
+    ).toThrow();
+
+    expect(() =>
+      createRunRequestSchema.parse({
+        ...baseRequest,
+        webhook: { url: '' },
+      }),
+    ).toThrow();
+
+    expect(() =>
+      createRunRequestSchema.parse({
+        ...baseRequest,
+        webhook: { url: 'not-a-url' },
+      }),
+    ).toThrow();
+
+    expect(() =>
+      createRunRequestSchema.parse({
+        ...baseRequest,
+        webhook: { url: 'https://business.example.com/webhook', statuses: 'succeeded' },
+      }),
+    ).toThrow();
+
+    expect(() =>
+      createRunRequestSchema.parse({
+        ...baseRequest,
+        webhook: { url: 'https://business.example.com/webhook', statuses: ['done'] },
+      }),
+    ).toThrow();
+
+    expect(() =>
+      createRunRequestSchema.parse({
+        ...baseRequest,
+        webhook: { url: 'https://business.example.com/webhook', secret: 'x'.repeat(513) },
+      }),
+    ).toThrow();
+
+    expect(() =>
+      createRunRequestSchema.parse({
+        ...baseRequest,
+        webhook: { url: 'https://business.example.com/webhook', unknown: true },
+      }),
+    ).toThrow();
+  });
+
   it('rejects empty idempotencyKey on run create requests', () => {
     expect(() =>
       createRunRequestSchema.parse({

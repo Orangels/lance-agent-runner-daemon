@@ -27,6 +27,7 @@
 - 决定何时创建 generate run，何时创建 revise run。
 - 选择 `promptMode`，并提供 legacy `prompt` 或 `business-context` 模式下的
   `currentPrompt` / `businessContext`。
+- 如果使用 webhook，提供一个业务端 HTTP callback，校验 daemon 签名、幂等处理 webhook event，并把 run 状态写回业务数据库。
 
 ## 关键 ID 映射
 
@@ -72,6 +73,8 @@ latest_primary_artifact_path
 generation_status
 last_error_code
 last_error_message
+daemon_idempotency_key
+webhook_event_ids_json     # 或单独建表保存已处理 eventId
 created_at
 updated_at
 ```
@@ -251,6 +254,172 @@ GET /api/runs/:runId/artifacts/:artifactId/download
 `GET /api/runs/:runId/status` 不返回 `messages/events/content/thinkingContent`，适合高频 poll。`GET /api/runs/:runId` 仍保留为完整详情接口，用于历史查看、诊断或需要还原 agent 过程输出的场景。
 
 daemon 会在 terminal 状态写入前尽量 flush 本次 run logs。因此 Poll 模式下，Claude 子进程实际结束到 `/status` 返回 `terminal=true` 之间可能有很短尾延迟。业务端不需要改变调用方式，继续按 2-5 秒间隔轮询即可。
+
+### 5a. 可选：使用 webhook 接收状态通知
+
+业务端可以继续只用 Generate + Poll。Webhook 是可选增强，用于让 daemon 在 run 状态变化后主动通知业务端，减少业务 worker 的轮询压力。
+
+Webhook-enhanced 业务流程：
+
+```text
+业务后端创建本地 generation_task
+  -> 保存 daemon_idempotency_key
+  -> 创建/复用 daemon workspace
+  -> 上传附件到 workspace input/
+  -> POST /api/runs，带 webhook
+  -> 保存 daemon_run_id
+
+daemon 状态变化
+  -> daemon 写入 webhook outbox
+  -> daemon worker 异步 POST 业务端 webhook.url
+
+业务端 webhook receiver
+  -> 校验签名和 schema
+  -> 用 eventId 幂等去重
+  -> 用 metadata.businessTaskId / run.id / run.idempotencyKey 找到本地 task
+  -> 按 run.status 更新本地 task
+  -> terminal + primary artifact 时保存 artifact id/path/hash
+  -> 返回 2xx
+
+业务端兜底 worker
+  -> 仍可低频 Poll 或按业务超时补偿
+  -> webhook 异常时继续通过 GET /api/runs/:runId/status 和 artifacts API 对账
+```
+
+创建 run 时增加 `webhook`：
+
+```json
+{
+  "profileId": "report-docx",
+  "workspaceId": "ws_xxx",
+  "kind": "generate",
+  "skillId": "report-gen",
+  "prompt": "请基于 input/source.docx 生成一份正式报告，输出到 output/report.docx。",
+  "artifactRuleIds": ["report-docx"],
+  "idempotencyKey": "gaclaw:task_001:1",
+  "webhook": {
+    "url": "http://192.168.88.20:8000/api/daemon/webhook",
+    "secret": "shared-webhook-secret",
+    "statuses": ["succeeded", "failed", "canceled", "interrupted"],
+    "metadata": {
+      "businessTaskId": "task_001"
+    }
+  }
+}
+```
+
+说明：
+
+- `webhook` 不改变 `POST /api/runs` 响应结构，业务端仍然拿 `runId/status/conversationId/userMessageId/assistantMessageId`。
+- 默认未传 `statuses` 时只通知 terminal 状态：`succeeded/failed/canceled/interrupted`。
+- 可以传内网 URL；当前 daemon 默认允许 `http` 和 `192.168.88.0/24`，实际允许范围由 `server.webhooks` 配置控制。
+- daemon 会在创建 run 阶段校验 webhook URL 是否符合协议、端口、host 和内网 CIDR 策略；不符合会拒绝整个 create-run。daemon 不会在创建 run 前 POST 探测 webhook 是否可用。URL 无法访问、超时、`429`、`5xx` 会异步重试；不可重试 `4xx` 或达到最大次数后标记 abandoned。
+- `webhook.metadata` 稳定 JSON 后最多 16KiB。daemon 配置禁用 webhook 时，传 `webhook` 会返回 `400 BAD_REQUEST`，`details.reason` 为 `webhooks_disabled`。
+- 业务端应继续保留 Poll/SSE 兜底能力，尤其是在 webhook 接收服务维护或网络异常时。
+- `deliveryAttempt` 是 daemon 的 claim attempt number，可能跳号，业务端不能把它当作连续序列；业务端必须用 `eventId` / `X-Daemon-Webhook-Id` 做幂等去重。
+- 如果使用 `idempotencyKey`，webhook URL、statuses、metadata 和 secret hash 都参与幂等 fingerprint。同 key 但 webhook 参数不同会返回 `409 IDEMPOTENCY_KEY_CONFLICT`。
+
+推荐 `webhook.metadata` 至少携带业务任务 id：
+
+```json
+{
+  "businessTaskId": "task_001",
+  "origin": "gaclaw"
+}
+```
+
+`metadata` 会原样出现在 webhook payload 顶层 `metadata` 字段中。它只用于业务端定位自己的任务，不参与 daemon 的业务逻辑；不要放用户隐私、API key、完整 prompt 或大对象。
+
+签名校验：
+
+```text
+X-Daemon-Webhook-Id: whd_xxx
+X-Daemon-Webhook-Timestamp: 1780000000000
+X-Daemon-Webhook-Signature: v1=<hex hmac sha256>
+```
+
+签名输入是 `<timestamp>.<raw-json-body>`，算法是 HMAC-SHA256，密钥是 `webhook.secret`。业务端应校验 timestamp 时效，并用 `X-Daemon-Webhook-Id` 做幂等去重。
+
+业务端 receiver 需要适配 daemon 发送的 payload：
+
+```json
+{
+  "schemaVersion": "daemon.webhook.run.v1",
+  "eventId": "whd_xxx",
+  "eventType": "run.status_changed",
+  "createdAt": 1780000000000,
+  "deliveryAttempt": 1,
+  "run": {
+    "id": "run_xxx",
+    "workspaceId": "ws_xxx",
+    "profileId": "report-docx",
+    "clientId": "lqbot",
+    "kind": "generate",
+    "skillId": "report-gen",
+    "status": "succeeded",
+    "queuedAt": 1780000000000,
+    "startedAt": 1780000005000,
+    "finishedAt": 1780000120000,
+    "errorCode": null,
+    "errorMessage": null,
+    "idempotencyKey": "gaclaw:task_001:1"
+  },
+  "artifacts": [
+    {
+      "id": "artifact_xxx",
+      "ruleId": "report-docx",
+      "role": "primary",
+      "relativePath": "output/report.docx",
+      "fileName": "report.docx",
+      "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "size": 123456,
+      "sha256": "..."
+    }
+  ],
+  "metadata": {
+    "businessTaskId": "task_001",
+    "origin": "gaclaw"
+  }
+}
+```
+
+字段处理建议：
+
+| 字段 | 业务端用途 |
+| --- | --- |
+| `eventId` / `X-Daemon-Webhook-Id` | webhook event 幂等去重主键。重复收到同一个 id 时直接返回 `2xx`。 |
+| `eventType` | 当前只处理 `run.status_changed`。未知类型不要更新任务状态。 |
+| `deliveryAttempt` | 仅用于诊断，不保证连续，不用于业务状态机判断。 |
+| `run.id` | 对应业务库保存的 `daemon_run_id`。 |
+| `run.status` | 更新本地任务状态。terminal 状态是 `succeeded/failed/canceled/interrupted`。 |
+| `run.errorCode` / `run.errorMessage` | 写入失败原因；不要当作完整日志。 |
+| `run.idempotencyKey` | 可用于对账本地 `daemon_idempotency_key`。 |
+| `artifacts` | terminal payload 的 artifact 摘要。报告生成一般选择 `role=primary` 或 `ruleId=report-docx`。 |
+| `metadata.businessTaskId` | 推荐用于定位本地 `generation_task`。 |
+
+业务端返回值要求：
+
+- 成功处理并落库后返回任意 `2xx`，daemon 认为投递成功。
+- 临时不可用可以返回 `429` 或 `5xx`，daemon 会按配置重试。
+- 签名失败建议返回 `401` 或 `403`，daemon 不会重试这类不可重试错误。
+- 不要在业务端还没落库时提前返回 `2xx`；否则 daemon 会认为该通知已成功投递。
+
+业务端收到 terminal webhook 后的 artifact 处理：
+
+```text
+payload.artifacts 找 role=primary 或 ruleId=report-docx
+  -> 保存 artifact.id / relativePath / sha256 到业务库
+  -> 如需文件内容，调用：
+     GET /api/runs/:runId/artifacts/:artifactId/download
+```
+
+如果 webhook payload 中没有期望的 primary artifact，业务端仍可用原流程兜底：
+
+```text
+GET /api/runs/:runId/artifacts
+  -> 找 primary artifact
+  -> GET /api/runs/:runId/artifacts/:artifactId/download
+```
 
 ### 6. 订阅 SSE
 

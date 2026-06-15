@@ -65,6 +65,7 @@ describe('loadDaemonConfig', () => {
 
     expect(config.server.dataDir).toBe(path.join(configDir, 'data'));
     expect(config.server.persistence.databaseUrl).toBe(databaseUrl);
+    expect(config.server.persistence.poolMax).toBe(10);
     expect(profile.sandboxRoot).toBe(path.join(configDir, 'workspaces/report-docx'));
     expect(profile.claudeConfigDir).toBe(path.join(configDir, 'profiles/report-docx/claude'));
     expect(profile.skillRoots).toEqual([path.join(root, 'apps/daemon/skills')]);

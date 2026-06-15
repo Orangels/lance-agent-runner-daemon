@@ -7,6 +7,13 @@ import type {
   RunStatus,
 } from '../core/run-types.js';
 
+export type WebhookDeliveryStatus =
+  | 'pending'
+  | 'delivering'
+  | 'succeeded'
+  | 'retrying'
+  | 'abandoned';
+
 export interface WorkspaceRecord {
   id: string;
   profileId: string;
@@ -162,6 +169,64 @@ export interface RunFeedbackRecord {
   category: string;
   message: string;
   metadata: unknown;
+  createdAt: number;
+}
+
+export interface RunWebhookRecord {
+  id: string;
+  runId: string;
+  clientId: string;
+  url: string;
+  secret: string | null;
+  statuses: RunStatus[];
+  metadata: unknown;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface WebhookDeliveryRecord {
+  id: string;
+  runId: string;
+  webhookId: string;
+  clientId: string;
+  eventType: string;
+  runStatus: RunStatus;
+  deliveryStatus: WebhookDeliveryStatus;
+  payload: unknown;
+  payloadSha256: string;
+  attemptCount: number;
+  nextAttemptAt: number;
+  lockedAt: number | null;
+  lockedBy: string | null;
+  lastAttemptAt: number | null;
+  deliveredAt: number | null;
+  responseStatus: number | null;
+  responseBodyPreview: string | null;
+  errorMessage: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface WebhookDeliveryJobRecord extends WebhookDeliveryRecord {
+  webhookUrl: string;
+  webhookSecret: string | null;
+}
+
+export interface ClaimWebhookDeliveriesResult {
+  claimed: WebhookDeliveryJobRecord[];
+  abandonedIds: string[];
+}
+
+export interface WebhookDeliveryAttemptRecord {
+  id: string;
+  deliveryId: string;
+  attempt: number;
+  attemptedAt: number;
+  durationMs: number;
+  success: boolean;
+  responseStatus: number | null;
+  responseBodyPreview: string | null;
+  errorMessage: string | null;
   createdAt: number;
 }
 
@@ -430,6 +495,79 @@ export interface InsertRunFeedbackInput {
   now: number;
 }
 
+export interface InsertRunWebhookInput {
+  id: string;
+  runId: string;
+  clientId: string;
+  url: string;
+  secret?: string | null;
+  statuses: RunStatus[];
+  metadata?: unknown;
+  now: number;
+}
+
+export interface CreateWebhookDeliveryForRunStatusInput {
+  id: string;
+  runId: string;
+  webhookId: string;
+  clientId: string;
+  eventType: string;
+  runStatus: RunStatus;
+  payload: unknown;
+  payloadSha256: string;
+  nextAttemptAt: number;
+  now: number;
+}
+
+export interface ClaimWebhookDeliveriesInput {
+  now: number;
+  staleDeliveringBefore: number;
+  lockedBy: string;
+  limit: number;
+  maxAttempts: number;
+}
+
+export interface GetNextWebhookDeliveryDueAtInput {
+  lockTimeoutMs: number;
+}
+
+export interface MarkWebhookDeliverySucceededInput {
+  deliveryId: string;
+  responseStatus?: number | null;
+  responseBodyPreview?: string | null;
+  now: number;
+}
+
+export interface MarkWebhookDeliveryRetryingInput {
+  deliveryId: string;
+  nextAttemptAt: number;
+  responseStatus?: number | null;
+  responseBodyPreview?: string | null;
+  errorMessage?: string | null;
+  now: number;
+}
+
+export interface MarkWebhookDeliveryAbandonedInput {
+  deliveryId: string;
+  responseStatus?: number | null;
+  responseBodyPreview?: string | null;
+  errorMessage?: string | null;
+  now: number;
+}
+
+export interface InsertWebhookDeliveryAttemptInput {
+  id: string;
+  deliveryId: string;
+  attempt: number;
+  attemptedAt: number;
+  durationMs: number;
+  success: boolean;
+  responseStatus?: number | null;
+  responseBodyPreview?: string | null;
+  errorMessage?: string | null;
+  now: number;
+}
+
 export interface ListRunFeedbackForClientInput {
   runId: string;
   clientId: string;
@@ -484,6 +622,24 @@ export interface RunnerPersistence {
   updateAssistantMessagesTerminalForRun(input: UpdateAssistantMessagesTerminalForRunInput): Promise<number>;
   updateRunStarted(input: UpdateRunStartedInput): Promise<RunRecord>;
   updateRunTerminal(input: UpdateRunTerminalInput): Promise<RunRecord>;
+  insertRunWebhook(input: InsertRunWebhookInput): Promise<RunWebhookRecord>;
+  createWebhookDeliveryForRunStatus(
+    input: CreateWebhookDeliveryForRunStatusInput,
+  ): Promise<WebhookDeliveryRecord | null>;
+  claimDueWebhookDeliveries(input: ClaimWebhookDeliveriesInput): Promise<ClaimWebhookDeliveriesResult>;
+  getNextWebhookDeliveryDueAt(input: GetNextWebhookDeliveryDueAtInput): Promise<number | null>;
+  markWebhookDeliverySucceeded(
+    input: MarkWebhookDeliverySucceededInput,
+  ): Promise<WebhookDeliveryRecord>;
+  markWebhookDeliveryRetrying(
+    input: MarkWebhookDeliveryRetryingInput,
+  ): Promise<WebhookDeliveryRecord>;
+  markWebhookDeliveryAbandoned(
+    input: MarkWebhookDeliveryAbandonedInput,
+  ): Promise<WebhookDeliveryRecord>;
+  insertWebhookDeliveryAttempt(
+    input: InsertWebhookDeliveryAttemptInput,
+  ): Promise<WebhookDeliveryAttemptRecord>;
   updateAssistantMessageStarted(input: UpdateAssistantMessageStartedInput): Promise<RunMessageRecord>;
   updateAssistantMessageTerminal(input: UpdateAssistantMessageTerminalInput): Promise<RunMessageRecord>;
   updateRunMessage(input: UpdateRunMessageInput): Promise<RunMessageRecord>;

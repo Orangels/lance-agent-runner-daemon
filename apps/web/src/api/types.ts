@@ -33,6 +33,7 @@ export type DaemonErrorCode =
   | 'RUN_INTERRUPTED_BY_DAEMON_RESTART'
   | 'CLAUDE_AUTH_FAILED'
   | 'CLAUDE_CLI_FAILED'
+  | 'WEBHOOK_URL_NOT_ALLOWED'
   | 'INTERNAL_ERROR'
   | 'PATH_NOT_ALLOWED'
   | 'INVALID_PATH_SEGMENT';
@@ -112,6 +113,13 @@ export interface ContextPolicy {
   includeRunWarnings?: boolean;
 }
 
+export interface CreateRunWebhookRequest {
+  url: string;
+  secret?: string;
+  statuses?: RunStatus[];
+  metadata?: Record<string, unknown>;
+}
+
 export interface CreateRunRequest {
   profileId: string;
   workspaceId: string;
@@ -129,6 +137,7 @@ export interface CreateRunRequest {
   eventVisibility?: EventVisibility;
   metadata?: Record<string, unknown>;
   idempotencyKey?: string;
+  webhook?: CreateRunWebhookRequest;
 }
 
 export interface PublicRun {
