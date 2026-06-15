@@ -28,13 +28,15 @@ export function createWorkspaceFilesRouter(dependencies: CreateWorkspaceFilesRou
   const upload = multer({
     storage: multer.diskStorage({
       destination: (request, _file, callback) => {
-        try {
-          const uploadDir = dependencies.uploadTempService.createUploadDirectory();
-          (request as UploadRequest).uploadDir = uploadDir;
-          callback(null, uploadDir);
-        } catch (error) {
-          callback(error as Error, '');
-        }
+        dependencies.uploadTempService
+          .createUploadDirectory()
+          .then((uploadDir) => {
+            (request as UploadRequest).uploadDir = uploadDir;
+            callback(null, uploadDir);
+          })
+          .catch((error: unknown) => {
+            callback(error as Error, '');
+          });
       },
       filename: (_request, _file, callback) => {
         callback(null, 'file');
@@ -53,7 +55,7 @@ export function createWorkspaceFilesRouter(dependencies: CreateWorkspaceFilesRou
       try {
         await runUploadMiddleware(upload, uploadRequest, response);
       } catch (error) {
-        cleanupUploadPath(uploadRequest, dependencies.uploadTempService, true);
+        await cleanupUploadPath(uploadRequest, dependencies.uploadTempService, true);
         throw toUploadDaemonError(error) ?? error;
       }
 
@@ -93,7 +95,11 @@ export function createWorkspaceFilesRouter(dependencies: CreateWorkspaceFilesRou
         operationError = error;
         throw error;
       } finally {
-        cleanupUploadPath(uploadRequest, dependencies.uploadTempService, operationError !== undefined);
+        await cleanupUploadPath(
+          uploadRequest,
+          dependencies.uploadTempService,
+          operationError !== undefined,
+        );
       }
 
       response.json(result);
@@ -141,17 +147,15 @@ function cleanupUploadPath(
   request: UploadRequest,
   uploadTempService: UploadTempService,
   suppressErrors: boolean,
-): void {
+): Promise<void> {
   const cleanupPath = request.file?.path ?? request.uploadDir;
   if (!cleanupPath) {
-    return;
+    return Promise.resolve();
   }
 
-  try {
-    uploadTempService.removeUploadPath(cleanupPath);
-  } catch (error) {
+  return uploadTempService.removeUploadPath(cleanupPath).catch((error: unknown) => {
     if (!suppressErrors) {
       throw error;
     }
-  }
+  });
 }

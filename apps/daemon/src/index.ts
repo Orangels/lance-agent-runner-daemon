@@ -63,7 +63,7 @@ export async function createServerContext(
   const feedbackService = createRunFeedbackService({ persistence, clock: options.clock });
   const runService = createRunService({ config, persistence, artifactService, runLogService, clock: options.clock });
   const uploadTempService = createUploadTempService({ config });
-  uploadTempService.pruneExpiredUploads({ now: startupNow });
+  await uploadTempService.pruneExpiredUploads({ now: startupNow });
   const app = createApp({
     config,
     persistence,
