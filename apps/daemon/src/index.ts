@@ -121,6 +121,7 @@ export function startServer(context: ServerContext): Server {
   });
   server.on('error', (error) => {
     context.daemonLogger.error('daemon_server_error', { error });
+    void context.daemonLogger.flush().catch(() => {});
   });
   installShutdownHandlers(context, server);
   return server;
@@ -145,6 +146,7 @@ export function installShutdownHandlers(
     await context.runService.shutdownActive({ graceMs: getMaxCancelGraceMs(context.config) });
     await context.persistence.close();
     context.daemonLogger?.info('daemon_shutdown_complete');
+    await context.daemonLogger?.flush();
     signalTarget.exitCode = 0;
   };
 

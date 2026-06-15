@@ -172,10 +172,15 @@ describe('server shutdown handlers', () => {
       shutdownActive: vi.fn(async () => ({ interrupted: 2 })),
     };
     const persistence = { close: vi.fn(async () => undefined) };
+    const daemonLogger = {
+      info: vi.fn(),
+      flush: vi.fn(async () => undefined),
+    };
     const context = {
       config,
       persistence,
       runService,
+      daemonLogger,
     };
 
     installShutdownHandlers(context as unknown as Parameters<typeof installShutdownHandlers>[0], server as never, signalTarget);
@@ -184,6 +189,8 @@ describe('server shutdown handlers', () => {
     expect(server.close).toHaveBeenCalledTimes(1);
     expect(runService.shutdownActive).toHaveBeenCalledWith({ graceMs: 100 });
     expect(persistence.close).toHaveBeenCalledTimes(1);
+    expect(daemonLogger.info).toHaveBeenCalledWith('daemon_shutdown_complete');
+    expect(daemonLogger.flush).toHaveBeenCalledTimes(1);
     expect(signalTarget.exitCode).toBe(0);
   });
 });

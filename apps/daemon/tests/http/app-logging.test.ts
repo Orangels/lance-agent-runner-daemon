@@ -73,6 +73,7 @@ function memoryLogger() {
       info: (event: string, data: Record<string, unknown> = {}) => records.push({ level: 'info', event, data }),
       warn: (event: string, data: Record<string, unknown> = {}) => records.push({ level: 'warn', event, data }),
       error: (event: string, data: Record<string, unknown> = {}) => records.push({ level: 'error', event, data }),
+      flush: async () => {},
     },
     records,
   };

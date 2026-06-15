@@ -1233,6 +1233,7 @@ describe('run service', () => {
       info: vi.fn(),
       warn: vi.fn(),
       error: vi.fn(),
+      flush: vi.fn(async () => {}),
     };
     const closeError = new Error('disk full');
     const runLogService = {

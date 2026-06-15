@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 
 type LogData = Record<string, unknown>;
@@ -9,6 +9,7 @@ export interface DaemonLogger {
   info(event: string, data?: LogData): void;
   warn(event: string, data?: LogData): void;
   error(event: string, data?: LogData): void;
+  flush(): Promise<void>;
 }
 
 export const noopDaemonLogger: DaemonLogger = {
@@ -16,6 +17,7 @@ export const noopDaemonLogger: DaemonLogger = {
   info: () => {},
   warn: () => {},
   error: () => {},
+  flush: async () => {},
 };
 
 export interface CreateDaemonLoggerInput {
@@ -28,25 +30,31 @@ export function createDaemonLogger(input: CreateDaemonLoggerInput): DaemonLogger
   const logDir = path.join(input.dataDir, 'logs');
   const serviceLogPath = path.join(logDir, 'daemon.log');
   const errorLogPath = path.join(logDir, 'daemon-error.log');
+  let queue = Promise.resolve();
 
-  const write = (level: LogLevel, event: string, data: LogData = {}) => {
-    try {
-      mkdirSync(logDir, { recursive: true });
-      const line = JSON.stringify(createLogRecord({ data, event, level, time: now() })) + '\n';
-      appendFileSync(serviceLogPath, line, 'utf8');
-      if (level === 'warn' || level === 'error') {
-        appendFileSync(errorLogPath, line, 'utf8');
-      }
-    } catch (error) {
-      reportLogWriteFailure(error);
-    }
+  const enqueue = (level: LogLevel, event: string, data: LogData = {}) => {
+    const line = JSON.stringify(createLogRecord({ data, event, level, time: now() })) + '\n';
+    queue = queue
+      .then(async () => {
+        await mkdir(logDir, { recursive: true });
+        await appendFile(serviceLogPath, line, 'utf8');
+        if (level === 'warn' || level === 'error') {
+          await appendFile(errorLogPath, line, 'utf8');
+        }
+      })
+      .catch((error) => {
+        reportLogWriteFailure(error);
+      });
   };
 
   return {
-    debug: (event, data) => write('debug', event, data),
-    info: (event, data) => write('info', event, data),
-    warn: (event, data) => write('warn', event, data),
-    error: (event, data) => write('error', event, data),
+    debug: (event, data) => enqueue('debug', event, data),
+    info: (event, data) => enqueue('info', event, data),
+    warn: (event, data) => enqueue('warn', event, data),
+    error: (event, data) => enqueue('error', event, data),
+    flush: async () => {
+      await queue;
+    },
   };
 }
 
