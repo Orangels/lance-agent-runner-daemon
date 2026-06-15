@@ -33,7 +33,14 @@ export function createDaemonLogger(input: CreateDaemonLoggerInput): DaemonLogger
   let queue = Promise.resolve();
 
   const enqueue = (level: LogLevel, event: string, data: LogData = {}) => {
-    const line = JSON.stringify(createLogRecord({ data, event, level, time: now() })) + '\n';
+    let line: string;
+    try {
+      line = `${JSON.stringify(createLogRecord({ data, event, level, time: now() }))}\n`;
+    } catch (error) {
+      reportLogWriteFailure(error);
+      return;
+    }
+
     queue = queue
       .then(async () => {
         await mkdir(logDir, { recursive: true });

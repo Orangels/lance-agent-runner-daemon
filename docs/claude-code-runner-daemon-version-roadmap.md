@@ -95,6 +95,11 @@ The following capabilities are intentionally deferred to later versions. Do not 
 - Queue depth and per-profile concurrency metrics.
 - External alerting integration.
 
+### Runtime Reliability Hardening
+
+- Define and harden terminal log semantics for canceled, timed-out, and interrupted runs, including whether child-process tail output after cancel must be awaited before closing run logs.
+- Add a bounded timeout or equivalent guard around run log close so terminal status updates and SSE `end` delivery cannot wait indefinitely on slow storage.
+
 ### Webhook Notifications
 
 - Optional business-callback webhook support for callers that do not want to rely only on polling or SSE.

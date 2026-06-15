@@ -98,6 +98,17 @@ describe('daemon logger', () => {
     expect(consoleError).toHaveBeenCalledWith('Failed to write daemon service log:', expect.any(String));
   });
 
+  it('does not throw when log data cannot be serialized', async () => {
+    const dataDir = makeDataDir();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const logger = createDaemonLogger({ dataDir, now: () => 1770000000000 });
+
+    expect(() => logger.info('bad_payload', { value: BigInt(1) as unknown as never })).not.toThrow();
+    await logger.flush();
+
+    expect(consoleError).toHaveBeenCalledWith('Failed to write daemon service log:', expect.any(String));
+  });
+
   it('snapshots log data and timestamp when the log call is made', async () => {
     let currentTime = 1;
     const dataDir = makeDataDir();
