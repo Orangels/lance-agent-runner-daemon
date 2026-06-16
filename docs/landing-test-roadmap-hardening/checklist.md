@@ -58,11 +58,12 @@ Use this branch to close the first-version landing-test loop after the PostgreSQ
 
 ### 3. SQLite Test Residual Cleanup
 
-- [ ] Inventory remaining SQLite references:
-  - [ ] `createSqliteRunnerPersistence`.
-  - [ ] SQLite schema/repository tests.
-  - [ ] SQLite-backed service or HTTP tests.
-  - [ ] docs that still describe SQLite as runtime persistence.
+- [x] Create implementation plan: `docs/landing-test-roadmap-hardening/sqlite-test-residual-cleanup-plan.md`.
+- [x] Inventory remaining SQLite references:
+  - [x] `createSqliteRunnerPersistence`.
+  - [x] SQLite schema/repository tests.
+  - [x] SQLite-backed service or HTTP tests.
+  - [x] docs that still describe SQLite as runtime persistence.
 - [ ] Decide which SQLite references must stay for offline migration tooling tests.
 - [ ] Replace runtime/service/HTTP test persistence with PostgreSQL-backed helpers where feasible.
 - [ ] Remove SQLite runtime fixture helpers that are no longer needed.
