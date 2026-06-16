@@ -1,0 +1,105 @@
+# Landing Test And Runtime Hardening Checklist
+
+> Branch: `codex/landing-test-roadmap-hardening`
+
+## Goal
+
+Use this branch to close the first-version landing-test loop after the PostgreSQL and webhook merge, then clean up the remaining runtime/test risks before the daemon is treated as production-ready for the trusted deployment model.
+
+## Scope
+
+- Record the real business landing test evidence.
+- Update roadmap status so completed PostgreSQL and webhook work is no longer presented as future backlog.
+- Remove or rework remaining SQLite-backed runtime test fixtures now that PostgreSQL is the only runtime persistence backend.
+- Harden terminal run-log behavior so terminal status and SSE completion are not blocked indefinitely by log close or slow storage.
+
+## Checklist
+
+### 1. Landing-Test Record
+
+- [ ] Create a dedicated landing-test evidence document under `docs/landing-test-roadmap-hardening/`.
+- [ ] Record the completed Gaclaw report-generation test:
+  - [ ] daemon branch/commit used.
+  - [ ] command/config used to start daemon.
+  - [ ] workspace id.
+  - [ ] run id.
+  - [ ] task start/end timestamps and total duration.
+  - [ ] artifact id, role, path, size, and sha256.
+  - [ ] webhook delivery id, attempt count, response status, and response preview.
+  - [ ] confirmation that daemon error log and runner stderr had no errors.
+  - [ ] confirmation that no daemon/runner/monitoring process remained after shutdown.
+- [ ] Add missing landing-test items still required by the roadmap:
+  - [ ] `workspace prepare`.
+  - [ ] SSE event stream.
+  - [ ] cancel flow.
+  - [ ] logs API.
+  - [ ] at least one successful `revise` run.
+  - [ ] at least one failed run with durable diagnostics.
+  - [ ] daemon restart interruption behavior.
+  - [ ] queue behavior under global/profile/workspace concurrency limits.
+  - [ ] response check that no sandbox absolute paths or upload temp paths are exposed.
+  - [ ] final `pnpm typecheck`, `pnpm build`, and `pnpm test` evidence.
+
+### 2. Roadmap Status Update
+
+- [ ] Update `docs/claude-code-runner-daemon-version-roadmap.md`.
+- [ ] Mark PostgreSQL runtime persistence as completed on `main`.
+- [ ] Mark webhook notifications as completed on `main`.
+- [ ] Keep remaining PostgreSQL work as follow-up cleanup:
+  - [ ] CI PostgreSQL test gate.
+  - [ ] SQLite test fixture removal.
+  - [ ] backup/restore and operator runbook validation.
+- [ ] Move completed webhook implementation details out of future backlog wording.
+- [ ] Keep true future webhook work listed as hardening candidates:
+  - [ ] delivery inspection APIs.
+  - [ ] default webhook administration.
+  - [ ] stronger DNS rebinding protection.
+  - [ ] delivery metrics.
+
+### 3. SQLite Test Residual Cleanup
+
+- [ ] Inventory remaining SQLite references:
+  - [ ] `createSqliteRunnerPersistence`.
+  - [ ] SQLite schema/repository tests.
+  - [ ] SQLite-backed service or HTTP tests.
+  - [ ] docs that still describe SQLite as runtime persistence.
+- [ ] Decide which SQLite references must stay for offline migration tooling tests.
+- [ ] Replace runtime/service/HTTP test persistence with PostgreSQL-backed helpers where feasible.
+- [ ] Remove SQLite runtime fixture helpers that are no longer needed.
+- [ ] Keep migration tests explicitly scoped as SQLite-source to PostgreSQL-target tests.
+- [ ] Run focused tests after each cleanup slice.
+- [ ] Run final daemon test suite with `CLAUDE_RUNNER_TEST_PG_URL` configured.
+
+### 4. Runtime Reliability Hardening
+
+- [ ] Write or update a short implementation plan before code changes.
+- [ ] Define terminal log semantics for:
+  - [ ] `canceled`.
+  - [ ] `failed` from timeout.
+  - [ ] `interrupted` on daemon shutdown/restart.
+- [ ] Add a bounded timeout around run-log close/finalization so terminal status persistence and SSE `end` cannot wait indefinitely.
+- [ ] Ensure close timeout emits a durable warning event without changing the terminal run status.
+- [ ] Ensure post-cancel child-process tail output behavior is explicit and tested.
+- [ ] Add regression tests for:
+  - [ ] close success.
+  - [ ] close failure.
+  - [ ] close timeout.
+  - [ ] canceled run terminal behavior.
+  - [ ] interrupted run startup recovery.
+- [ ] Update API/config/operations docs if any externally visible warning or timing behavior changes.
+
+## Suggested Commit Order
+
+1. `docs: record landing test evidence`
+2. `docs: update daemon roadmap status`
+3. `test: remove sqlite runtime persistence fixtures`
+4. `fix: bound terminal run log close`
+5. `docs: finalize landing test hardening notes`
+
+## Verification
+
+- [ ] `pnpm typecheck`
+- [ ] `pnpm build`
+- [ ] `pnpm test:daemon`
+- [ ] PostgreSQL-gated daemon tests with `CLAUDE_RUNNER_TEST_PG_URL`.
+- [ ] Manual smoke test for daemon startup with `pnpm start:daemon:local:test`.
