@@ -7,7 +7,7 @@ This document records the current release boundary after Phase 4 and keeps later
 The daemon has completed the original first-version implementation path:
 
 - Phase 0a: API contract freeze.
-- Phase 0: profile, auth, workspace, and SQLite foundation.
+- Phase 0: profile, auth, workspace, and initial local persistence foundation.
 - Phase 1: minimal Claude Code run with daemon-side message persistence.
 - Phase 2: skill staging and artifact scan/download.
 - Phase 3: queue, timeout, logs, and hardening.
@@ -27,6 +27,31 @@ The current run-create contract also includes generic daemon-side idempotent dis
 - Reusing the same key with different run parameters returns `IDEMPOTENCY_KEY_CONFLICT`.
 - The key is a generic dispatch key, not a business-specific task id, and should not contain secrets, PII, full prompts, or other sensitive payload.
 
+PostgreSQL runtime persistence has landed on `main`:
+
+- The request-serving daemon uses PostgreSQL as the runtime persistence backend.
+- Startup validates that PostgreSQL migrations have been applied before serving requests.
+- SQLite is no longer a runtime backend. It is retained only as a historical backup and read-only source for migration tooling/tests.
+- Existing SQLite data can be copied into PostgreSQL through the migration tooling under `apps/daemon/src/db/migration/` and `scripts/migrate-sqlite-to-postgres.sh`.
+
+Webhook notifications have landed on `main`:
+
+- `POST /api/runs` accepts per-run webhook target, statuses, signing secret, and caller metadata.
+- Webhook delivery is triggered from durable daemon run state transitions, not by daemon-side status polling.
+- Run webhook config is stored with the run, and delivery jobs are written to PostgreSQL outbox tables when subscribed statuses are committed.
+- Delivery uses a background worker with PostgreSQL `LISTEN/NOTIFY`, `FOR UPDATE SKIP LOCKED` claims, timeout, retry/backoff, bounded response previews, attempt audit rows, and stale `delivering` recovery.
+- Payload schema is daemon-owned (`daemon.webhook.run.v1`) and includes run id, workspace id, profile id, kind, status, timestamps, error summary, artifact summary when available, idempotency key, stable event id, and caller-provided webhook metadata.
+- Normal `queued/running` notifications are supported when subscribed; terminal states `succeeded/failed/canceled/interrupted` are the default subscription.
+- Restart recovery marks old queued/running rows `interrupted` and creates matching interrupted webhook deliveries when the run had webhook config.
+- Delivery remains daemon-generic and client-scoped; product-specific correlation stays in caller-provided metadata.
+- Security guardrails include URL policy validation, allowed hosts/private CIDRs, redirect blocking, request timeout, signing, secret redaction, and no raw payload/secret logging.
+- Polling, SSE, artifacts, and logs remain authoritative recovery paths. Business backends should prefer webhook for normal completion notification and retain low-frequency Poll for recovery, reconciliation, and troubleshooting.
+
+The first real business generate landing test has passed:
+
+- Gaclaw report generation completed end-to-end with workspace creation, file upload, generate run, Poll fallback, primary DOCX artifact persistence, and terminal webhook callback.
+- Evidence is recorded in `docs/landing-test-roadmap-hardening/2026-06-16-gaclaw-report-generate.md`.
+
 Therefore the current repository should be treated as the **first-version landing-test candidate**. It is ready for controlled integration testing in the intended trusted deployment model.
 
 ## Current Landing-Test Scope
@@ -39,12 +64,13 @@ Use this version to test the complete daemon flow:
    - `POST /api/workspaces/:workspaceId/prepare` from daemon-accessible `allowedInputRoots`, or
    - `POST /api/workspaces/:workspaceId/files` for one uploaded file.
 4. Create queued runs with `POST /api/runs`, including idempotent replay with `idempotencyKey`.
-5. Observe live output through `GET /api/runs/:runId/events`.
-6. Cancel runs with `POST /api/runs/:runId/cancel`.
-7. Inspect durable run detail through `GET /api/runs/:runId`.
-8. List and download artifacts through the artifact APIs.
-9. Read authorized sanitized run logs through `GET /api/runs/:runId/logs`.
-10. Validate daemon restart behavior marks old queued/running rows as `interrupted`.
+5. Prefer per-run webhook notifications for normal business completion callbacks.
+6. Observe live output through `GET /api/runs/:runId/events`.
+7. Cancel runs with `POST /api/runs/:runId/cancel`.
+8. Inspect durable run detail through `GET /api/runs/:runId`.
+9. List and download artifacts through the artifact APIs.
+10. Read authorized sanitized run logs through `GET /api/runs/:runId/logs`.
+11. Validate daemon restart behavior marks old queued/running rows as `interrupted`.
 
 The landing test should verify business integration and operational behavior, not untrusted multi-tenant security.
 
@@ -72,7 +98,7 @@ The following capabilities are intentionally deferred to later versions. Do not 
 - Remote URL pull.
 - S3 or object-storage pull.
 - Multi-file upload in one request.
-- Upload manifests, durable upload ids, or an uploads SQLite table.
+- Upload manifests, durable upload ids, or a durable uploads table.
 - Signed upload URLs.
 
 ### Workspace Lifecycle
@@ -100,21 +126,9 @@ The following capabilities are intentionally deferred to later versions. Do not 
 - Define and harden terminal log semantics for canceled, timed-out, and interrupted runs, including whether child-process tail output after cancel must be awaited before closing run logs.
 - Add a bounded timeout or equivalent guard around run log close so terminal status updates and SSE `end` delivery cannot wait indefinitely on slow storage.
 
-### Webhook Notifications
+### Webhook Hardening
 
-- Implemented on the PostgreSQL persistence branch. Confirmation record: `docs/webhook-notifications/implementation-plan.md`.
-- `POST /api/runs` accepts per-run webhook target, statuses, signing secret, and caller metadata.
-- Webhook delivery is triggered from durable daemon run state transitions, not by daemon-side status polling.
-- Run webhook config is stored with the run, and delivery jobs are written to PostgreSQL outbox tables when subscribed statuses are committed.
-- Delivery uses a background worker with PostgreSQL `LISTEN/NOTIFY`, `FOR UPDATE SKIP LOCKED` claims, timeout, retry/backoff, bounded response previews, attempt audit rows, and stale `delivering` recovery.
-- Payload schema is daemon-owned (`daemon.webhook.run.v1`) and includes run id, workspace id, profile id, kind, status, timestamps, error summary, artifact summary when available, idempotency key, stable event id, and caller-provided webhook metadata.
-- Normal `queued/running` notifications are supported when subscribed; terminal states `succeeded/failed/canceled/interrupted` are the default subscription.
-- Restart recovery marks old queued/running rows `interrupted` and creates matching interrupted webhook deliveries when the run had webhook config.
-- Delivery remains daemon-generic and client-scoped; product-specific correlation stays in caller-provided metadata.
-- Security guardrails include URL policy validation, allowed hosts/private CIDRs, redirect blocking, request timeout, signing, secret redaction, and no raw payload/secret logging.
-- Polling, SSE, artifacts, and logs remain authoritative recovery paths. Business backends should prefer webhook for normal completion notification and retain low-frequency Poll for recovery, reconciliation, and troubleshooting.
-
-Future hardening candidates:
+Webhook notifications are implemented. Future hardening candidates:
 
 - Public webhook delivery inspection APIs.
 - Optional per-client webhook defaults or dynamic administration.
@@ -134,16 +148,13 @@ Future hardening candidates:
 - Claude Code native resume, continue, or fork.
 - Run retry API with first-class parent/child relationships.
 
-### Persistence Backend V2
+### PostgreSQL Persistence Follow-Up
 
-- Migrate the daemon's current SQLite persistence layer to PostgreSQL. This is being implemented as a PostgreSQL-only runtime migration, not a dual-backend mode.
-- Keep repository/service boundaries generic so HTTP and core run semantics do not depend on the selected database engine.
-- Define a migration path for existing SQLite data, including workspaces, conversations, runs, run messages, artifacts, run logs, snapshots, feedback, and idempotency fields.
-- Preserve run-create idempotency guarantees with PostgreSQL unique constraints or equivalent transactional behavior.
-- Revisit startup interruption handling, queue consistency, and transaction isolation under PostgreSQL.
-- Add deployment configuration, local development setup, migration tooling, backup/restore notes, and rollback guidance.
-- Keep request-serving daemon database and filesystem operations asynchronous; offline migration tools may keep synchronous helpers where they do not block the daemon runtime.
-- Preserve SQLite only as a read-only migration source and historical backup after cutover.
+PostgreSQL runtime persistence is implemented. Remaining follow-up work:
+
+- Add a CI PostgreSQL test gate that sets `CI=true` and injects `CLAUDE_RUNNER_TEST_PG_URL`.
+- Validate backup/restore and operator runbook steps against the production-like deployment path.
+- Preserve SQLite only as a read-only migration source and historical backup.
 - Remove remaining SQLite-backed unit-test fixtures, schema/repository test references, and `createSqliteRunnerPersistence` usages after the PostgreSQL runtime cutover is fully validated, so the automated test suite no longer relies on the legacy backend.
 
 ### Queue Scale-Out

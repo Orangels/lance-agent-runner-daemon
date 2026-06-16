@@ -17,18 +17,18 @@ Use this branch to close the first-version landing-test loop after the PostgreSQ
 
 ### 1. Landing-Test Record
 
-- [ ] Create a dedicated landing-test evidence document under `docs/landing-test-roadmap-hardening/`.
-- [ ] Record the completed Gaclaw report-generation test:
-  - [ ] daemon branch/commit used.
-  - [ ] command/config used to start daemon.
-  - [ ] workspace id.
-  - [ ] run id.
-  - [ ] task start/end timestamps and total duration.
-  - [ ] artifact id, role, path, size, and sha256.
-  - [ ] webhook delivery id, attempt count, response status, and response preview.
-  - [ ] confirmation that daemon error log and runner stderr had no errors.
-  - [ ] confirmation that no daemon/runner/monitoring process remained after shutdown.
-- [ ] Add missing landing-test items still required by the roadmap:
+- [x] Create a dedicated landing-test evidence document under `docs/landing-test-roadmap-hardening/`.
+- [x] Record the completed Gaclaw report-generation test:
+  - [x] daemon branch/commit used.
+  - [x] command/config used to start daemon.
+  - [x] workspace id.
+  - [x] run id.
+  - [x] task start/end timestamps and total duration.
+  - [x] artifact id, role, path, size, and sha256.
+  - [x] webhook delivery id, attempt count, response status, and response preview.
+  - [x] confirmation that daemon error log and runner stderr had no errors.
+  - [x] confirmation that no daemon/runner/monitoring process remained after shutdown.
+- [x] Add missing landing-test items still required by the roadmap:
   - [ ] `workspace prepare`.
   - [ ] SSE event stream.
   - [ ] cancel flow.
@@ -42,19 +42,19 @@ Use this branch to close the first-version landing-test loop after the PostgreSQ
 
 ### 2. Roadmap Status Update
 
-- [ ] Update `docs/claude-code-runner-daemon-version-roadmap.md`.
-- [ ] Mark PostgreSQL runtime persistence as completed on `main`.
-- [ ] Mark webhook notifications as completed on `main`.
-- [ ] Keep remaining PostgreSQL work as follow-up cleanup:
-  - [ ] CI PostgreSQL test gate.
-  - [ ] SQLite test fixture removal.
-  - [ ] backup/restore and operator runbook validation.
-- [ ] Move completed webhook implementation details out of future backlog wording.
-- [ ] Keep true future webhook work listed as hardening candidates:
-  - [ ] delivery inspection APIs.
-  - [ ] default webhook administration.
-  - [ ] stronger DNS rebinding protection.
-  - [ ] delivery metrics.
+- [x] Update `docs/claude-code-runner-daemon-version-roadmap.md`.
+- [x] Mark PostgreSQL runtime persistence as completed on `main`.
+- [x] Mark webhook notifications as completed on `main`.
+- [x] Keep remaining PostgreSQL work as follow-up cleanup:
+  - [x] CI PostgreSQL test gate.
+  - [x] SQLite test fixture removal.
+  - [x] backup/restore and operator runbook validation.
+- [x] Move completed webhook implementation details out of future backlog wording.
+- [x] Keep true future webhook work listed as hardening candidates:
+  - [x] delivery inspection APIs.
+  - [x] default webhook administration.
+  - [x] stronger DNS rebinding protection.
+  - [x] delivery metrics.
 
 ### 3. SQLite Test Residual Cleanup
 
