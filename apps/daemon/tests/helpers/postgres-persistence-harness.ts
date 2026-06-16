@@ -27,8 +27,11 @@ export async function createPostgresPersistenceHarness(): Promise<PostgresPersis
     databaseUrl,
     persistence,
     async cleanup(): Promise<void> {
-      await persistence.close();
-      await releaseLock();
+      try {
+        await persistence.close();
+      } finally {
+        await releaseLock();
+      }
     },
   };
 }

@@ -291,7 +291,7 @@ git commit -m "test: isolate sqlite migration source fixtures"
 - Use: `apps/daemon/tests/helpers/postgres-persistence-harness.ts`
 - Use: `apps/daemon/tests/helpers/postgres-domain-fixtures.ts`
 
-- [ ] **Step 1: Wrap PostgreSQL-backed service tests with the same gate used by route tests**
+- [x] **Step 1: Wrap PostgreSQL-backed service tests with the same gate used by route tests**
 
 At the top of each converted service test file, use:
 
@@ -304,7 +304,7 @@ const postgresDescribe = requirePostgresTestUrl() === null ? describe.skip : des
 
 Then change the suite wrapper from `describe('run feedback service', callback)` to `postgresDescribe('run feedback service', callback)`. This keeps local no-PG behavior consistent with route tests while `pnpm test:daemon:pg` provides the hard merge gate through `CI=true`.
 
-- [ ] **Step 2: Replace SQLite setup and seed writes in `run-feedback-service.test.ts`**
+- [x] **Step 2: Replace SQLite setup and seed writes in `run-feedback-service.test.ts`**
 
 Change setup from:
 
@@ -390,7 +390,7 @@ try {
 }
 ```
 
-- [ ] **Step 3: Convert each small core service file's SQLite helpers**
+- [x] **Step 3: Convert each small core service file's SQLite helpers**
 
 Apply the same async conversion to every core service file in this task:
 
@@ -402,7 +402,7 @@ Apply the same async conversion to every core service file in this task:
 
 After conversion, none of these files should import from `../../src/db/connection.js`, `../../src/db/schema.js`, `../../src/db/repositories.js`, or `../../src/db/sqlite-persistence.js`.
 
-- [ ] **Step 4: Run the focused feedback test**
+- [x] **Step 4: Run the focused feedback test**
 
 Run:
 
@@ -412,7 +412,7 @@ CLAUDE_RUNNER_TEST_PG_URL="$CLAUDE_RUNNER_TEST_PG_URL" pnpm --filter @lance-agen
 
 Expected: pass on PostgreSQL.
 
-- [ ] **Step 5: Repeat the same pattern for workspace, artifact, run-log, and review-bundle services**
+- [x] **Step 5: Repeat the same pattern for workspace, artifact, run-log, and review-bundle services**
 
 Convert one file at a time, then run the focused file:
 
@@ -425,7 +425,7 @@ CLAUDE_RUNNER_TEST_PG_URL="$CLAUDE_RUNNER_TEST_PG_URL" pnpm --filter @lance-agen
 
 Expected: each file passes on PostgreSQL.
 
-- [ ] **Step 6: Commit the small service migration slice**
+- [x] **Step 6: Commit the small service migration slice**
 
 ```bash
 git add apps/daemon/tests/core apps/daemon/tests/helpers

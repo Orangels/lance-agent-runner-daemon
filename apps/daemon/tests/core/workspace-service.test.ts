@@ -1,13 +1,28 @@
-import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { ProfileConfig } from '../../src/config/profiles.js';
-import { openInMemoryDatabase } from '../../src/db/connection.js';
-import { applySchema } from '../../src/db/schema.js';
-import { createSqliteRunnerPersistence } from '../../src/db/sqlite-persistence.js';
 import { DaemonError } from '../../src/core/errors.js';
 import { createWorkspaceService, getWorkspaceCwd } from '../../src/core/workspace-service.js';
+import { createPostgresPersistenceHarness } from '../helpers/postgres-persistence-harness.js';
+import { requirePostgresTestUrl } from '../helpers/postgres.js';
+
+const postgresDescribe = requirePostgresTestUrl() === null ? describe.skip : describe;
+
+const tempRoots: string[] = [];
+let harness: Awaited<ReturnType<typeof createPostgresPersistenceHarness>> | null = null;
+
+afterEach(async () => {
+  try {
+    await harness?.cleanup();
+  } finally {
+    harness = null;
+    for (const root of tempRoots.splice(0)) {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
 
 function makeProfile(root: string, uploadsRoot: string): ProfileConfig {
   return {
@@ -33,14 +48,15 @@ function makeProfile(root: string, uploadsRoot: string): ProfileConfig {
   };
 }
 
-function setup() {
+async function setup() {
   const root = mkdtempSync(path.join(tmpdir(), 'runner-workspace-test-'));
+  tempRoots.push(root);
   const uploadsRoot = path.join(root, 'uploads');
   mkdirSync(uploadsRoot, { recursive: true });
   const profile = makeProfile(root, uploadsRoot);
-  const db = openInMemoryDatabase();
-  applySchema(db);
-  const persistence = createSqliteRunnerPersistence(db);
+  harness = await createPostgresPersistenceHarness();
+  expect(harness).not.toBeNull();
+  const persistence = harness!.persistence;
   const service = createWorkspaceService({
     persistence,
     ids: {
@@ -51,9 +67,9 @@ function setup() {
   return { root, uploadsRoot, profile, service };
 }
 
-describe('workspace creation', () => {
+postgresDescribe('workspace creation', () => {
   it('creates the workspace directory skeleton', async () => {
-    const { profile, service } = setup();
+    const { profile, service } = await setup();
 
     const workspace = await service.createOrGetWorkspace({
       clientId: 'lqbot',
@@ -77,7 +93,7 @@ describe('workspace creation', () => {
   });
 
   it('returns the existing workspace id on create-or-get', async () => {
-    const { profile, service } = setup();
+    const { profile, service } = await setup();
 
     await service.createOrGetWorkspace({
       clientId: 'lqbot',
@@ -94,7 +110,7 @@ describe('workspace creation', () => {
   });
 
   it('does not expose absolute workspace paths in the public response', async () => {
-    const { profile, service } = setup();
+    const { profile, service } = await setup();
 
     const workspace = await service.createOrGetWorkspace({
       clientId: 'lqbot',
@@ -106,9 +122,9 @@ describe('workspace creation', () => {
   });
 });
 
-describe('workspace prepare', () => {
+postgresDescribe('workspace prepare', () => {
   it('rejects source paths outside allowed input roots', async () => {
-    const { root, profile, service } = setup();
+    const { root, profile, service } = await setup();
     const workspace = await service.createOrGetWorkspace({
       clientId: 'lqbot',
       profile,
@@ -128,7 +144,7 @@ describe('workspace prepare', () => {
   });
 
   it('copies allowed source files to safe workspace-relative targets', async () => {
-    const { uploadsRoot, profile, service } = setup();
+    const { uploadsRoot, profile, service } = await setup();
     const workspace = await service.createOrGetWorkspace({
       clientId: 'lqbot',
       profile,
@@ -155,7 +171,7 @@ describe('workspace prepare', () => {
   });
 
   it('rejects duplicate workspace target paths before copying files concurrently', async () => {
-    const { uploadsRoot, profile, service } = setup();
+    const { uploadsRoot, profile, service } = await setup();
     const workspace = await service.createOrGetWorkspace({
       clientId: 'lqbot',
       profile,
@@ -180,7 +196,7 @@ describe('workspace prepare', () => {
   });
 
   it('rejects protected skill staging targets', async () => {
-    const { uploadsRoot, profile, service } = setup();
+    const { uploadsRoot, profile, service } = await setup();
     const workspace = await service.createOrGetWorkspace({
       clientId: 'lqbot',
       profile,
@@ -205,9 +221,9 @@ describe('workspace prepare', () => {
   });
 });
 
-describe('workspace uploaded file import', () => {
+postgresDescribe('workspace uploaded file import', () => {
   it('copies a daemon temp file to input/upload.docx and returns public file metadata', async () => {
-    const { root, profile, service } = setup();
+    const { root, profile, service } = await setup();
     const workspace = await service.createOrGetWorkspace({
       clientId: 'lqbot',
       profile,
@@ -246,7 +262,7 @@ describe('workspace uploaded file import', () => {
   });
 
   it('does not expose temp, workspace, sandbox, or allowed input paths in the response', async () => {
-    const { root, profile, service } = setup();
+    const { root, profile, service } = await setup();
     const workspace = await service.createOrGetWorkspace({
       clientId: 'lqbot',
       profile,
@@ -281,7 +297,7 @@ describe('workspace uploaded file import', () => {
   });
 
   it('overwrites an existing file at input/upload.docx', async () => {
-    const { root, profile, service } = setup();
+    const { root, profile, service } = await setup();
     const workspace = await service.createOrGetWorkspace({
       clientId: 'lqbot',
       profile,
@@ -317,7 +333,7 @@ describe('workspace uploaded file import', () => {
   });
 
   it('rejects targetPath input when input is an existing directory', async () => {
-    const { root, profile, service } = setup();
+    const { root, profile, service } = await setup();
     const workspace = await service.createOrGetWorkspace({
       clientId: 'lqbot',
       profile,
@@ -341,7 +357,7 @@ describe('workspace uploaded file import', () => {
   });
 
   it('rejects protected skill staging targets', async () => {
-    const { root, profile, service } = setup();
+    const { root, profile, service } = await setup();
     const workspace = await service.createOrGetWorkspace({
       clientId: 'lqbot',
       profile,
@@ -365,7 +381,7 @@ describe('workspace uploaded file import', () => {
   });
 
   it('returns not found when another client imports into this workspace', async () => {
-    const { root, profile, service } = setup();
+    const { root, profile, service } = await setup();
     const workspace = await service.createOrGetWorkspace({
       clientId: 'lqbot',
       profile,
