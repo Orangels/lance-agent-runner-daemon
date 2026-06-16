@@ -15,11 +15,11 @@ export function createLogsRouter(dependencies: CreateLogsRouterDependencies): Ro
   const router = Router({ mergeParams: true });
   const auth = requireAuth(dependencies.config);
 
-  router.get('/', auth, (request, response, next) => {
+  router.get('/', auth, async (request, response, next) => {
     try {
       const client = (request as AuthenticatedRequest).client;
       response.json(
-        dependencies.runLogService.getRunLogs({
+        await dependencies.runLogService.getRunLogs({
           client,
           runId: String(request.params.runId),
         }),
@@ -29,11 +29,11 @@ export function createLogsRouter(dependencies: CreateLogsRouterDependencies): Ro
     }
   });
 
-  router.get('/:kind/download', auth, (request, response, next) => {
+  router.get('/:kind/download', auth, async (request, response, next) => {
     try {
       const client = (request as AuthenticatedRequest).client;
       const kind = parseLogDownloadKind(String(request.params.kind));
-      const download = dependencies.runLogService.getRunLogDownload({
+      const download = await dependencies.runLogService.getRunLogDownload({
         client,
         kind,
         runId: String(request.params.runId),

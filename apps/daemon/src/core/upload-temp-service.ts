@@ -1,15 +1,15 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, readdirSync, rmSync, rmdirSync, statSync } from 'node:fs';
+import { mkdir, readdir, rm, rmdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { daemonError } from './errors.js';
 import { isPathInsideRoot } from './path-safety.js';
 
 export interface UploadTempService {
   getTempRoot(): string;
-  createUploadDirectory(): string;
+  createUploadDirectory(): Promise<string>;
   assertTempPath(filePath: string): string;
-  removeUploadPath(filePath: string): void;
-  pruneExpiredUploads(input?: { now?: number }): { removed: number };
+  removeUploadPath(filePath: string): Promise<void>;
+  pruneExpiredUploads(input?: { now?: number }): Promise<{ removed: number }>;
 }
 
 interface CreateUploadTempServiceInput {
@@ -24,8 +24,8 @@ interface CreateUploadTempServiceInput {
 export function createUploadTempService(serviceInput: CreateUploadTempServiceInput): UploadTempService {
   const tempRoot = path.resolve(path.join(serviceInput.config.server.dataDir, 'uploads', 'tmp'));
 
-  function ensureTempRoot(): void {
-    mkdirSync(tempRoot, { recursive: true });
+  async function ensureTempRoot(): Promise<void> {
+    await mkdir(tempRoot, { recursive: true });
   }
 
   function assertTempPath(filePath: string): string {
@@ -38,12 +38,12 @@ export function createUploadTempService(serviceInput: CreateUploadTempServiceInp
 
   return {
     getTempRoot: () => tempRoot,
-    createUploadDirectory: () => {
-      ensureTempRoot();
+    createUploadDirectory: async () => {
+      await ensureTempRoot();
       for (let attempt = 0; attempt < 10; attempt += 1) {
         const uploadDir = path.join(tempRoot, createUploadDirectoryName());
         try {
-          mkdirSync(uploadDir);
+          await mkdir(uploadDir);
           return uploadDir;
         } catch (error) {
           if (!isErrnoException(error) || error.code !== 'EEXIST') {
@@ -54,18 +54,18 @@ export function createUploadTempService(serviceInput: CreateUploadTempServiceInp
       throw new Error('Unable to create a unique upload directory');
     },
     assertTempPath,
-    removeUploadPath: (filePath) => {
+    removeUploadPath: async (filePath) => {
       const resolvedPath = assertTempPath(filePath);
       if (resolvedPath === tempRoot) {
         return;
       }
 
-      rmSync(resolvedPath, { recursive: true, force: true });
+      await rm(resolvedPath, { recursive: true, force: true });
 
       const parent = path.dirname(resolvedPath);
       if (parent !== tempRoot && isPathInsideRoot(tempRoot, parent)) {
         try {
-          rmdirSync(parent);
+          await rmdir(parent);
         } catch (error) {
           if (!isIgnorableRemoveDirectoryError(error)) {
             throw error;
@@ -73,13 +73,13 @@ export function createUploadTempService(serviceInput: CreateUploadTempServiceInp
         }
       }
     },
-    pruneExpiredUploads: (input = {}) => {
-      ensureTempRoot();
+    pruneExpiredUploads: async (input = {}) => {
+      await ensureTempRoot();
       const now = input.now ?? Date.now();
       const cutoff = now - serviceInput.config.server.uploadTempRetentionMs;
       let removed = 0;
 
-      for (const entry of readdirSync(tempRoot, { withFileTypes: true })) {
+      for (const entry of await readdir(tempRoot, { withFileTypes: true })) {
         if (!entry.isDirectory()) {
           continue;
         }
@@ -89,9 +89,9 @@ export function createUploadTempService(serviceInput: CreateUploadTempServiceInp
           continue;
         }
 
-        const childStat = statSync(childPath);
+        const childStat = await stat(childPath);
         if (childStat.mtimeMs < cutoff) {
-          rmSync(childPath, { recursive: true, force: true });
+          await rm(childPath, { recursive: true, force: true });
           removed += 1;
         }
       }

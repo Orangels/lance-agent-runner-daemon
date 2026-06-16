@@ -6,14 +6,13 @@ import { badRequest, daemonError, type DaemonError, notFound } from '../core/err
 import type { UploadWorkspaceFileResponse } from '../core/run-types.js';
 import type { UploadTempService } from '../core/upload-temp-service.js';
 import type { WorkspaceService } from '../core/workspace-service.js';
-import type { RunnerDatabase } from '../db/connection.js';
-import { getWorkspaceForClient } from '../db/repositories.js';
+import type { RunnerPersistence } from '../db/types.js';
 import { requireAuth, type AuthenticatedRequest } from './auth-middleware.js';
 import { workspaceUploadFieldsSchema } from './validation.js';
 
 interface CreateWorkspaceFilesRouterDependencies {
   config: DaemonConfig;
-  db: RunnerDatabase;
+  persistence: RunnerPersistence;
   workspaceService: WorkspaceService;
   uploadTempService: UploadTempService;
 }
@@ -29,13 +28,15 @@ export function createWorkspaceFilesRouter(dependencies: CreateWorkspaceFilesRou
   const upload = multer({
     storage: multer.diskStorage({
       destination: (request, _file, callback) => {
-        try {
-          const uploadDir = dependencies.uploadTempService.createUploadDirectory();
-          (request as UploadRequest).uploadDir = uploadDir;
-          callback(null, uploadDir);
-        } catch (error) {
-          callback(error as Error, '');
-        }
+        dependencies.uploadTempService
+          .createUploadDirectory()
+          .then((uploadDir) => {
+            (request as UploadRequest).uploadDir = uploadDir;
+            callback(null, uploadDir);
+          })
+          .catch((error: unknown) => {
+            callback(error as Error, '');
+          });
       },
       filename: (_request, _file, callback) => {
         callback(null, 'file');
@@ -54,7 +55,7 @@ export function createWorkspaceFilesRouter(dependencies: CreateWorkspaceFilesRou
       try {
         await runUploadMiddleware(upload, uploadRequest, response);
       } catch (error) {
-        cleanupUploadPath(uploadRequest, dependencies.uploadTempService, true);
+        await cleanupUploadPath(uploadRequest, dependencies.uploadTempService, true);
         throw toUploadDaemonError(error) ?? error;
       }
 
@@ -68,7 +69,7 @@ export function createWorkspaceFilesRouter(dependencies: CreateWorkspaceFilesRou
         }
 
         const workspaceId = String(uploadRequest.params.workspaceId);
-        const workspace = getWorkspaceForClient(dependencies.db, {
+        const workspace = await dependencies.persistence.getWorkspaceForClient({
           workspaceId,
           clientId: client.id,
           isAdmin: client.isAdmin,
@@ -80,7 +81,7 @@ export function createWorkspaceFilesRouter(dependencies: CreateWorkspaceFilesRou
         requireProfileAccess(client, workspace.profileId);
         const profile = getProfile(dependencies.config, workspace.profileId);
         const sourcePath = dependencies.uploadTempService.assertTempPath(uploadRequest.file.path);
-        result = dependencies.workspaceService.prepareUploadedWorkspaceFile({
+        result = await dependencies.workspaceService.prepareUploadedWorkspaceFile({
           clientId: client.id,
           isAdmin: client.isAdmin,
           profile,
@@ -94,7 +95,11 @@ export function createWorkspaceFilesRouter(dependencies: CreateWorkspaceFilesRou
         operationError = error;
         throw error;
       } finally {
-        cleanupUploadPath(uploadRequest, dependencies.uploadTempService, operationError !== undefined);
+        await cleanupUploadPath(
+          uploadRequest,
+          dependencies.uploadTempService,
+          operationError !== undefined,
+        );
       }
 
       response.json(result);
@@ -142,17 +147,15 @@ function cleanupUploadPath(
   request: UploadRequest,
   uploadTempService: UploadTempService,
   suppressErrors: boolean,
-): void {
+): Promise<void> {
   const cleanupPath = request.file?.path ?? request.uploadDir;
   if (!cleanupPath) {
-    return;
+    return Promise.resolve();
   }
 
-  try {
-    uploadTempService.removeUploadPath(cleanupPath);
-  } catch (error) {
+  return uploadTempService.removeUploadPath(cleanupPath).catch((error: unknown) => {
     if (!suppressErrors) {
       throw error;
     }
-  }
+  });
 }

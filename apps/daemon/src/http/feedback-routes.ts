@@ -13,11 +13,11 @@ export function createFeedbackRouter(dependencies: CreateFeedbackRouterDependenc
   const router = Router({ mergeParams: true });
   const auth = requireAuth(dependencies.config);
 
-  router.get('/', auth, (request, response, next) => {
+  router.get('/', auth, async (request, response, next) => {
     try {
       const client = (request as AuthenticatedRequest).client;
       response.json({
-        feedback: dependencies.feedbackService.listRunFeedback({
+        feedback: await dependencies.feedbackService.listRunFeedback({
           client,
           runId: String(request.params.runId),
         }),
@@ -27,12 +27,12 @@ export function createFeedbackRouter(dependencies: CreateFeedbackRouterDependenc
     }
   });
 
-  router.post('/', auth, (request, response, next) => {
+  router.post('/', auth, async (request, response, next) => {
     try {
       const client = (request as AuthenticatedRequest).client;
       const body = createRunFeedbackRequestSchema.parse(request.body);
       response.status(201).json({
-        feedback: dependencies.feedbackService.createRunFeedback({
+        feedback: await dependencies.feedbackService.createRunFeedback({
           client,
           runId: String(request.params.runId),
           category: body.category,

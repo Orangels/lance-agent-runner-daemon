@@ -8,6 +8,7 @@ import type { RunService } from '../../src/core/run-service.js';
 import { createWorkspaceService } from '../../src/core/workspace-service.js';
 import { openInMemoryDatabase } from '../../src/db/connection.js';
 import { applySchema } from '../../src/db/schema.js';
+import { createSqliteRunnerPersistence } from '../../src/db/sqlite-persistence.js';
 import { createApp } from '../../src/http/app.js';
 
 const servers: Array<{ close: (callback: () => void) => void }> = [];
@@ -32,6 +33,9 @@ function makeConfig(root: string): DaemonConfig {
         dataDir: path.join(root, 'data'),
         globalConcurrency: 4,
         maxQueueSize: 100,
+        persistence: {
+          databaseUrl: 'postgres://user:pass@localhost:5432/lance_agent_daemon_test',
+        },
       },
       clients: [{ id: 'lqbot', apiKey: 'secret', allowedProfileIds: ['report-docx'] }],
       profiles: [
@@ -69,6 +73,7 @@ function memoryLogger() {
       info: (event: string, data: Record<string, unknown> = {}) => records.push({ level: 'info', event, data }),
       warn: (event: string, data: Record<string, unknown> = {}) => records.push({ level: 'warn', event, data }),
       error: (event: string, data: Record<string, unknown> = {}) => records.push({ level: 'error', event, data }),
+      flush: async () => {},
     },
     records,
   };
@@ -82,11 +87,12 @@ async function withApp(
   const config = makeConfig(root);
   const db = openInMemoryDatabase();
   applySchema(db);
+  const persistence = createSqliteRunnerPersistence(db);
   const { logger, records } = memoryLogger();
   const app = createApp({
     config,
-    db,
-    workspaceService: createWorkspaceService({ db }),
+    persistence,
+    workspaceService: createWorkspaceService({ persistence }),
     runService: input.runService as RunService | undefined,
     daemonLogger: logger,
   });

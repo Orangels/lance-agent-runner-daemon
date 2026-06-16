@@ -1,21 +1,16 @@
-import { copyFileSync, mkdirSync, statSync } from 'node:fs';
+import { copyFile, mkdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { ProfileConfig } from '../config/profiles.js';
 import type { PrepareWorkspaceFileRequest, WorkspaceIdentity } from './run-types.js';
 import { assertSafePathSegment, assertWorkspaceRelativePath, isPathInsideRoot, resolveUnderRoot } from './path-safety.js';
 import { createId } from './ids.js';
-import type { RunnerDatabase } from '../db/connection.js';
-import {
-  getWorkspaceForClient,
-  upsertWorkspace,
-  type WorkspaceRecord,
-} from '../db/repositories.js';
+import type { RunnerPersistence, WorkspaceRecord } from '../db/types.js';
 import { DaemonError, daemonError, notFound } from './errors.js';
 
 export interface WorkspaceService {
-  createOrGetWorkspace(input: CreateOrGetWorkspaceInput): PublicWorkspace;
-  prepareWorkspaceFiles(input: PrepareWorkspaceFilesInput): PreparedWorkspaceFiles;
-  prepareUploadedWorkspaceFile(input: PrepareUploadedWorkspaceFileInput): UploadedWorkspaceFileResult;
+  createOrGetWorkspace(input: CreateOrGetWorkspaceInput): Promise<PublicWorkspace>;
+  prepareWorkspaceFiles(input: PrepareWorkspaceFilesInput): Promise<PreparedWorkspaceFiles>;
+  prepareUploadedWorkspaceFile(input: PrepareUploadedWorkspaceFileInput): Promise<UploadedWorkspaceFileResult>;
 }
 
 export interface PublicWorkspace {
@@ -70,7 +65,7 @@ interface PrepareUploadedWorkspaceFileInput {
 }
 
 interface WorkspaceServiceDependencies {
-  db: RunnerDatabase;
+  persistence?: RunnerPersistence;
   ids?: {
     workspaceId?: () => string;
   };
@@ -80,11 +75,15 @@ interface WorkspaceServiceDependencies {
 export function createWorkspaceService(dependencies: WorkspaceServiceDependencies): WorkspaceService {
   const now = dependencies.clock ?? Date.now;
   const nextWorkspaceId = dependencies.ids?.workspaceId ?? (() => createId('ws'));
+  const persistence = dependencies.persistence;
+  if (!persistence) {
+    throw new Error('WorkspaceService requires persistence');
+  }
 
   return {
-    createOrGetWorkspace(input): PublicWorkspace {
+    async createOrGetWorkspace(input): Promise<PublicWorkspace> {
       assertWorkspaceIdentity(input.workspace);
-      const workspace = upsertWorkspace(dependencies.db, {
+      const workspace = await persistence.upsertWorkspace({
         id: nextWorkspaceId(),
         clientId: input.clientId,
         profileId: input.profile.id,
@@ -96,13 +95,13 @@ export function createWorkspaceService(dependencies: WorkspaceServiceDependencie
         now: now(),
       });
 
-      createWorkspaceSkeleton(input.profile, workspace);
+      await createWorkspaceSkeleton(input.profile, workspace);
 
       return toPublicWorkspace(workspace);
     },
 
-    prepareWorkspaceFiles(input): PreparedWorkspaceFiles {
-      const workspace = getWorkspaceForClient(dependencies.db, {
+    async prepareWorkspaceFiles(input): Promise<PreparedWorkspaceFiles> {
+      const workspace = await persistence.getWorkspaceForClient({
         workspaceId: input.workspaceId,
         clientId: input.clientId,
         isAdmin: input.isAdmin,
@@ -112,10 +111,13 @@ export function createWorkspaceService(dependencies: WorkspaceServiceDependencie
       }
 
       const cwd = getWorkspaceCwd(input.profile, workspace);
-      const files = input.files.map((file) => {
-        const sourcePath = resolveAllowedSourcePath(input.profile.allowedInputRoots, file.sourcePath);
-        return copyFileIntoWorkspace({ workspaceCwd: cwd, sourcePath, targetPath: file.targetPath });
-      });
+      assertNoDuplicateWorkspaceTargets(input.files);
+      const files = await Promise.all(
+        input.files.map((file) => {
+          const sourcePath = resolveAllowedSourcePath(input.profile.allowedInputRoots, file.sourcePath);
+          return copyFileIntoWorkspace({ workspaceCwd: cwd, sourcePath, targetPath: file.targetPath });
+        }),
+      );
 
       return {
         ...toPublicWorkspace(workspace),
@@ -123,8 +125,8 @@ export function createWorkspaceService(dependencies: WorkspaceServiceDependencie
       };
     },
 
-    prepareUploadedWorkspaceFile(input): UploadedWorkspaceFileResult {
-      const workspace = getWorkspaceForClient(dependencies.db, {
+    async prepareUploadedWorkspaceFile(input): Promise<UploadedWorkspaceFileResult> {
+      const workspace = await persistence.getWorkspaceForClient({
         workspaceId: input.workspaceId,
         clientId: input.clientId,
         isAdmin: input.isAdmin,
@@ -134,7 +136,7 @@ export function createWorkspaceService(dependencies: WorkspaceServiceDependencie
       }
 
       const cwd = getWorkspaceCwd(input.profile, workspace);
-      const file = copyFileIntoWorkspace({
+      const file = await copyFileIntoWorkspace({
         workspaceCwd: cwd,
         sourcePath: input.sourcePath,
         targetPath: input.targetPath,
@@ -163,11 +165,13 @@ export function getWorkspaceCwd(
   );
 }
 
-function createWorkspaceSkeleton(profile: ProfileConfig, workspace: WorkspaceRecord): void {
+async function createWorkspaceSkeleton(profile: ProfileConfig, workspace: WorkspaceRecord): Promise<void> {
   const cwd = getWorkspaceCwd(profile, workspace);
-  for (const directory of ['input', 'output', 'work', '.claude-runner-skills']) {
-    mkdirSync(resolveUnderRoot(cwd, directory), { recursive: true });
-  }
+  await Promise.all(
+    ['input', 'output', 'work', '.claude-runner-skills'].map((directory) =>
+      mkdir(resolveUnderRoot(cwd, directory), { recursive: true }),
+    ),
+  );
 }
 
 function assertWorkspaceIdentity(workspace: Pick<WorkspaceIdentity, 'originId' | 'userId' | 'projectId'>): void {
@@ -189,15 +193,28 @@ function resolveAllowedSourcePath(allowedInputRoots: readonly string[], sourcePa
   });
 }
 
-function copyFileIntoWorkspace(input: {
+function assertNoDuplicateWorkspaceTargets(files: readonly { targetPath: string }[]): void {
+  const seen = new Set<string>();
+  for (const file of files) {
+    const targetPath = assertWorkspaceRelativePath(file.targetPath);
+    if (seen.has(targetPath)) {
+      throw daemonError('BAD_REQUEST', 'Duplicate workspace target path', 400, {
+        targetPath,
+      });
+    }
+    seen.add(targetPath);
+  }
+}
+
+async function copyFileIntoWorkspace(input: {
   workspaceCwd: string;
   sourcePath: string;
   targetPath: string;
-}): PreparedWorkspaceFile {
+}): Promise<PreparedWorkspaceFile> {
   const targetPath = assertWorkspaceRelativePath(input.targetPath);
   const targetAbsolutePath = resolveUnderRoot(input.workspaceCwd, targetPath);
   try {
-    if (statSync(targetAbsolutePath).isDirectory()) {
+    if ((await stat(targetAbsolutePath)).isDirectory()) {
       throw daemonError('PATH_NOT_ALLOWED', 'Target path cannot be a directory', 400, {
         targetPath,
       });
@@ -211,9 +228,9 @@ function copyFileIntoWorkspace(input: {
     }
   }
 
-  mkdirSync(path.dirname(targetAbsolutePath), { recursive: true });
-  copyFileSync(input.sourcePath, targetAbsolutePath);
-  const size = statSync(targetAbsolutePath).size;
+  await mkdir(path.dirname(targetAbsolutePath), { recursive: true });
+  await copyFile(input.sourcePath, targetAbsolutePath);
+  const size = (await stat(targetAbsolutePath)).size;
   return { targetPath, size };
 }
 

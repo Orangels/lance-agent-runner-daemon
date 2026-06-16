@@ -12,6 +12,7 @@ const allEvents: RunEvent[] = [
   { type: 'text_delta', delta: 'hello' },
   { type: 'usage', usage: { input_tokens: 1 }, costUsd: null, durationMs: 10, stopReason: null },
   { type: 'error', message: 'failed', code: 'CLAUDE_CLI_FAILED' },
+  { type: 'warning', message: 'degraded', code: 'RUN_LOG_WRITE_FAILED' },
   {
     type: 'artifact_finalized',
     artifact: {
@@ -37,13 +38,14 @@ const allEvents: RunEvent[] = [
 ];
 
 describe('event visibility filtering', () => {
-  it('quiet includes status, text_delta, usage, error, artifact_finalized, and end', () => {
+  it('quiet includes status, text_delta, usage, error, warning, artifact_finalized, and end', () => {
     expect(filterRunEvents(allEvents, 'quiet').map((event) => event.type)).toEqual([
       'status',
       'assistant_message_start',
       'text_delta',
       'usage',
       'error',
+      'warning',
       'artifact_finalized',
       'end',
     ]);
@@ -56,6 +58,7 @@ describe('event visibility filtering', () => {
       'text_delta',
       'usage',
       'error',
+      'warning',
       'artifact_finalized',
       'end',
       'thinking_start',

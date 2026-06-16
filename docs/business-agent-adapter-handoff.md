@@ -8,9 +8,11 @@
 
 业务方需要实现三条路径：
 
-1. 报告生成，不订阅 SSE：创建 run，轮询状态，下载最终报告。
+1. 报告生成，优先使用 webhook：创建 run 时传入 webhook，由 daemon 主动通知状态变化，terminal 后下载最终报告。
 2. 报告生成，订阅 SSE：实时展示 agent 过程，terminal 后对账并下载报告。
 3. Chat 修改：在同一 workspace 上创建 revise run，修改已有报告并同步新产物。
+
+除非业务端暂时没有可被 daemon 访问的 callback 服务，否则不要把高频轮询作为主要任务完成通知机制。`GET /api/runs/:runId/status` 应保留为兜底恢复、人工对账、webhook 异常后的补偿查询。
 
 `apps/web` 只是测试台和流程示例。生产业务端应保存自己的业务 project / thread / message / artifact 状态，不要把 daemon 当成业务聊天数据库。
 
@@ -64,6 +66,8 @@ user_prompt
 assistant_content
 run_status
 artifact_ids_json
+daemon_idempotency_key
+webhook_event_ids_json     # 或使用单独 webhook_events 表保存已处理 eventId
 created_at
 updated_at
 ```
@@ -209,25 +213,30 @@ targetPath  workspace 相对路径，例如 input/source.docx
 报告业务后端默认优先接 `legacy + generate + report-gen`。只有当业务端需要传结构化报告上下文，
 或需要在 `revise` 中继续注入同一个业务 skill 时，再接 `business-context`。
 
-## 推荐流程 A：Generate + Poll
+## 推荐流程 A：Generate + Webhook
 
 这是报告生成的默认推荐流程。适合业务端只关心“任务是否结束、报告是否生成”，不展示实时 agent 输出。
+
+业务端应优先实现 webhook receiver，由 daemon 在 run 状态变化时主动 POST 业务端 callback。不要用高频轮询来判断任务是否完成；轮询只作为 webhook 失败、业务服务重启、人工排障或定时对账时的兜底。
 
 流程：
 
 ```text
 POST /api/runs
-  -> 得到 runId
+  -> 带 webhook
+  -> 得到 runId 并保存 daemon_run_id
 
-循环 GET /api/runs/:runId/status
-  -> terminal = false 继续等
-  -> terminal = true 停止轮询
+daemon worker POST webhook.url
+  -> 业务端按 eventId 幂等去重
+  -> 按 run.status 更新本地任务
+  -> terminal + primary artifact 时保存 artifact id/path/hash
 
-GET /api/runs/:runId/artifacts
-  -> 找 role=primary 的报告
+terminal 后如需下载文件：
+  -> GET /api/runs/:runId/artifacts/:artifactId/download
 
-GET /api/runs/:runId/artifacts/:artifactId/download
-  -> 下载报告
+兜底/对账：
+  -> GET /api/runs/:runId/status
+  -> GET /api/runs/:runId/artifacts
 ```
 
 创建 run：
@@ -241,11 +250,29 @@ GET /api/runs/:runId/artifacts/:artifactId/download
   "prompt": "请基于 input/source.docx 生成报告，输出到 output/report.docx。",
   "model": "sonnet",
   "artifactRuleIds": ["report-docx"],
+  "idempotencyKey": "business:task_001:1",
   "metadata": {
     "businessMessageId": "msg_001"
+  },
+  "webhook": {
+    "url": "http://192.168.88.20:8000/api/daemon/webhook",
+    "secret": "shared-webhook-secret",
+    "statuses": ["succeeded", "failed", "canceled", "interrupted"],
+    "metadata": {
+      "businessTaskId": "task_001",
+      "businessMessageId": "msg_001"
+    }
   }
 }
 ```
+
+Webhook 字段说明：
+
+- `webhook.url` 必须是 daemon 可以访问到的业务端 callback。当前内部部署默认允许 `http` 和 `192.168.88.0/24` 内网地址，实际范围由 daemon `server.webhooks` 配置控制。
+- `webhook.secret` 可选；传入后 daemon 会对 callback body 做 HMAC-SHA256 签名。业务端应校验签名和 timestamp。
+- `webhook.statuses` 未传时默认通知 terminal 状态：`succeeded/failed/canceled/interrupted`。报告后台任务通常只需要 terminal 状态；如果业务 UI 要显示排队/运行过程，可显式加入 `queued/running`。
+- `webhook.metadata` 会原样回传到 webhook payload，推荐放业务任务 id、消息 id、文档 id 等关联字段。不要放 API key、完整 prompt、用户隐私或大对象。
+- `idempotencyKey` 建议业务端在派发前生成并持久化。同一次业务派发崩溃恢复时复用同一个 key；用户主动重试或新建任务时换新 key。
 
 响应：
 
@@ -256,7 +283,68 @@ GET /api/runs/:runId/artifacts/:artifactId/download
 }
 ```
 
-轮询状态：
+业务端 webhook receiver 必须处理 daemon payload：
+
+```json
+{
+  "schemaVersion": "daemon.webhook.run.v1",
+  "eventId": "whd_xxx",
+  "eventType": "run.status_changed",
+  "createdAt": 1780000000000,
+  "deliveryAttempt": 1,
+  "run": {
+    "id": "run_xxx",
+    "workspaceId": "ws_xxx",
+    "profileId": "report-docx",
+    "clientId": "business-client",
+    "kind": "generate",
+    "skillId": "report-gen",
+    "status": "succeeded",
+    "queuedAt": 1780000000000,
+    "startedAt": 1780000005000,
+    "finishedAt": 1780000120000,
+    "errorCode": null,
+    "errorMessage": null,
+    "idempotencyKey": "business:task_001:1"
+  },
+  "artifacts": [
+    {
+      "id": "artifact_xxx",
+      "ruleId": "report-docx",
+      "role": "primary",
+      "relativePath": "output/report.docx",
+      "fileName": "report.docx",
+      "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "size": 123456,
+      "sha256": "..."
+    }
+  ],
+  "metadata": {
+    "businessTaskId": "task_001",
+    "businessMessageId": "msg_001"
+  }
+}
+```
+
+Receiver 处理顺序：
+
+1. 校验 `schemaVersion === "daemon.webhook.run.v1"` 和 `eventType === "run.status_changed"`。
+2. 如果配置了 `webhook.secret`，用 `<X-Daemon-Webhook-Timestamp>.<raw-json-body>` 校验 `X-Daemon-Webhook-Signature`。
+3. 用 `eventId` 或 `X-Daemon-Webhook-Id` 做幂等去重；已经处理过的 event 直接返回 `2xx`。
+4. 通过 `metadata.businessTaskId`、`run.id` 或 `run.idempotencyKey` 定位本地任务。
+5. 先持久化 webhook event，再更新本地任务状态。
+6. terminal 状态下优先保存 `role=primary` 或 `ruleId=report-docx` 的 artifact 摘要。
+7. 成功落库后返回任意 `2xx`。临时不可用返回 `429/5xx`，daemon 会重试；签名失败返回 `401/403`，daemon 不会重试。
+
+`deliveryAttempt` 只用于诊断，可能跳号，不能作为连续序列或业务状态机依据。业务端必须用 `eventId` 做幂等。
+
+Webhook 不改变 `POST /api/runs` 响应结构，也不替代 artifacts 下载接口。terminal webhook 只携带 artifact 摘要；需要文件内容时仍调用：
+
+```text
+GET /api/runs/run_xxx/artifacts/artifact_xxx/download
+```
+
+## 兜底流程：Status Poll
 
 ```text
 GET /api/runs/run_xxx/status
@@ -276,13 +364,22 @@ GET /api/runs/run_xxx/status
 }
 ```
 
-建议轮询间隔：
+Status Poll 只用于以下场景：
 
-- 常规：2-5 秒。
+- 业务端刚接入 webhook 前的临时验证。
+- webhook receiver 维护、异常、超时或重启后的补偿查询。
+- 定时对账任务检查长时间未完成的本地任务。
+- 人工排障时查看 daemon 当前状态。
+
+建议兜底轮询间隔：
+
+- 常规兜底：10-30 秒。
 - `queued` 可适当拉长。
-- `terminal=true` 后停止轮询。
+- `terminal=true` 后立即停止轮询。
 
-成功后获取 artifacts：
+daemon 会在 terminal 状态写入前尽量 flush 本次 run logs。极端慢盘或日志写入异常时，Claude 子进程结束到 `/status` 返回 `terminal=true` 之间可能有短暂尾延迟。业务端不需要改流程，只要继续轮询到 `terminal=true`。
+
+如果 webhook payload 中没有期望的 primary artifact，或业务端需要对账，可以 list artifacts：
 
 ```text
 GET /api/runs/run_xxx/artifacts
@@ -294,7 +391,7 @@ GET /api/runs/run_xxx/artifacts
 2. 没有 primary 时，再考虑 `role = "supporting"`。
 3. `role = "debug"` 只用于排查，不建议展示给普通用户。
 
-下载：
+下载仍使用：
 
 ```text
 GET /api/runs/run_xxx/artifacts/artifact_xxx/download
@@ -312,7 +409,7 @@ Content-Disposition: attachment; filename="<ascii-fallback>"; filename*=UTF-8''<
 
 适合需要实时展示 agent 过程的业务 UI。
 
-创建 run 与 Poll 流程相同。拿到 `runId` 后订阅：
+创建 run 与 Webhook 流程相同，可以同时传 `webhook`。拿到 `runId` 后订阅 SSE：
 
 ```text
 GET /api/runs/:runId/events
@@ -336,6 +433,7 @@ thinking_delta          thinking 增量，normal 可见
 tool_use                工具调用，normal 可见
 artifact_finalized      artifact 已扫描落库
 error                   run 错误
+warning                 非终态降级事件，例如 RUN_LOG_WRITE_FAILED
 end                     run 终态
 ```
 
@@ -345,6 +443,7 @@ end                     run 终态
 - 收到 `text_delta`：追加到当前 assistant 气泡。
 - 收到 `thinking_delta`：追加到当前 assistant thinking 区。
 - 收到 `artifact_finalized`：记录 artifact id，但仍建议 terminal 后再 list artifacts 对账。
+- 收到 `warning`：记录或忽略；不要把它当作 run failed。
 - 收到 `end`：关闭 SSE，然后调用：
 
 ```text
@@ -353,6 +452,8 @@ GET /api/runs/:runId/artifacts
 ```
 
 `GET /api/runs/:runId` 是 durable detail，用于 terminal 对账、SSE 断线恢复、历史查看。不要把 SSE 当长期历史存储。
+
+SSE 客户端必须容忍未知 `data.type`。daemon 可能新增非终态事件类型；业务端应使用默认分支忽略或记录未知事件，而不是抛错中断整个流。
 
 断线恢复：
 
@@ -401,7 +502,7 @@ Revise 规则：
 - 如果需要历史上下文，业务端把必要上下文总结进 `prompt`。
 - 修改发生在同一个 workspace 文件状态上，Claude 可以看到已有 `input/`、`work/`、`output/` 文件。
 
-Revise 后续可以走 SSE，也可以走 Poll。实时 chat UI 推荐 SSE；后台静默修改推荐 Poll。
+Revise 后续也优先使用 webhook 接收 terminal 通知。实时 chat UI 可同时订阅 SSE 展示过程；Poll 仍只作为 webhook/SSE 异常后的兜底对账。
 
 ## 流程 D：Business-context 报告多轮流程
 
@@ -493,6 +594,7 @@ GET /api/runs/:runId
 - 只需要最后一次 assistant 回复：取最后一条非空 assistant `content`。
 - 报告生成结果：以 artifacts/download 为准，assistant `content` 只作为过程摘要。
 - `thinkingContent` 只在允许可见性下返回；没有 thinking 时为空字符串。
+- `messages[].events` 与 SSE 使用同一类 RunEvent 结构，可能包含 `warning` 或后续新增事件类型；解析时也要容忍未知 `type`。
 
 ## 取消
 
@@ -544,6 +646,8 @@ GET /api/runs/:runId/logs
 
 该接口仅 `client.canReadLogs=true` 时可用，不建议暴露给普通用户。
 
+`RUN_LOG_WRITE_FAILED` 这类 warning 只表示日志诊断材料写入降级，不代表报告生成本身失败。业务端判断任务成功/失败仍以 run status、errorCode/errorMessage 和 artifacts 为准。
+
 ## Web Test Console 对照
 
 `apps/web` 是给业务方 Codex 看的参考实现：
@@ -551,16 +655,17 @@ GET /api/runs/:runId/logs
 | Web 操作 | 对应业务流程 |
 | --- | --- |
 | `Generate + SSE` | 创建 generate run，订阅 `/events`，实时渲染 agent 输出，terminal 后对账。 |
-| `Generate + Poll` | 创建 generate run，只轮询 `/status`，terminal 后读取 artifacts。 |
+| `Generate + Poll` | 历史/兜底参考：创建 generate run，轮询 `/status`，terminal 后读取 artifacts。生产业务端应优先使用 webhook。 |
 | `Revise` | legacy revise：同 workspace 创建 revise run，不传 `skillId`，修改已有报告。 |
 | 文件选择 | 循环调用 `POST /api/workspaces/:workspaceId/files`。 |
 | 下载按钮 | 调用 artifact download API。 |
 
-Web demo 不做生产鉴权、不保存业务数据库、不代表最终业务 UI。
+Web demo 不做生产鉴权、不保存业务数据库、不代表最终业务 UI。它当前包含 Poll/SSE 示例是为了便于本地调试和对账，不表示业务生产接入应高频轮询状态。
 
 ## 业务方不要做的事
 
-- 不要高频轮询 `GET /api/runs/:runId`；高频轮询使用 `/status`。
+- 不要把轮询作为主要任务完成通知机制；优先使用 webhook。`GET /api/runs/:runId/status` 只用于兜底恢复、对账和排障。
+- 不要高频轮询 `GET /api/runs/:runId`；完整 detail 接口只用于 terminal 对账、历史查看或诊断。
 - 不要把 SSE 当作长期历史存储。
 - 不要在 `legacy revise` 请求里传 `skillId`。
 - 不要在 `business-context` 请求里省略 `skillId`。
@@ -579,13 +684,14 @@ Web demo 不做生产鉴权、不保存业务数据库、不代表最终业务 U
 1. 能 `GET /api/profiles` 并选择正确 profile / skill。
 2. 能创建 workspace，并把 `workspaceId` 保存到业务项目。
 3. 能上传一个输入文件到 `input/`。
-4. 能创建 `kind=generate` run，并保存 `runId`。
-5. Poll 模式下只调用 `/status`，terminal 后再 list artifacts。
-6. 能选择 `role=primary` artifact 并下载，中文文件名可用。
-7. SSE 模式下能用 `fetch + ReadableStream` 读取 `event: agent`。
-8. 能在 SSE `end` 后调用 run detail 做 durable 对账。
-9. 能创建 legacy `kind=revise` run，且不传 `skillId`。
-10. 如果接入多轮报告业务 skill，能创建 `business-context revise` run，且显式传 `report-gen`。
-11. 能处理失败 run 的 `errorCode/errorMessage`。
-12. 能取消 queued/running run。
-13. 业务数据库能从 `business_project_id` 追溯到 `workspaceId/runId/artifactId`。
+4. 能创建 `kind=generate` run，传入 `webhook` 和 `idempotencyKey`，并保存 `runId`。
+5. Webhook receiver 能校验签名、按 `eventId` 幂等去重，并把 terminal 状态写回业务数据库。
+6. Terminal webhook 后能选择 `role=primary` artifact 并下载，中文文件名可用。
+7. Status Poll 只作为兜底：调用 `/status` 对账，terminal 后再 list artifacts。
+8. SSE 模式下能用 `fetch + ReadableStream` 读取 `event: agent`，并容忍未知事件类型。
+9. 能在 SSE `end` 后调用 run detail 做 durable 对账。
+10. 能创建 legacy `kind=revise` run，且不传 `skillId`，并同样优先用 webhook 接收 terminal 通知。
+11. 如果接入多轮报告业务 skill，能创建 `business-context revise` run，且显式传 `report-gen`。
+12. 能处理失败 run 的 `errorCode/errorMessage`。
+13. 能取消 queued/running run。
+14. 业务数据库能从 `business_project_id` 追溯到 `workspaceId/runId/artifactId/webhookEventId`。

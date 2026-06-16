@@ -6,10 +6,12 @@ import {
   upsertWorkspace,
 } from '../../src/db/repositories.js';
 import { applySchema } from '../../src/db/schema.js';
+import { createSqliteRunnerPersistence } from '../../src/db/sqlite-persistence.js';
 
 function setup() {
   const db = openInMemoryDatabase();
   applySchema(db);
+  const persistence = createSqliteRunnerPersistence(db);
   const workspace = upsertWorkspace(db, {
     id: 'ws_1',
     clientId: 'lqbot',
@@ -33,7 +35,7 @@ function setup() {
     now: 2000,
   });
   const service = createRunFeedbackService({
-    db,
+    persistence,
     clock: () => 3000,
     ids: { feedbackId: () => 'feedback_1' },
   });
@@ -46,10 +48,10 @@ const client = (input: Partial<RunFeedbackClient> = {}): RunFeedbackClient => ({
 });
 
 describe('run feedback service', () => {
-  it('stores sanitized feedback for a readable run', () => {
+  it('stores sanitized feedback for a readable run', async () => {
     const { service } = setup();
 
-    const feedback = service.createRunFeedback({
+    const feedback = await service.createRunFeedback({
       runId: 'run_1',
       client: client(),
       category: 'custom.selector',
@@ -74,21 +76,21 @@ describe('run feedback service', () => {
       },
       createdAt: 3000,
     });
-    expect(service.listRunFeedback({ runId: 'run_1', client: client() })).toEqual([feedback]);
+    await expect(service.listRunFeedback({ runId: 'run_1', client: client() })).resolves.toEqual([feedback]);
   });
 
-  it('returns not found for another non-admin client', () => {
+  it('returns not found for another non-admin client', async () => {
     const { service } = setup();
 
-    expect(() =>
+    await expect(
       service.createRunFeedback({
         runId: 'run_1',
         client: client({ id: 'other' }),
         category: 'prompt',
         message: 'Cannot see this run.',
       }),
-    ).toThrow(expect.objectContaining({ code: 'NOT_FOUND', status: 404 }));
-    expect(() => service.listRunFeedback({ runId: 'run_1', client: client({ id: 'other' }) })).toThrow(
+    ).rejects.toThrow(expect.objectContaining({ code: 'NOT_FOUND', status: 404 }));
+    await expect(service.listRunFeedback({ runId: 'run_1', client: client({ id: 'other' }) })).rejects.toThrow(
       expect.objectContaining({ code: 'NOT_FOUND', status: 404 }),
     );
   });

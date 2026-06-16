@@ -52,6 +52,12 @@ export type RunEvent =
       details?: unknown;
     }
   | {
+      type: 'warning';
+      message: string;
+      code?: string;
+      details?: unknown;
+    }
+  | {
       type: 'artifact_finalized';
       artifact: Omit<PublicArtifact, 'workspaceId'>;
     }

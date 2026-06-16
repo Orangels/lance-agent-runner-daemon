@@ -9,6 +9,7 @@ import { createWorkspaceService } from '../../src/core/workspace-service.js';
 import { openInMemoryDatabase } from '../../src/db/connection.js';
 import { createRunQueuedWithMessagesAndSnapshot, upsertWorkspace } from '../../src/db/repositories.js';
 import { applySchema } from '../../src/db/schema.js';
+import { createSqliteRunnerPersistence } from '../../src/db/sqlite-persistence.js';
 import { createApp } from '../../src/http/app.js';
 
 const servers: Array<{ close: (callback: () => void) => void }> = [];
@@ -30,6 +31,9 @@ function makeConfig(root: string): DaemonConfig {
         dataDir: path.join(root, 'data'),
         globalConcurrency: 4,
         maxQueueSize: 100,
+        persistence: {
+          databaseUrl: 'postgres://user:pass@localhost:5432/lance_agent_daemon_test',
+        },
       },
       clients: [
         { id: 'lqbot', apiKey: 'secret', allowedProfileIds: ['report-docx'], canReadLogs: true },
@@ -67,6 +71,7 @@ async function withApp(callback: (context: { baseUrl: string; config: DaemonConf
   const config = makeConfig(root);
   const db = openInMemoryDatabase();
   applySchema(db);
+  const persistence = createSqliteRunnerPersistence(db);
   const workspace = upsertWorkspace(db, {
     id: 'ws_1',
     clientId: 'lqbot',
@@ -91,9 +96,9 @@ async function withApp(callback: (context: { baseUrl: string; config: DaemonConf
   });
   const app = createApp({
     config,
-    db,
-    workspaceService: createWorkspaceService({ db }),
-    feedbackService: createRunFeedbackService({ db, clock: () => 3000, ids: { feedbackId: () => 'feedback_1' } }),
+    persistence,
+    workspaceService: createWorkspaceService({ persistence }),
+    feedbackService: createRunFeedbackService({ persistence, clock: () => 3000, ids: { feedbackId: () => 'feedback_1' } }),
   });
   const server = app.listen(0);
   servers.push(server);

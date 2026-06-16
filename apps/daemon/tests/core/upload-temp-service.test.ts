@@ -42,10 +42,10 @@ function setup(input: { uploadTempRetentionMs?: number } = {}) {
 }
 
 describe('upload temp service', () => {
-  it('creates temp root and one unique upload directory', () => {
+  it('creates temp root and one unique upload directory', async () => {
     const { dataDir, service } = setup();
 
-    const uploadDir = service.createUploadDirectory();
+    const uploadDir = await service.createUploadDirectory();
 
     expect(service.getTempRoot()).toBe(path.join(dataDir, 'uploads', 'tmp'));
     expect(statSync(service.getTempRoot()).isDirectory()).toBe(true);
@@ -54,9 +54,9 @@ describe('upload temp service', () => {
     expect(readdirSync(service.getTempRoot())).toEqual([path.basename(uploadDir)]);
   });
 
-  it('assertTempPath accepts a file under the upload directory', () => {
+  it('assertTempPath accepts a file under the upload directory', async () => {
     const { service } = setup();
-    const uploadDir = service.createUploadDirectory();
+    const uploadDir = await service.createUploadDirectory();
     const filePath = path.join(uploadDir, 'source.docx');
     writeFileSync(filePath, 'content');
 
@@ -76,49 +76,49 @@ describe('upload temp service', () => {
     }
   });
 
-  it('removeUploadPath deletes the file and empty per-upload directory', () => {
+  it('removeUploadPath deletes the file and empty per-upload directory', async () => {
     const { service } = setup();
-    const uploadDir = service.createUploadDirectory();
+    const uploadDir = await service.createUploadDirectory();
     const filePath = path.join(uploadDir, 'source.docx');
     writeFileSync(filePath, 'content');
 
-    service.removeUploadPath(filePath);
+    await service.removeUploadPath(filePath);
 
     expect(existsSync(filePath)).toBe(false);
     expect(existsSync(uploadDir)).toBe(false);
     expect(existsSync(service.getTempRoot())).toBe(true);
   });
 
-  it('pruneExpiredUploads removes old temp child directories', () => {
+  it('pruneExpiredUploads removes old temp child directories', async () => {
     const { service } = setup({ uploadTempRetentionMs: 1_000 });
-    const uploadDir = service.createUploadDirectory();
+    const uploadDir = await service.createUploadDirectory();
     writeFileSync(path.join(uploadDir, 'source.docx'), 'content');
     utimesSync(uploadDir, new Date(1_000), new Date(1_000));
 
-    const result = service.pruneExpiredUploads({ now: 3_000 });
+    const result = await service.pruneExpiredUploads({ now: 3_000 });
 
     expect(result).toEqual({ removed: 1 });
     expect(existsSync(uploadDir)).toBe(false);
   });
 
-  it('pruneExpiredUploads leaves fresh child directories intact', () => {
+  it('pruneExpiredUploads leaves fresh child directories intact', async () => {
     const { service } = setup({ uploadTempRetentionMs: 1_000 });
-    const uploadDir = service.createUploadDirectory();
+    const uploadDir = await service.createUploadDirectory();
     writeFileSync(path.join(uploadDir, 'source.docx'), 'content');
     utimesSync(uploadDir, new Date(2_500), new Date(2_500));
 
-    const result = service.pruneExpiredUploads({ now: 3_000 });
+    const result = await service.pruneExpiredUploads({ now: 3_000 });
 
     expect(result).toEqual({ removed: 0 });
     expect(existsSync(uploadDir)).toBe(true);
   });
 
-  it('pruneExpiredUploads does not remove the temp root itself', () => {
+  it('pruneExpiredUploads does not remove the temp root itself', async () => {
     const { service } = setup({ uploadTempRetentionMs: 0 });
     mkdirSync(service.getTempRoot(), { recursive: true });
     utimesSync(service.getTempRoot(), new Date(1_000), new Date(1_000));
 
-    const result = service.pruneExpiredUploads({ now: 3_000 });
+    const result = await service.pruneExpiredUploads({ now: 3_000 });
 
     expect(result).toEqual({ removed: 0 });
     expect(existsSync(service.getTempRoot())).toBe(true);

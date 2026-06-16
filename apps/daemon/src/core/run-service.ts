@@ -7,27 +7,7 @@ import {
   type DaemonConfig,
   type ProfileConfig,
 } from '../config/profiles.js';
-import type { RunnerDatabase } from '../db/connection.js';
-import {
-  createRunQueuedWithMessagesAndSnapshot,
-  getConversationForWorkspace,
-  getRunByIdempotencyKey,
-  getRunDetail,
-  getRunForClient,
-  getWorkspaceForClient,
-  isSqliteUniqueConstraintError,
-  listConversationMessagesForPrompt,
-  listRunsForClient,
-  updateAssistantMessageTerminal,
-  updateRunPromptSnapshotFields,
-  updateRunStarted,
-  updateRunTerminal,
-  upsertRunPromptSnapshot,
-  upsertRunSkillSnapshot,
-  type RunDetailRecord,
-  type RunRecord,
-  type WorkspaceRecord,
-} from '../db/repositories.js';
+import type { RunnerPersistence, RunDetailRecord, RunRecord, WorkspaceRecord } from '../db/types.js';
 import { createArtifactService, type ArtifactService } from './artifact-service.js';
 import { buildClaudeInvocation, type ClaudeInvocation } from './claude-adapter.js';
 import {
@@ -42,12 +22,14 @@ import {
 import { badRequest, daemonError, notFound } from './errors.js';
 import { createId } from './ids.js';
 import { createMessageAccumulator } from './message-accumulator.js';
+import { noopDaemonLogger, type DaemonLogger } from './daemon-logger.js';
 import { composeRunPrompt } from './prompt-composer.js';
 import { createSanitizedProfileSnapshot } from './profile-snapshot.js';
 import {
   createTextSnapshot,
   shouldPersistFullSnapshot,
   stableJsonHash,
+  stableJsonStringify,
 } from './snapshot-service.js';
 import {
   countQueued,
@@ -66,6 +48,7 @@ import {
   type ActivePromptMode,
   type CollectionMode,
   type ContextPolicy,
+  type CreateRunWebhookRequest,
   type CreateRunRequest,
   type EventVisibility,
   type ListRunsQuery,
@@ -78,6 +61,12 @@ import {
   type SkillRecord,
 } from './skill-registry.js';
 import { stageSkillIntoWorkspace, type StagedSkill } from './skill-staging.js';
+import {
+  buildWebhookRunStatusPayload,
+  webhookRunStatusEventType,
+  type WebhookRunStatusPayload,
+} from './webhook-payload.js';
+import { assertWebhookUrlAllowed, type WebhookDnsLookup } from './webhook-url-policy.js';
 import { getWorkspaceCwd } from './workspace-service.js';
 
 export interface BufferedRunEvent {
@@ -87,11 +76,13 @@ export interface BufferedRunEvent {
 
 export interface CreateRunServiceInput {
   config: DaemonConfig;
-  db: RunnerDatabase;
+  persistence?: RunnerPersistence;
   runnerFactory?: RunServiceRunnerFactory;
   artifactService?: ArtifactService;
   runLogService?: RunLogService;
+  daemonLogger?: DaemonLogger;
   capabilityProbe?: (profile: ProfileConfig) => Promise<ClaudeCapabilities>;
+  webhookLookup?: WebhookDnsLookup;
   clock?: () => number;
   timer?: RunServiceTimer;
   eventBufferTtlMs?: number;
@@ -101,21 +92,23 @@ export interface CreateRunServiceInput {
     conversationId?: () => string;
     userMessageId?: () => string;
     assistantMessageId?: () => string;
+    webhookId?: () => string;
+    webhookDeliveryId?: () => string;
   };
 }
 
 export interface RunService {
-  createRun(input: { client: ClientConfig; request: CreateRunRequest }): CreateRunResult;
-  listRuns(input: { client: ClientConfig; query?: ListRunsQuery }): RunRecord[];
-  getRunStatus(input: { client: ClientConfig; runId: string }): RunRecord;
-  getRunDetail(input: { client: ClientConfig; runId: string }): RunDetailRecord;
+  createRun(input: { client: ClientConfig; request: CreateRunRequest }): Promise<CreateRunResult>;
+  listRuns(input: { client: ClientConfig; query?: ListRunsQuery }): Promise<RunRecord[]>;
+  getRunStatus(input: { client: ClientConfig; runId: string }): Promise<RunRecord>;
+  getRunDetail(input: { client: ClientConfig; runId: string }): Promise<RunDetailRecord>;
   getRequestedEventVisibility(runId: string): EventVisibility | undefined;
-  replayRunEvents(input: { client: ClientConfig; runId: string; after?: string | null }): BufferedRunEvent[];
+  replayRunEvents(input: { client: ClientConfig; runId: string; after?: string | null }): Promise<BufferedRunEvent[]>;
   subscribeRunEvents(
     input: { client: ClientConfig; runId: string; after?: string | null },
     listener: (record: BufferedRunEvent) => void,
-  ): { replay: BufferedRunEvent[]; terminal: boolean; unsubscribe: () => void };
-  cancelRun(input: { client: ClientConfig; runId: string }): { ok: true };
+  ): Promise<{ replay: BufferedRunEvent[]; terminal: boolean; unsubscribe: () => void }>;
+  cancelRun(input: { client: ClientConfig; runId: string }): Promise<{ ok: true }>;
   shutdownActive(input?: { graceMs?: number }): Promise<{ interrupted: number }>;
 }
 
@@ -162,6 +155,7 @@ interface RunState {
   businessContext?: Record<string, unknown>;
   model?: string;
   requestEventVisibility?: EventVisibility;
+  webhook: RunStateWebhook | null;
   events: BufferedRunEvent[];
   nextEventId: number;
   subscribers: Set<(record: BufferedRunEvent) => void>;
@@ -176,6 +170,30 @@ interface RunState {
   finishing: boolean;
   terminal: boolean;
   cleanupTimer: unknown;
+}
+
+interface RunStateWebhook {
+  id: string;
+  statuses: RunStatus[];
+  metadata: unknown;
+}
+
+interface NormalizedWebhookRequest {
+  url: string;
+  secret: string | null;
+  statuses: RunStatus[];
+  metadata: unknown;
+}
+
+interface WebhookArtifactSummary {
+  id: string;
+  ruleId: string;
+  role: WebhookRunStatusPayload['artifacts'][number]['role'];
+  relativePath: string;
+  fileName: string;
+  mimeType: string | null;
+  size: number | null;
+  sha256: string | null;
 }
 
 const defaultTimer: RunServiceTimer = {
@@ -197,10 +215,18 @@ export function createRunService(input: CreateRunServiceInput): RunService {
   const nextConversationId = input.ids?.conversationId ?? (() => createId('conv'));
   const nextUserMessageId = input.ids?.userMessageId ?? (() => createId('msg'));
   const nextAssistantMessageId = input.ids?.assistantMessageId ?? (() => createId('msg'));
+  const nextWebhookId = input.ids?.webhookId ?? (() => createId('wh'));
+  const nextWebhookDeliveryId = input.ids?.webhookDeliveryId ?? (() => createId('whd'));
   const runnerFactory = input.runnerFactory ?? defaultRunnerFactory;
+  const resolvedPersistence = input.persistence;
+  if (!resolvedPersistence) {
+    throw new Error('RunService requires persistence');
+  }
+  const persistence = resolvedPersistence;
   const artifactService =
-    input.artifactService ?? createArtifactService({ config: input.config, db: input.db, clock: now });
-  const runLogService = input.runLogService ?? createRunLogService({ config: input.config, db: input.db });
+    input.artifactService ?? createArtifactService({ config: input.config, persistence, clock: now });
+  const runLogService = input.runLogService ?? createRunLogService({ config: input.config, persistence });
+  const daemonLogger = input.daemonLogger ?? noopDaemonLogger;
   const capabilityProbe =
     input.capabilityProbe ??
     ((profile: ProfileConfig) => probeClaudeCapabilities({ claudeBin: profile.claudeBin }));
@@ -292,10 +318,19 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     }
 
     const startedAt = now();
-    const run = updateRunStarted(input.db, { runId: state.runId, startedAt, now: startedAt });
+    const run = await persistence.transaction(async (tx) => {
+      const startedRun = await tx.updateRunStarted({ runId: state.runId, startedAt, now: startedAt });
+      await maybeCreateWebhookDelivery(tx, {
+        webhook: state.webhook,
+        run: startedRun,
+        status: 'running',
+        createdAt: startedAt,
+      });
+      return startedRun;
+    });
     state.queueStatus = 'running';
     state.accumulator = createMessageAccumulator({
-      db: input.db,
+      persistence,
       messageId: state.assistantMessageId,
       workspaceId: state.workspace.id,
       conversationId: state.conversationId,
@@ -305,8 +340,8 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       clock: { now },
       timer,
     });
-    state.accumulator.startRun({ startedAt });
-    state.logHandle = runLogService.openRunLogs({ runId: state.runId });
+    await state.accumulator.startRun({ startedAt });
+    state.logHandle = await runLogService.openRunLogs({ runId: state.runId });
     scheduleRunTimeout(state);
     emitRunEvent(state, { type: 'status', label: 'running' });
     let prompt = state.prompt;
@@ -356,12 +391,14 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     const conversationContext =
       state.promptMode === 'daemon-composed'
         ? buildConversationPromptContext(
-            listConversationMessagesForPrompt(input.db, {
+            (
+              await persistence.listConversationMessagesForPrompt({
               workspaceId: state.workspace.id,
               conversationId: state.conversationId,
               excludeRunId: state.runId,
               limit: normalizeContextPolicy(state.contextPolicy).recentMessages,
-            }).map((message) => ({ role: message.role, content: message.content })),
+              })
+            ).map((message) => ({ role: message.role, content: message.content })),
             state.contextPolicy,
           )
         : null;
@@ -395,7 +432,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     }
 
     const promptSnapshot = createTextSnapshot(prompt);
-    upsertRunPromptSnapshot(input.db, {
+    await persistence.upsertRunPromptSnapshot({
       runId: state.runId,
       promptSnapshot: persistFullSnapshots ? prompt : null,
       promptSnapshotHash: promptSnapshot.hash,
@@ -404,7 +441,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       persisted: persistFullSnapshots,
       now: startedAt,
     });
-    updateRunPromptSnapshotFields(input.db, {
+    await persistence.updateRunPromptSnapshotFields({
       runId: state.runId,
       promptSnapshotHash: promptSnapshot.hash,
       charCount: promptSnapshot.charCount,
@@ -415,7 +452,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
 
     if (resolvedSkill) {
       const skillBodySnapshot = createTextSnapshot(resolvedSkill.body);
-      upsertRunSkillSnapshot(input.db, {
+      await persistence.upsertRunSkillSnapshot({
         runId: state.runId,
         skillId: resolvedSkill.id,
         skillName: resolvedSkill.name,
@@ -520,6 +557,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     let finalStatus = result.status;
     let finalErrorCode = result.errorCode ?? null;
     let finalErrorMessage = result.errorMessage ?? null;
+    let finalizedArtifacts: WebhookArtifactSummary[] = [];
 
     if (options.finalizeArtifacts !== false) {
       try {
@@ -529,6 +567,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
           runId: state.runId,
           artifactRuleIds: state.artifactRuleIds,
         });
+        finalizedArtifacts = finalized.artifacts;
 
         for (const artifact of finalized.artifacts) {
           emitRunEvent(state, {
@@ -571,15 +610,33 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       }
     }
 
+    if (state.logHandle) {
+      try {
+        await state.logHandle.close();
+      } catch (error) {
+        daemonLogger.warn('run_log_write_failed', {
+          error,
+          runId: state.runId,
+        });
+        emitRunEvent(state, {
+          type: 'warning',
+          code: 'RUN_LOG_WRITE_FAILED',
+          message: 'Run log write failed.',
+        });
+      } finally {
+        state.logHandle = null;
+      }
+    }
+
     emitRunEvent(state, { type: 'end', status: finalStatus });
     const finishedAt = now();
     if (state.accumulator) {
-      state.accumulator.flushTerminal({
+      await state.accumulator.flushTerminal({
         runStatus: finalStatus,
         endedAt: finishedAt,
       });
     } else {
-      updateAssistantMessageTerminal(input.db, {
+      await persistence.updateAssistantMessageTerminal({
         messageId: state.assistantMessageId,
         runStatus: finalStatus,
         lastRunEventId: state.events.at(-1)?.id ?? null,
@@ -588,21 +645,28 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       });
     }
 
-    updateRunTerminal(input.db, {
-      runId: state.runId,
-      status: finalStatus,
-      finishedAt,
-      exitCode: result.exitCode,
-      signal: result.signal,
-      errorCode: finalErrorCode,
-      errorMessage: finalErrorMessage,
-      usage: state.accumulator?.getUsage() ?? null,
-      lastRunEventId: state.events.at(-1)?.id ?? null,
-      now: finishedAt,
+    await persistence.transaction(async (tx) => {
+      const terminalRun = await tx.updateRunTerminal({
+        runId: state.runId,
+        status: finalStatus,
+        finishedAt,
+        exitCode: result.exitCode,
+        signal: result.signal,
+        errorCode: finalErrorCode,
+        errorMessage: finalErrorMessage,
+        usage: state.accumulator?.getUsage() ?? null,
+        lastRunEventId: state.events.at(-1)?.id ?? null,
+        now: finishedAt,
+      });
+      await maybeCreateWebhookDelivery(tx, {
+        webhook: state.webhook,
+        run: terminalRun,
+        status: finalStatus,
+        createdAt: finishedAt,
+        artifacts: finalizedArtifacts,
+      });
     });
 
-    state.logHandle?.close();
-    state.logHandle = null;
     state.terminal = true;
     state.queueStatus = 'terminal';
     state.finishing = false;
@@ -679,8 +743,8 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     });
   }
 
-  function assertRunReadable(client: ClientConfig, runId: string): RunRecord {
-    const run = getRunForClient(input.db, { runId, clientId: client.id, isAdmin: client.isAdmin });
+  async function assertRunReadable(client: ClientConfig, runId: string): Promise<RunRecord> {
+    const run = await persistence.getRunForClient({ runId, clientId: client.id, isAdmin: client.isAdmin });
     if (!run) {
       throw notFound('Run not found');
     }
@@ -688,12 +752,12 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     return run;
   }
 
-  function replayIdempotentRun(replayInput: {
+  async function replayIdempotentRun(replayInput: {
     client: ClientConfig;
     existing: RunRecord;
     expectedFingerprint: string | null;
     requestConversationId?: string;
-  }): CreateRunResult {
+  }): Promise<CreateRunResult> {
     if (
       !replayInput.expectedFingerprint ||
       replayInput.existing.idempotencyFingerprint !== replayInput.expectedFingerprint
@@ -704,7 +768,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
         409,
       );
     }
-    const detail = getRunDetail(input.db, {
+    const detail = await persistence.getRunDetail({
       runId: replayInput.existing.id,
       clientId: replayInput.client.id,
       isAdmin: replayInput.client.isAdmin,
@@ -722,8 +786,45 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     };
   }
 
+  async function maybeCreateWebhookDelivery(
+    targetPersistence: RunnerPersistence,
+    input: {
+      webhook: RunStateWebhook | null;
+      run: RunRecord;
+      status: RunStatus;
+      createdAt: number;
+      artifacts?: WebhookArtifactSummary[];
+    },
+  ): Promise<void> {
+    if (!input.webhook || !input.webhook.statuses.includes(input.status)) {
+      return;
+    }
+
+    const deliveryId = nextWebhookDeliveryId();
+    const payload = buildWebhookRunStatusPayload({
+      eventId: deliveryId,
+      createdAt: input.createdAt,
+      deliveryAttempt: 1,
+      run: input.run,
+      artifacts: input.artifacts,
+      metadata: input.webhook.metadata,
+    });
+    await targetPersistence.createWebhookDeliveryForRunStatus({
+      id: deliveryId,
+      runId: input.run.id,
+      webhookId: input.webhook.id,
+      clientId: input.run.clientId,
+      eventType: webhookRunStatusEventType,
+      runStatus: input.status,
+      payload,
+      payloadSha256: stableJsonHash(payload),
+      nextAttemptAt: input.createdAt,
+      now: input.createdAt,
+    });
+  }
+
   return {
-    createRun({ client, request }) {
+    async createRun({ client, request }) {
       requireProfileAccess(client, request.profileId);
       const profile = getProfile(input.config, request.profileId);
 
@@ -746,6 +847,9 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       if (!currentPrompt) {
         throw badRequest(`${activePromptMode} promptMode requires a prompt`);
       }
+      if (request.webhook && !input.config.server.webhooks.enabled) {
+        throw badRequest('Webhooks are disabled', { reason: 'webhooks_disabled' });
+      }
 
       const selectedModel = request.model ?? profile.defaultModel;
       if (!isModelAllowed(profile, selectedModel)) {
@@ -755,7 +859,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
         });
       }
 
-      const workspace = getWorkspaceForClient(input.db, {
+      const workspace = await persistence.getWorkspaceForClient({
         workspaceId: request.workspaceId,
         clientId: client.id,
         isAdmin: client.isAdmin,
@@ -768,10 +872,10 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       }
       if (
         request.conversationId &&
-        !getConversationForWorkspace(input.db, {
+        !(await persistence.getConversationForWorkspace({
           conversationId: request.conversationId,
           workspaceId: workspace.id,
-        })
+        }))
       ) {
         throw badRequest('Conversation does not belong to requested workspace');
       }
@@ -785,6 +889,10 @@ export function createRunService(input: CreateRunServiceInput): RunService {
         request.businessContext === undefined ? null : stableJsonHash(request.businessContext);
       const persistBusinessContext =
         request.businessContext !== undefined && shouldPersistFullSnapshot(collectionMode);
+      const normalizedWebhook = normalizeWebhookRequest(request.webhook);
+      if (normalizedWebhook) {
+        validateWebhookMetadataSize(normalizedWebhook.metadata);
+      }
       const idempotencyFingerprint = request.idempotencyKey
         ? buildRunIdempotencyFingerprint({
             profileId: profile.id,
@@ -799,18 +907,19 @@ export function createRunService(input: CreateRunServiceInput): RunService {
             businessContextHash,
             model: selectedModel,
             artifactRuleIds: selectedArtifactRuleIds,
+            webhook: normalizedWebhook,
           })
         : null;
 
       if (request.idempotencyKey) {
-        const existing = getRunByIdempotencyKey(input.db, {
+        const existing = await persistence.getRunByIdempotencyKey({
           clientId: client.id,
           profileId: profile.id,
           workspaceId: workspace.id,
           idempotencyKey: request.idempotencyKey,
         });
         if (existing) {
-          return replayIdempotentRun({
+          return await replayIdempotentRun({
             client,
             existing,
             expectedFingerprint: idempotencyFingerprint,
@@ -819,9 +928,18 @@ export function createRunService(input: CreateRunServiceInput): RunService {
         }
       }
 
+      if (normalizedWebhook) {
+        await assertWebhookUrlAllowed({
+          url: normalizedWebhook.url,
+          config: input.config.server.webhooks,
+          lookup: input.webhookLookup,
+        });
+      }
+
       const runId = nextRunId();
       const sequence = nextSequence++;
       const assistantMessageId = nextAssistantMessageId();
+      const webhookId = normalizedWebhook ? nextWebhookId() : null;
 
       if (
         !canStartNewRun(profile, workspace, sequence) &&
@@ -830,47 +948,77 @@ export function createRunService(input: CreateRunServiceInput): RunService {
         throw daemonError('RUN_QUEUE_FULL', 'Run queue is full', 429);
       }
 
-      let created: ReturnType<typeof createRunQueuedWithMessagesAndSnapshot>;
+      let created: Awaited<ReturnType<RunnerPersistence['createRunQueuedWithMessagesAndSnapshot']>>;
+      let webhook: RunStateWebhook | null = null;
       try {
-        created = createRunQueuedWithMessagesAndSnapshot(input.db, {
-          runId,
-          conversationId: request.conversationId,
-          defaultConversationId: nextConversationId(),
-          userMessageId: nextUserMessageId(),
-          assistantMessageId,
-          workspaceId: workspace.id,
-          profileId: profile.id,
-          clientId: client.id,
-          kind: request.kind,
-          skillId: request.skillId,
-          prompt: currentPrompt,
-          promptMode: activePromptMode,
-          currentPrompt,
-          contextPolicy: request.contextPolicy,
-          collectionMode,
-          businessContext: request.businessContext,
-          businessContextHash,
-          persistBusinessContext,
-          artifactRuleIds: selectedArtifactRuleIds,
-          idempotencyKey: request.idempotencyKey,
-          idempotencyFingerprint,
-          metadata: request.metadata,
-          profileSnapshot: createSanitizedProfileSnapshot(profile, {
-            selectedModel,
-            selectedArtifactRuleIds,
-          }),
-          now: now(),
+        const createResult = await persistence.transaction(async (tx) => {
+          const createdRun = await tx.createRunQueuedWithMessagesAndSnapshot({
+            runId,
+            conversationId: request.conversationId,
+            defaultConversationId: nextConversationId(),
+            userMessageId: nextUserMessageId(),
+            assistantMessageId,
+            workspaceId: workspace.id,
+            profileId: profile.id,
+            clientId: client.id,
+            kind: request.kind,
+            skillId: request.skillId,
+            prompt: currentPrompt,
+            promptMode: activePromptMode,
+            currentPrompt,
+            contextPolicy: request.contextPolicy,
+            collectionMode,
+            businessContext: request.businessContext,
+            businessContextHash,
+            persistBusinessContext,
+            artifactRuleIds: selectedArtifactRuleIds,
+            idempotencyKey: request.idempotencyKey,
+            idempotencyFingerprint,
+            metadata: request.metadata,
+            profileSnapshot: createSanitizedProfileSnapshot(profile, {
+              selectedModel,
+              selectedArtifactRuleIds,
+            }),
+            now: now(),
+          });
+          let createdWebhook: RunStateWebhook | null = null;
+          if (normalizedWebhook && webhookId) {
+            const storedWebhook = await tx.insertRunWebhook({
+              id: webhookId,
+              runId: createdRun.run.id,
+              clientId: client.id,
+              url: normalizedWebhook.url,
+              secret: normalizedWebhook.secret,
+              statuses: normalizedWebhook.statuses,
+              metadata: normalizedWebhook.metadata,
+              now: createdRun.run.createdAt,
+            });
+            createdWebhook = {
+              id: storedWebhook.id,
+              statuses: storedWebhook.statuses,
+              metadata: storedWebhook.metadata,
+            };
+            await maybeCreateWebhookDelivery(tx, {
+              webhook: createdWebhook,
+              run: createdRun.run,
+              status: 'queued',
+              createdAt: createdRun.run.createdAt,
+            });
+          }
+          return { createdRun, createdWebhook };
         });
+        created = createResult.createdRun;
+        webhook = createResult.createdWebhook;
       } catch (error) {
-        if (request.idempotencyKey && isSqliteUniqueConstraintError(error)) {
-          const existing = getRunByIdempotencyKey(input.db, {
+        if (request.idempotencyKey && persistence.isUniqueConstraintError(error)) {
+          const existing = await persistence.getRunByIdempotencyKey({
             clientId: client.id,
             profileId: profile.id,
             workspaceId: workspace.id,
             idempotencyKey: request.idempotencyKey,
           });
           if (existing) {
-            return replayIdempotentRun({
+            return await replayIdempotentRun({
               client,
               existing,
               expectedFingerprint: idempotencyFingerprint,
@@ -895,6 +1043,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
         businessContext: request.businessContext,
         model: request.model,
         requestEventVisibility: request.eventVisibility,
+        webhook,
         events: [],
         nextEventId: 1,
         subscribers: new Set(),
@@ -923,21 +1072,21 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       };
     },
 
-    listRuns({ client, query = {} }) {
-      return listRunsForClient(input.db, {
+    async listRuns({ client, query = {} }) {
+      return persistence.listRunsForClient({
         clientId: client.id,
         isAdmin: client.isAdmin,
         ...query,
       });
     },
 
-    getRunStatus({ client, runId }) {
+    async getRunStatus({ client, runId }) {
       return assertRunReadable(client, runId);
     },
 
-    getRunDetail({ client, runId }) {
-      assertRunReadable(client, runId);
-      const detail = getRunDetail(input.db, {
+    async getRunDetail({ client, runId }) {
+      await assertRunReadable(client, runId);
+      const detail = await persistence.getRunDetail({
         runId,
         clientId: client.id,
         isAdmin: client.isAdmin,
@@ -952,8 +1101,8 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       return states.get(runId)?.requestEventVisibility;
     },
 
-    replayRunEvents({ client, runId, after = null }) {
-      assertRunReadable(client, runId);
+    async replayRunEvents({ client, runId, after = null }) {
+      await assertRunReadable(client, runId);
       const state = states.get(runId);
       if (!state) {
         throw notFound('Run event stream not found');
@@ -961,8 +1110,8 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       return state.events.filter((record) => shouldReplayEventAfter(record.id, after));
     },
 
-    subscribeRunEvents({ client, runId, after = null }, listener) {
-      const replay = this.replayRunEvents({ client, runId, after });
+    async subscribeRunEvents({ client, runId, after = null }, listener) {
+      const replay = await this.replayRunEvents({ client, runId, after });
       const state = states.get(runId);
       if (!state) {
         throw notFound('Run event stream not found');
@@ -980,8 +1129,8 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       };
     },
 
-    cancelRun({ client, runId }) {
-      const run = assertRunReadable(client, runId);
+    async cancelRun({ client, runId }) {
+      const run = await assertRunReadable(client, runId);
       if (isTerminalRunStatus(run.status)) {
         throw daemonError('RUN_NOT_CANCELABLE', 'Run is not cancelable', 409);
       }
@@ -1068,8 +1217,9 @@ function buildRunIdempotencyFingerprint(input: {
   businessContextHash: string | null;
   model: string | null;
   artifactRuleIds: string[];
+  webhook: NormalizedWebhookRequest | null;
 }): string {
-  return stableJsonHash({
+  const fingerprint: Record<string, unknown> = {
     version: 1,
     profileId: input.profileId,
     workspaceId: input.workspaceId,
@@ -1083,11 +1233,48 @@ function buildRunIdempotencyFingerprint(input: {
     businessContextHash: input.businessContextHash,
     model: input.model,
     artifactRuleIds: input.artifactRuleIds,
-  });
+  };
+  if (input.webhook) {
+    fingerprint.webhook = {
+      url: input.webhook.url,
+      secretHash: input.webhook.secret ? hashSensitiveText(input.webhook.secret) : null,
+      statuses: input.webhook.statuses,
+      metadataHash: stableJsonHash(input.webhook.metadata ?? null),
+    };
+  }
+  return stableJsonHash(fingerprint);
 }
 
 function hashSensitiveText(value: string): string {
   return createHash('sha256').update(value).digest('hex');
+}
+
+function normalizeWebhookRequest(webhook: CreateRunWebhookRequest | undefined): NormalizedWebhookRequest | null {
+  if (!webhook) {
+    return null;
+  }
+  return {
+    url: webhook.url,
+    secret: webhook.secret ?? null,
+    statuses: webhook.statuses ?? ['succeeded', 'failed', 'canceled', 'interrupted'],
+    metadata: webhook.metadata ?? null,
+  };
+}
+
+const webhookMetadataMaxBytes = 16 * 1024;
+
+function validateWebhookMetadataSize(metadata: unknown): void {
+  if (metadata === null || metadata === undefined) {
+    return;
+  }
+  const byteCount = Buffer.byteLength(stableJsonStringify(metadata), 'utf8');
+  if (byteCount > webhookMetadataMaxBytes) {
+    throw badRequest('webhook metadata is too large', {
+      byteCount,
+      maxBytes: webhookMetadataMaxBytes,
+      reason: 'webhook_metadata_too_large',
+    });
+  }
 }
 
 function assertPromptModeRequestShape(

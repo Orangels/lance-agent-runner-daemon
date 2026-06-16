@@ -21,6 +21,7 @@ Relative filesystem paths inside the config file are resolved from the directory
 ```bash
 cp config.example.json .claude-runner/config.local.json
 export CLAUDE_RUNNER_LQBOT_API_KEY="replace-with-a-secret"
+export CLAUDE_RUNNER_DATABASE_URL="postgres://user:pass@localhost:5432/lance_agent_daemon"
 pnpm dev:daemon
 ```
 
@@ -60,18 +61,12 @@ Example:
 
 ### `server.dataDir`
 
-Daemon runtime data directory. The daemon stores SQLite, service logs, run logs, and upload temp files under this directory.
+Daemon runtime data directory. The daemon stores service logs, run logs, upload temp files, and workspace-local files under this directory.
 
 With the example value:
 
 ```json
 "dataDir": "data"
-```
-
-the SQLite file is:
-
-```text
-.claude-runner/data/runner.sqlite
 ```
 
 Service-level logs are written as JSON lines:
@@ -82,6 +77,25 @@ Service-level logs are written as JSON lines:
 ```
 
 `daemon.log` records daemon startup/shutdown, HTTP request summaries, and service events. `daemon-error.log` receives `warn` and `error` events, including local stack traces for unexpected daemon errors. These service logs are local files only; they are not exposed through the run logs API.
+
+### `server.persistence`
+
+Durable daemon persistence configuration.
+
+PostgreSQL is required after the persistence migration:
+
+```json
+"persistence": {
+  "databaseUrl": "env:CLAUDE_RUNNER_DATABASE_URL",
+  "poolMax": 10
+}
+```
+
+The daemon validates this config at startup and refuses to start if the env var is missing or if PostgreSQL migrations have not been applied. Use env indirection for shared environments so database credentials are not written into tracked config files.
+
+Runtime persistence operations use asynchronous PostgreSQL driver calls. SQLite is no longer a runtime backend after this migration; an existing `.claude-runner/data/runner.sqlite` file is preserved only as a migration source and historical backup.
+
+`poolMax` controls the maximum number of normal PostgreSQL connections held by the daemon's runtime pool. It defaults to `10`. Webhook `LISTEN/NOTIFY` uses its own dedicated listener connection when enabled, so plan connection capacity as `poolMax + 1` per daemon process.
 
 ### `server.globalConcurrency`
 
@@ -139,6 +153,55 @@ Example:
 ### `server.uploadTempRetentionMs`
 
 How long stale upload temp directories may remain before startup pruning removes them.
+
+### `server.webhooks`
+
+Run status webhook delivery settings. Webhooks are optional per `POST /api/runs`; when a run request omits `webhook`, no webhook rows are created and no delivery worker work is scheduled.
+
+Default internal deployment behavior:
+
+```json
+"webhooks": {
+  "enabled": true,
+  "allowInsecureHttp": true,
+  "allowPrivateNetworks": true,
+  "allowedPrivateCidrs": ["192.168.88.0/24"],
+  "allowedHosts": [],
+  "requestTimeoutMs": 5000,
+  "maxAttempts": 8,
+  "lockTimeoutMs": 30000,
+  "initialBackoffMs": 1000,
+  "maxBackoffMs": 300000,
+  "listenReconnectBackoffMs": 1000,
+  "listenKeepaliveMs": 15000,
+  "listenKeepaliveTimeoutMs": 5000,
+  "claimLimit": 5,
+  "maxConcurrentDeliveries": 5,
+  "stopGraceMs": 10000,
+  "responseBodyPreviewBytes": 4096
+}
+```
+
+| Key | Meaning |
+| --- | --- |
+| `enabled` | Starts the lightweight Node background worker that claims due webhook deliveries from PostgreSQL. |
+| `allowInsecureHttp` | Allows `http:` webhook URLs. Enabled by default for trusted LAN deployments. Disable for public deployments. |
+| `allowPrivateNetworks` | Allows private-network targets only when the resolved address is covered by `allowedPrivateCidrs` or the hostname is in `allowedHosts`. |
+| `allowedPrivateCidrs` | Private CIDR allowlist. The default includes `192.168.88.0/24` for the current LAN integration environment. |
+| `allowedHosts` | Explicit host allowlist. When non-empty, webhook hosts must match this list. |
+| `requestTimeoutMs` | Per-delivery HTTP timeout. |
+| `maxAttempts` | Maximum delivery attempts before the row is marked abandoned. |
+| `lockTimeoutMs` | Stale `delivering` lock reclaim window. Must be greater than `requestTimeoutMs`. |
+| `initialBackoffMs` / `maxBackoffMs` | Exponential retry backoff bounds for timeout, network error, `429`, and `5xx`. |
+| `listenReconnectBackoffMs` | Delay before reconnecting the dedicated PostgreSQL LISTEN connection after listener failure. This is not an outbox polling interval. |
+| `listenKeepaliveMs` | Interval for running a lightweight keepalive query on the same physical PostgreSQL LISTEN connection. |
+| `listenKeepaliveTimeoutMs` | Timeout for one listener keepalive query. Must be less than or equal to `listenKeepaliveMs`. |
+| `claimLimit` | Maximum due rows claimed per drain. Keep close to `maxConcurrentDeliveries` so claimed rows are processed well inside `lockTimeoutMs`. |
+| `maxConcurrentDeliveries` | Maximum concurrent HTTP webhook deliveries per daemon worker. |
+| `stopGraceMs` | Maximum shutdown wait for in-flight webhook HTTP requests before aborting and relying on durable outbox recovery. |
+| `responseBodyPreviewBytes` | Maximum webhook response-body tail bytes stored for diagnostics. Response preview reading is bounded and covered by `requestTimeoutMs`. |
+
+The worker uses PostgreSQL `LISTEN/NOTIFY` as a wake-up hint and claims work with `FOR UPDATE SKIP LOCKED`; it does not poll the outbox on a fixed interval. The URL policy performs DNS lookup before fetch and disables redirects. This is an SSRF guardrail for a trusted-caller deployment model, not a complete DNS-rebinding defense.
 
 ## `clients[]` Keys
 

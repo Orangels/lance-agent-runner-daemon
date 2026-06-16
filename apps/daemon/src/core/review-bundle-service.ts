@@ -1,16 +1,6 @@
-import { readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import type { DaemonConfig } from '../config/profiles.js';
-import type { RunnerDatabase } from '../db/connection.js';
-import {
-  getProfileSnapshotForRun,
-  getRunContextSnapshot,
-  getRunDetail,
-  getRunPromptSnapshot,
-  getRunSkillSnapshot,
-  listArtifactsForRun,
-  listRunFeedbackForClient,
-  type RunMessageRecord,
-} from '../db/repositories.js';
+import type { RunnerPersistence, RunMessageRecord, RunPromptSnapshotRecord } from '../db/types.js';
 import { daemonError, forbidden, notFound, type DaemonError } from './errors.js';
 import { sanitizeLogText, sanitizeReviewValue } from './log-sanitizer.js';
 import type { RunLogDownloadKind, RunLogService } from './run-log-service.js';
@@ -54,13 +44,17 @@ export interface ReviewBundleService {
 
 export interface CreateReviewBundleServiceInput {
   config: DaemonConfig;
-  db: RunnerDatabase;
+  persistence?: RunnerPersistence;
   runLogService: RunLogService;
   extensionProviders?: ReviewBundleExtensionProvider[];
 }
 
 export function createReviewBundleService(input: CreateReviewBundleServiceInput): ReviewBundleService {
   const providers = input.extensionProviders ?? [];
+  const persistence = input.persistence;
+  if (!persistence) {
+    throw new Error('ReviewBundleService requires persistence');
+  }
 
   return {
     createRunReviewBundle: async ({ runId, client }) => {
@@ -68,33 +62,42 @@ export function createReviewBundleService(input: CreateReviewBundleServiceInput)
         throw forbidden('Client is not allowed to export review bundles');
       }
 
-      const detail = getRunDetail(input.db, { runId, clientId: client.id, isAdmin: client.isAdmin });
+      const detail = await persistence.getRunDetail({ runId, clientId: client.id, isAdmin: client.isAdmin });
       if (!detail) {
         throw notFound('Run not found');
       }
 
       const missingFiles: string[] = [];
       const omittedFiles: Array<{ path: string; reason: string }> = [];
-      const logEntries = collectLogEntries({
+      const logEntries = await collectLogEntries({
         client,
         missingFiles,
         runId,
         runLogService: input.runLogService,
       });
-      const profileSnapshot = getProfileSnapshotForRun(input.db, runId);
-      const promptSnapshot = getRunPromptSnapshot(input.db, runId);
-      const skillSnapshot = getRunSkillSnapshot(input.db, runId);
-      const contextSnapshot = getRunContextSnapshot(input.db, runId);
-      const artifacts = listArtifactsForRun(input.db, {
-        runId,
-        clientId: client.id,
-        isAdmin: client.isAdmin,
-      });
-      const feedback = listRunFeedbackForClient(input.db, {
-        runId,
-        clientId: client.id,
-        isAdmin: client.isAdmin,
-      }) ?? [];
+      const [
+        profileSnapshot,
+        promptSnapshot,
+        skillSnapshot,
+        contextSnapshot,
+        artifacts,
+        feedback,
+      ] = await Promise.all([
+        persistence.getProfileSnapshotForRun(runId),
+        persistence.getRunPromptSnapshot(runId),
+        persistence.getRunSkillSnapshot(runId),
+        persistence.getRunContextSnapshot(runId),
+        persistence.listArtifactsForRun({
+          runId,
+          clientId: client.id,
+          isAdmin: client.isAdmin,
+        }),
+        persistence.listRunFeedbackForClient({
+          runId,
+          clientId: client.id,
+          isAdmin: client.isAdmin,
+        }),
+      ]);
       const extensions = (
         await Promise.all(providers.map((provider) => provider.collect({ runId, client })))
       ).flat();
@@ -179,7 +182,7 @@ export function createReviewBundleService(input: CreateReviewBundleServiceInput)
         },
         {
           path: 'feedback.jsonl',
-          content: feedback.map((record) => JSON.stringify(sanitizeReviewValue(record))).join('\n'),
+          content: (feedback ?? []).map((record) => JSON.stringify(sanitizeReviewValue(record))).join('\n'),
         },
         ...logEntries,
         ...extensions.map((entry) => ({ path: `extensions/${entry.path}`, content: entry.content })),
@@ -209,15 +212,15 @@ export function createReviewBundleService(input: CreateReviewBundleServiceInput)
   };
 }
 
-function collectLogEntries(input: {
+async function collectLogEntries(input: {
   runId: string;
   client: ReviewBundleClient;
   runLogService: RunLogService;
   missingFiles: string[];
-}): ZipEntry[] {
+}): Promise<ZipEntry[]> {
   const entries: ZipEntry[] = [];
   for (const kind of ['stdout', 'stderr'] satisfies RunLogDownloadKind[]) {
-    const entry = readLogEntry(input.runLogService, {
+    const entry = await readLogEntry(input.runLogService, {
       kind,
       runId: input.runId,
       client: input.client,
@@ -230,7 +233,7 @@ function collectLogEntries(input: {
     }
   }
   if (input.client.canReadDebugEvents) {
-    const entry = readLogEntry(input.runLogService, {
+    const entry = await readLogEntry(input.runLogService, {
       kind: 'debug-events',
       runId: input.runId,
       client: input.client,
@@ -245,15 +248,15 @@ function collectLogEntries(input: {
   return entries;
 }
 
-function readLogEntry(
+async function readLogEntry(
   runLogService: RunLogService,
   input: { runId: string; kind: RunLogDownloadKind; client: ReviewBundleClient; path: string },
-): ZipEntry | null {
+): Promise<ZipEntry | null> {
   try {
-    const download = runLogService.getRunLogDownload(input);
+    const download = await runLogService.getRunLogDownload(input);
     return {
       path: input.path,
-      content: sanitizeLogText(readFileSync(download.filePath, 'utf8')),
+      content: sanitizeLogText(await readFile(download.filePath, 'utf8')),
     };
   } catch (error) {
     if (isNotFoundError(error)) {
@@ -295,9 +298,7 @@ function toDebugMessage(message: RunMessageRecord): Record<string, unknown> {
   }) as Record<string, unknown>;
 }
 
-function buildPromptSnapshotMarkdown(
-  snapshot: ReturnType<typeof getRunPromptSnapshot>,
-): string {
+function buildPromptSnapshotMarkdown(snapshot: RunPromptSnapshotRecord | null): string {
   if (!snapshot) {
     return '# Prompt Snapshot\n\nNo prompt snapshot was recorded.\n';
   }

@@ -4,7 +4,7 @@ import { filterRunEvent, filterRunEvents, resolveEventVisibility } from '../core
 import type { RunService } from '../core/run-service.js';
 import type { RunEvent } from '../core/run-events.js';
 import { isTerminalRunStatus } from '../core/run-types.js';
-import type { RunDetailRecord, RunMessageRecord, RunRecord } from '../db/repositories.js';
+import type { RunDetailRecord, RunMessageRecord, RunRecord } from '../db/types.js';
 import { createSseResponse } from './sse.js';
 import {
   createRunRequestSchema,
@@ -22,43 +22,43 @@ export function createRunsRouter(dependencies: CreateRunsRouterDependencies): Ro
   const router = Router();
   const auth = requireAuth(dependencies.config);
 
-  router.post('/', auth, (request, response, next) => {
+  router.post('/', auth, async (request, response, next) => {
     try {
       const client = (request as AuthenticatedRequest).client;
       const body = createRunRequestSchema.parse(request.body);
-      response.status(202).json(dependencies.runService.createRun({ client, request: body }));
+      response.status(202).json(await dependencies.runService.createRun({ client, request: body }));
     } catch (error) {
       next(error);
     }
   });
 
-  router.get('/', auth, (request, response, next) => {
+  router.get('/', auth, async (request, response, next) => {
     try {
       const client = (request as AuthenticatedRequest).client;
       const query = listRunsQuerySchema.parse(request.query);
       response.json({
-        runs: dependencies.runService.listRuns({ client, query }).map(toPublicRunListItem),
+        runs: (await dependencies.runService.listRuns({ client, query })).map(toPublicRunListItem),
       });
     } catch (error) {
       next(error);
     }
   });
 
-  router.get('/:runId/status', auth, (request, response, next) => {
+  router.get('/:runId/status', auth, async (request, response, next) => {
     try {
       const client = (request as AuthenticatedRequest).client;
-      const run = dependencies.runService.getRunStatus({ client, runId: String(request.params.runId) });
+      const run = await dependencies.runService.getRunStatus({ client, runId: String(request.params.runId) });
       response.json(toPublicRunStatus(run));
     } catch (error) {
       next(error);
     }
   });
 
-  router.get('/:runId', auth, (request, response, next) => {
+  router.get('/:runId', auth, async (request, response, next) => {
     try {
       const client = (request as AuthenticatedRequest).client;
       const runId = String(request.params.runId);
-      const detail = dependencies.runService.getRunDetail({ client, runId });
+      const detail = await dependencies.runService.getRunDetail({ client, runId });
       const profile = getProfile(dependencies.config, detail.run.profileId);
       const visibility = resolveEventVisibility({
         client,
@@ -71,13 +71,13 @@ export function createRunsRouter(dependencies: CreateRunsRouterDependencies): Ro
     }
   });
 
-  router.get('/:runId/events', auth, (request, response, next) => {
+  router.get('/:runId/events', auth, async (request, response, next) => {
     try {
       const client = (request as AuthenticatedRequest).client;
       const runId = String(request.params.runId);
       const query = eventReplayQuerySchema.parse(request.query);
       const after = query.after ?? getLastEventId(request.headers['last-event-id']);
-      const run = dependencies.runService.getRunDetail({ client, runId }).run;
+      const run = (await dependencies.runService.getRunDetail({ client, runId })).run;
       const profile = getProfile(dependencies.config, run.profileId);
       const visibility = resolveEventVisibility({
         client,
@@ -85,7 +85,7 @@ export function createRunsRouter(dependencies: CreateRunsRouterDependencies): Ro
         request: { eventVisibility: dependencies.runService.getRequestedEventVisibility(runId) },
       });
       let sse: ReturnType<typeof createSseResponse>;
-      const subscription = dependencies.runService.subscribeRunEvents({ client, runId, after }, (record) => {
+      const subscription = await dependencies.runService.subscribeRunEvents({ client, runId, after }, (record) => {
         const event = filterRunEvent(record.event, visibility);
         if (event) {
           sse.send('agent', event, record.id);
@@ -112,10 +112,10 @@ export function createRunsRouter(dependencies: CreateRunsRouterDependencies): Ro
     }
   });
 
-  router.post('/:runId/cancel', auth, (request, response, next) => {
+  router.post('/:runId/cancel', auth, async (request, response, next) => {
     try {
       const client = (request as AuthenticatedRequest).client;
-      response.json(dependencies.runService.cancelRun({ client, runId: String(request.params.runId) }));
+      response.json(await dependencies.runService.cancelRun({ client, runId: String(request.params.runId) }));
     } catch (error) {
       next(error);
     }

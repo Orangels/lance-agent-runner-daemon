@@ -3,15 +3,7 @@ import path from 'node:path';
 import { requireProfileAccess } from '../config/auth.js';
 import type { ArtifactRuleConfig, ClientConfig, DaemonConfig, ProfileConfig } from '../config/profiles.js';
 import { getProfile } from '../config/profiles.js';
-import type { RunnerDatabase } from '../db/connection.js';
-import {
-  getArtifactForRunForClient,
-  getRunWithWorkspaceForClient,
-  listArtifactsForRun,
-  replaceArtifactsForRun,
-  type ArtifactRecord,
-  type WorkspaceRecord,
-} from '../db/repositories.js';
+import type { ArtifactRecord, RunnerPersistence, RunWithWorkspaceRecord, WorkspaceRecord } from '../db/types.js';
 import { scanArtifacts, type ScannedArtifact } from './artifact-scanner.js';
 import { badRequest, daemonError, notFound } from './errors.js';
 import { createId } from './ids.js';
@@ -36,7 +28,7 @@ export interface ArtifactService {
     runId: string;
     artifactRuleIds: string[];
   }): Promise<ArtifactFinalizationResult>;
-  listRunArtifacts(input: { client: ClientConfig; runId: string }): PublicArtifact[];
+  listRunArtifacts(input: { client: ClientConfig; runId: string }): Promise<PublicArtifact[]>;
   getRunArtifactDownload(input: {
     client: ClientConfig;
     runId: string;
@@ -59,7 +51,7 @@ export interface ArtifactDownload {
 
 export interface CreateArtifactServiceInput {
   config: DaemonConfig;
-  db: RunnerDatabase;
+  persistence?: RunnerPersistence;
   scanner?: (input: {
     workspaceCwd: string;
     rules: ArtifactRuleConfig[];
@@ -75,6 +67,10 @@ export function createArtifactService(input: CreateArtifactServiceInput): Artifa
   const now = input.clock ?? Date.now;
   const nextArtifactId = input.ids?.artifactId ?? (() => createId('artifact'));
   const scanner = input.scanner ?? scanArtifacts;
+  const persistence = input.persistence;
+  if (!persistence) {
+    throw new Error('ArtifactService requires persistence');
+  }
 
   function resolveSelectedArtifactRules({
     profile,
@@ -117,19 +113,21 @@ export function createArtifactService(input: CreateArtifactServiceInput): Artifa
       try {
         if (rules.length === 0) {
           return {
-            artifacts: replaceArtifactsForRun(input.db, {
+            artifacts: (
+              await persistence.replaceArtifactsForRun({
               runId: finalizeInput.runId,
               workspaceId: finalizeInput.workspace.id,
               artifacts: [],
               now: timestamp,
-            }).map(toPublicArtifact),
+              })
+            ).map(toPublicArtifact),
             missingRequiredRuleIds: [],
           };
         }
 
         const scanned = await scanner({ workspaceCwd, rules, now: timestamp });
         const selectedArtifacts = selectHighestPriorityArtifacts(scanned);
-        const artifacts = replaceArtifactsForRun(input.db, {
+        const artifacts = await persistence.replaceArtifactsForRun({
           runId: finalizeInput.runId,
           workspaceId: finalizeInput.workspace.id,
           artifacts: selectedArtifacts.map((artifact) => ({
@@ -160,18 +158,20 @@ export function createArtifactService(input: CreateArtifactServiceInput): Artifa
       }
     },
 
-    listRunArtifacts({ client, runId }): PublicArtifact[] {
-      const runWithWorkspace = getReadableRunWithWorkspace(input.db, input.config, client, runId);
-      return listArtifactsForRun(input.db, {
+    async listRunArtifacts({ client, runId }): Promise<PublicArtifact[]> {
+      const runWithWorkspace = await getReadableRunWithWorkspace(persistence, input.config, client, runId);
+      return (
+        await persistence.listArtifactsForRun({
         runId: runWithWorkspace.run.id,
         clientId: client.id,
         isAdmin: client.isAdmin,
-      }).map(toPublicArtifact);
+        })
+      ).map(toPublicArtifact);
     },
 
     async getRunArtifactDownload({ client, runId, artifactId }): Promise<ArtifactDownload> {
-      const runWithWorkspace = getReadableRunWithWorkspace(input.db, input.config, client, runId);
-      const artifact = getArtifactForRunForClient(input.db, {
+      const runWithWorkspace = await getReadableRunWithWorkspace(persistence, input.config, client, runId);
+      const artifact = await persistence.getArtifactForRunForClient({
         runId: runWithWorkspace.run.id,
         artifactId,
         clientId: client.id,
@@ -239,13 +239,13 @@ export function toPublicArtifact(artifact: ArtifactRecord): PublicArtifact {
   };
 }
 
-function getReadableRunWithWorkspace(
-  db: RunnerDatabase,
+async function getReadableRunWithWorkspace(
+  persistence: RunnerPersistence,
   config: DaemonConfig,
   client: ClientConfig,
   runId: string,
-): NonNullable<ReturnType<typeof getRunWithWorkspaceForClient>> {
-  const runWithWorkspace = getRunWithWorkspaceForClient(db, {
+): Promise<RunWithWorkspaceRecord> {
+  const runWithWorkspace = await persistence.getRunWithWorkspaceForClient({
     runId,
     clientId: client.id,
     isAdmin: client.isAdmin,

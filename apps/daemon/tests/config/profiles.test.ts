@@ -13,6 +13,9 @@ const validConfig = {
     dataDir: '/tmp/claude-runner-test/data',
     globalConcurrency: 4,
     maxQueueSize: 100,
+    persistence: {
+      databaseUrl: 'env:CLAUDE_RUNNER_DATABASE_URL',
+    },
   },
   clients: [
     {
@@ -57,21 +60,113 @@ const validConfig = {
   ],
 };
 
+function configEnv(overrides: Record<string, string | undefined> = {}): Record<string, string | undefined> {
+  return {
+    CLAUDE_RUNNER_TEST_KEY: 'secret-key',
+    CLAUDE_RUNNER_DATABASE_URL: 'postgres://user:pass@localhost:5432/lance_agent_daemon',
+    ...overrides,
+  };
+}
+
 describe('daemon config parsing', () => {
   it('accepts a minimal valid config with one client and one profile', () => {
     const config = parseDaemonConfig(validConfig, {
-      env: { CLAUDE_RUNNER_TEST_KEY: 'secret-key' },
+      env: configEnv(),
     });
 
     expect(config.server.port).toBe(17890);
+    expect(config.server.persistence).toEqual({
+      databaseUrl: 'postgres://user:pass@localhost:5432/lance_agent_daemon',
+      poolMax: 10,
+    });
     expect(config.server.logRetentionMs).toBe(7 * 24 * 60 * 60 * 1000);
     expect(config.server.maxLogBytesPerRun).toBe(4 * 1024 * 1024);
     expect(config.server.maxReviewBundleBytes).toBe(16 * 1024 * 1024);
     expect(config.server.maxUploadBytesPerFile).toBe(50 * 1024 * 1024);
     expect(config.server.uploadTempRetentionMs).toBe(24 * 60 * 60 * 1000);
+    expect(config.server.webhooks).toEqual({
+      enabled: true,
+      allowInsecureHttp: true,
+      allowPrivateNetworks: true,
+      allowedPrivateCidrs: ['192.168.88.0/24'],
+      allowedHosts: [],
+      requestTimeoutMs: 5000,
+      maxAttempts: 8,
+      lockTimeoutMs: 30000,
+      initialBackoffMs: 1000,
+      maxBackoffMs: 300000,
+      listenReconnectBackoffMs: 1000,
+      listenKeepaliveMs: 15000,
+      listenKeepaliveTimeoutMs: 5000,
+      claimLimit: 5,
+      maxConcurrentDeliveries: 5,
+      stopGraceMs: 10000,
+      responseBodyPreviewBytes: 4096,
+    });
     expect(config.clients[0]?.apiKey).toBe('secret-key');
     expect(config.profiles[0]?.id).toBe('report-docx');
     expect(config.profiles[0]?.maxCollectionMode).toBe('lite');
+  });
+
+  it('rejects configs without PostgreSQL persistence', () => {
+    const { persistence: _persistence, ...serverWithoutPersistence } = validConfig.server;
+
+    expect(() =>
+      parseDaemonConfig(
+        {
+          ...validConfig,
+          server: serverWithoutPersistence,
+        },
+        { env: configEnv() },
+      ),
+    ).toThrow(/persistence/);
+  });
+
+  it('rejects missing database URL env references without exposing the URL', () => {
+    expect(() =>
+      parseDaemonConfig(validConfig, {
+        env: configEnv({ CLAUDE_RUNNER_DATABASE_URL: undefined }),
+      }),
+    ).toThrow('Missing required environment variable for databaseUrl: CLAUDE_RUNNER_DATABASE_URL');
+  });
+
+  it('accepts explicit PostgreSQL pool size', () => {
+    const config = parseDaemonConfig(
+      {
+        ...validConfig,
+        server: {
+          ...validConfig.server,
+          persistence: {
+            ...validConfig.server.persistence,
+            poolMax: 4,
+          },
+        },
+      },
+      { env: configEnv() },
+    );
+
+    expect(config.server.persistence).toEqual({
+      databaseUrl: 'postgres://user:pass@localhost:5432/lance_agent_daemon',
+      poolMax: 4,
+    });
+  });
+
+  it('rejects invalid PostgreSQL pool sizes', () => {
+    expect(() =>
+      parseDaemonConfig(
+        {
+          ...validConfig,
+          server: {
+            ...validConfig.server,
+            persistence: {
+              ...validConfig.server.persistence,
+              poolMax: 0,
+            },
+          },
+        },
+        { env: configEnv() },
+      ),
+    ).toThrow(/poolMax/);
   });
 
   it('accepts explicit max collection modes', () => {
@@ -86,7 +181,7 @@ describe('daemon config parsing', () => {
             },
           ],
         },
-        { env: { CLAUDE_RUNNER_TEST_KEY: 'secret-key' } },
+        { env: configEnv() },
       );
 
       expect(config.profiles[0]?.maxCollectionMode).toBe(maxCollectionMode);
@@ -103,7 +198,7 @@ describe('daemon config parsing', () => {
           maxLogBytesPerRun: 1024,
         },
       },
-      { env: { CLAUDE_RUNNER_TEST_KEY: 'secret-key' } },
+      { env: configEnv() },
     );
 
     expect(config.server.logRetentionMs).toBe(3_600_000);
@@ -119,7 +214,7 @@ describe('daemon config parsing', () => {
           maxReviewBundleBytes: 2048,
         },
       },
-      { env: { CLAUDE_RUNNER_TEST_KEY: 'secret-key' } },
+      { env: configEnv() },
     );
 
     expect(config.server.maxReviewBundleBytes).toBe(2048);
@@ -135,11 +230,110 @@ describe('daemon config parsing', () => {
           uploadTempRetentionMs: 60_000,
         },
       },
-      { env: { CLAUDE_RUNNER_TEST_KEY: 'secret-key' } },
+      { env: configEnv() },
     );
 
     expect(config.server.maxUploadBytesPerFile).toBe(4096);
     expect(config.server.uploadTempRetentionMs).toBe(60_000);
+  });
+
+  it('accepts explicit webhook settings', () => {
+    const config = parseDaemonConfig(
+      {
+        ...validConfig,
+        server: {
+          ...validConfig.server,
+          webhooks: {
+            enabled: false,
+            allowInsecureHttp: false,
+            allowPrivateNetworks: true,
+            allowedPrivateCidrs: ['192.168.88.0/24', '10.0.0.0/8'],
+            allowedHosts: ['gaclaw-backend.local'],
+            requestTimeoutMs: 4000,
+            maxAttempts: 5,
+            lockTimeoutMs: 20000,
+            initialBackoffMs: 500,
+            maxBackoffMs: 60000,
+            listenReconnectBackoffMs: 2000,
+            listenKeepaliveMs: 12000,
+            listenKeepaliveTimeoutMs: 3000,
+            claimLimit: 6,
+            maxConcurrentDeliveries: 3,
+            stopGraceMs: 7000,
+            responseBodyPreviewBytes: 2048,
+          },
+        },
+      },
+      { env: configEnv() },
+    );
+
+    expect(config.server.webhooks).toEqual({
+      enabled: false,
+      allowInsecureHttp: false,
+      allowPrivateNetworks: true,
+      allowedPrivateCidrs: ['192.168.88.0/24', '10.0.0.0/8'],
+      allowedHosts: ['gaclaw-backend.local'],
+      requestTimeoutMs: 4000,
+      maxAttempts: 5,
+      lockTimeoutMs: 20000,
+      initialBackoffMs: 500,
+      maxBackoffMs: 60000,
+      listenReconnectBackoffMs: 2000,
+      listenKeepaliveMs: 12000,
+      listenKeepaliveTimeoutMs: 3000,
+      claimLimit: 6,
+      maxConcurrentDeliveries: 3,
+      stopGraceMs: 7000,
+      responseBodyPreviewBytes: 2048,
+    });
+  });
+
+  it('rejects invalid webhook settings', () => {
+    expect(() =>
+      parseDaemonConfig(
+        {
+          ...validConfig,
+          server: {
+            ...validConfig.server,
+            webhooks: {
+              lockTimeoutMs: 5000,
+              requestTimeoutMs: 5000,
+            },
+          },
+        },
+        { env: configEnv() },
+      ),
+    ).toThrow(/lockTimeoutMs/);
+
+    expect(() =>
+      parseDaemonConfig(
+        {
+          ...validConfig,
+          server: {
+            ...validConfig.server,
+            webhooks: {
+              allowedHosts: [''],
+            },
+          },
+        },
+        { env: configEnv() },
+      ),
+    ).toThrow(/allowedHosts/);
+
+    expect(() =>
+      parseDaemonConfig(
+        {
+          ...validConfig,
+          server: {
+            ...validConfig.server,
+            webhooks: {
+              maxConcurrentDeliveries: 0,
+            },
+          },
+        },
+        { env: configEnv() },
+      ),
+    ).toThrow(/maxConcurrentDeliveries/);
   });
 
   it('rejects invalid upload limits and temp retention', () => {
@@ -152,7 +346,7 @@ describe('daemon config parsing', () => {
             maxUploadBytesPerFile: 0,
           },
         },
-        { env: { CLAUDE_RUNNER_TEST_KEY: 'secret-key' } },
+        { env: configEnv() },
       ),
     ).toThrow(/maxUploadBytesPerFile/);
 
@@ -165,21 +359,27 @@ describe('daemon config parsing', () => {
             uploadTempRetentionMs: -1,
           },
         },
-        { env: { CLAUDE_RUNNER_TEST_KEY: 'secret-key' } },
+        { env: configEnv() },
       ),
     ).toThrow(/uploadTempRetentionMs/);
   });
 
   it('resolves client apiKey values from env references', () => {
     const config = parseDaemonConfig(validConfig, {
-      env: { CLAUDE_RUNNER_TEST_KEY: 'resolved-secret' },
+      env: configEnv({ CLAUDE_RUNNER_TEST_KEY: 'resolved-secret' }),
     });
 
     expect(config.clients[0]?.apiKey).toBe('resolved-secret');
   });
 
   it('rejects missing env references for client api keys', () => {
-    expect(() => parseDaemonConfig(validConfig, { env: {} })).toThrow(/CLAUDE_RUNNER_TEST_KEY/);
+    expect(() =>
+      parseDaemonConfig(validConfig, {
+        env: configEnv({
+          CLAUDE_RUNNER_TEST_KEY: undefined,
+        }),
+      }),
+    ).toThrow(/CLAUDE_RUNNER_TEST_KEY/);
   });
 
   it('rejects profile env keys outside the allowlist', () => {
@@ -196,7 +396,7 @@ describe('daemon config parsing', () => {
             },
           ],
         },
-        { env: { CLAUDE_RUNNER_TEST_KEY: 'secret-key' } },
+        { env: configEnv() },
       ),
     ).toThrow(/NODE_OPTIONS/);
   });
@@ -215,7 +415,7 @@ describe('daemon config parsing', () => {
             },
           ],
         },
-        { env: { CLAUDE_RUNNER_TEST_KEY: 'secret-key' } },
+        { env: configEnv() },
       ),
     ).toThrow(/CLAUDE_CONFIG_DIR/);
   });
@@ -241,7 +441,7 @@ describe('daemon config parsing', () => {
               },
             ],
           },
-          { env: { CLAUDE_RUNNER_TEST_KEY: 'secret-key' } },
+          { env: configEnv() },
         ),
       ).not.toThrow();
     }
@@ -265,7 +465,7 @@ describe('daemon config parsing', () => {
             },
           ],
         },
-        { env: { CLAUDE_RUNNER_TEST_KEY: 'secret-key' } },
+        { env: configEnv() },
       ),
     ).toThrow(/role/);
   });
@@ -283,7 +483,7 @@ describe('daemon config parsing', () => {
             },
           ],
         },
-        { env: { CLAUDE_RUNNER_TEST_KEY: 'secret-key' } },
+        { env: configEnv() },
       ),
     ).toThrow(/defaultModel/);
   });
@@ -292,7 +492,7 @@ describe('daemon config parsing', () => {
 describe('profile helpers', () => {
   it('looks up profiles, model access, and artifact rules', () => {
     const config = parseDaemonConfig(validConfig, {
-      env: { CLAUDE_RUNNER_TEST_KEY: 'secret-key' },
+      env: configEnv(),
     });
 
     const profile = getProfile(config, 'report-docx');

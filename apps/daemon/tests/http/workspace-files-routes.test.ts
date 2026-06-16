@@ -16,6 +16,7 @@ import { parseDaemonConfig, type DaemonConfig } from '../../src/config/profiles.
 import { createUploadTempService, type UploadTempService } from '../../src/core/upload-temp-service.js';
 import { createWorkspaceService, getWorkspaceCwd } from '../../src/core/workspace-service.js';
 import { openInMemoryDatabase } from '../../src/db/connection.js';
+import { createSqliteRunnerPersistence } from '../../src/db/sqlite-persistence.js';
 import { upsertWorkspace } from '../../src/db/repositories.js';
 import { applySchema } from '../../src/db/schema.js';
 import { createApp } from '../../src/http/app.js';
@@ -48,6 +49,9 @@ function makeConfig(root: string, input: { maxUploadBytesPerFile?: number } = {}
         globalConcurrency: 4,
         maxQueueSize: 100,
         maxUploadBytesPerFile: input.maxUploadBytesPerFile,
+        persistence: {
+          databaseUrl: 'postgres://user:pass@localhost:5432/lance_agent_daemon_test',
+        },
       },
       clients: [
         {
@@ -118,12 +122,13 @@ async function withApp(
   const config = makeConfig(root, input);
   const db = openInMemoryDatabase();
   applySchema(db);
+  const persistence = createSqliteRunnerPersistence(db);
   const workspaceService = createWorkspaceService({
-    db,
+    persistence,
     ids: { workspaceId: () => 'ws_1' },
     clock: () => 1000,
   });
-  const workspace = workspaceService.createOrGetWorkspace({
+  const workspace = await workspaceService.createOrGetWorkspace({
     clientId: 'lqbot',
     profile: config.profiles[0],
     workspace: { originId: 'lqbot', userId: 'user_1', projectId: 'project_123' },
@@ -141,7 +146,7 @@ async function withApp(
   const uploadTempService = createUploadTempService({ config });
   const app = createApp({
     config,
-    db,
+    persistence,
     workspaceService,
     uploadTempService,
   });

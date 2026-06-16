@@ -12,6 +12,31 @@ import { findDisallowedProfileEnvKeys } from './env.js';
 export const permissionModes = ['default', 'acceptEdits', 'bypassPermissions'] as const;
 export type PermissionMode = (typeof permissionModes)[number];
 
+export interface PersistenceConfig {
+  databaseUrl: string;
+  poolMax: number;
+}
+
+export interface WebhookConfig {
+  enabled: boolean;
+  allowInsecureHttp: boolean;
+  allowPrivateNetworks: boolean;
+  allowedPrivateCidrs: string[];
+  allowedHosts: string[];
+  requestTimeoutMs: number;
+  maxAttempts: number;
+  lockTimeoutMs: number;
+  initialBackoffMs: number;
+  maxBackoffMs: number;
+  listenReconnectBackoffMs: number;
+  listenKeepaliveMs: number;
+  listenKeepaliveTimeoutMs: number;
+  claimLimit: number;
+  maxConcurrentDeliveries: number;
+  stopGraceMs: number;
+  responseBodyPreviewBytes: number;
+}
+
 export interface ServerConfig {
   host: string;
   port: number;
@@ -23,6 +48,8 @@ export interface ServerConfig {
   maxReviewBundleBytes: number;
   maxUploadBytesPerFile: number;
   uploadTempRetentionMs: number;
+  persistence: PersistenceConfig;
+  webhooks: WebhookConfig;
 }
 
 export interface ClientConfig {
@@ -75,6 +102,47 @@ interface ParseDaemonConfigOptions {
 
 const nonEmptyString = z.string().min(1);
 
+const webhookSchema = z.preprocess(
+  (value) => (value === undefined ? {} : value),
+  z
+    .object({
+      enabled: z.boolean().default(true),
+      allowInsecureHttp: z.boolean().default(true),
+      allowPrivateNetworks: z.boolean().default(true),
+      allowedPrivateCidrs: z.array(nonEmptyString).default(['192.168.88.0/24']),
+      allowedHosts: z.array(nonEmptyString).default([]),
+      requestTimeoutMs: z.number().int().min(1).default(5000),
+      maxAttempts: z.number().int().min(1).default(8),
+      lockTimeoutMs: z.number().int().min(1).default(30000),
+      initialBackoffMs: z.number().int().min(0).default(1000),
+      maxBackoffMs: z.number().int().min(0).default(300000),
+      listenReconnectBackoffMs: z.number().int().min(1).default(1000),
+      listenKeepaliveMs: z.number().int().min(1).default(15000),
+      listenKeepaliveTimeoutMs: z.number().int().min(1).default(5000),
+      claimLimit: z.number().int().min(1).default(5),
+      maxConcurrentDeliveries: z.number().int().min(1).default(5),
+      stopGraceMs: z.number().int().min(0).default(10000),
+      responseBodyPreviewBytes: z.number().int().min(0).default(4096),
+    })
+    .strict()
+    .superRefine((value, context) => {
+      if (value.lockTimeoutMs <= value.requestTimeoutMs) {
+        context.addIssue({
+          code: 'custom',
+          message: 'lockTimeoutMs must be greater than requestTimeoutMs',
+          path: ['lockTimeoutMs'],
+        });
+      }
+      if (value.listenKeepaliveTimeoutMs > value.listenKeepaliveMs) {
+        context.addIssue({
+          code: 'custom',
+          message: 'listenKeepaliveTimeoutMs must be less than or equal to listenKeepaliveMs',
+          path: ['listenKeepaliveTimeoutMs'],
+        });
+      }
+    }),
+);
+
 const serverSchema = z
   .object({
     host: nonEmptyString,
@@ -87,6 +155,13 @@ const serverSchema = z
     maxReviewBundleBytes: z.number().int().min(1).default(16 * 1024 * 1024),
     maxUploadBytesPerFile: z.number().int().min(1).default(50 * 1024 * 1024),
     uploadTempRetentionMs: z.number().int().min(0).default(24 * 60 * 60 * 1000),
+    persistence: z
+      .object({
+        databaseUrl: nonEmptyString,
+        poolMax: z.number().int().min(1).default(10),
+      })
+      .strict(),
+    webhooks: webhookSchema,
   })
   .strict();
 
@@ -198,9 +273,20 @@ export function parseDaemonConfig(
 
   return {
     ...parsed,
+    server: {
+      ...parsed.server,
+      persistence: {
+        databaseUrl: resolveConfigEnvReference(
+          parsed.server.persistence.databaseUrl,
+          env,
+          'databaseUrl',
+        ),
+        poolMax: parsed.server.persistence.poolMax,
+      },
+    },
     clients: parsed.clients.map((client) => ({
       ...client,
-      apiKey: resolveConfigSecret(client.apiKey, env),
+      apiKey: resolveConfigEnvReference(client.apiKey, env, 'secret'),
     })),
   };
 }
@@ -225,9 +311,10 @@ export function getArtifactRule(profile: ProfileConfig, ruleId: string): Artifac
   return rule;
 }
 
-function resolveConfigSecret(
+function resolveConfigEnvReference(
   value: string,
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+  label: 'databaseUrl' | 'secret',
 ): string {
   if (!value.startsWith('env:')) {
     return value;
@@ -235,12 +322,12 @@ function resolveConfigSecret(
 
   const key = value.slice('env:'.length);
   if (!key) {
-    throw new Error('env: secret reference is missing a variable name');
+    throw new Error(`env: ${label} reference is missing a variable name`);
   }
 
   const resolved = env[key];
   if (!resolved) {
-    throw new Error(`Missing required environment variable for secret: ${key}`);
+    throw new Error(`Missing required environment variable for ${label}: ${key}`);
   }
 
   return resolved;

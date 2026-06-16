@@ -13,12 +13,20 @@ import {
   upsertWorkspace,
 } from '../../src/db/repositories.js';
 import { applySchema } from '../../src/db/schema.js';
+import { createSqliteRunnerPersistence } from '../../src/db/sqlite-persistence.js';
+import type {
+  CreateWebhookDeliveryForRunStatusInput,
+  InsertRunWebhookInput,
+  RunnerPersistence,
+} from '../../src/db/types.js';
 import { DaemonError } from '../../src/core/errors.js';
+import type { DaemonLogger } from '../../src/core/daemon-logger.js';
 import {
   buildClaudeRunInvocation,
   createRunService,
   type RunServiceRunnerFactory,
 } from '../../src/core/run-service.js';
+import type { RunLogService } from '../../src/core/run-log-service.js';
 import { createTextSnapshot, stableJsonHash } from '../../src/core/snapshot-service.js';
 import type { ClaudeCliRunResult } from '../../src/core/cli-runner.js';
 import { getWorkspaceCwd } from '../../src/core/workspace-service.js';
@@ -32,6 +40,9 @@ function makeConfig(root: string): DaemonConfig {
         dataDir: path.join(root, 'data'),
         globalConcurrency: 4,
         maxQueueSize: 100,
+        persistence: {
+          databaseUrl: 'postgres://user:pass@localhost:5432/lance_agent_daemon_test',
+        },
       },
       clients: [
         {
@@ -112,6 +123,9 @@ function setup(
   options: {
     capabilities?: Parameters<RunServiceRunnerFactory>[0]['capabilities'];
     configure?: (config: DaemonConfig) => void;
+    runLogService?: RunLogService;
+    daemonLogger?: DaemonLogger;
+    withWebhookSpy?: boolean;
   } = {},
 ) {
   const root = mkdtempSync(path.join(tmpdir(), 'runner-service-test-'));
@@ -119,6 +133,9 @@ function setup(
   options.configure?.(config);
   const db = openInMemoryDatabase();
   applySchema(db);
+  const sqlitePersistence = createSqliteRunnerPersistence(db);
+  const webhookSpies = options.withWebhookSpy ? createWebhookSpyPersistence(sqlitePersistence) : null;
+  const persistence = webhookSpies?.persistence ?? sqlitePersistence;
   const workspace = upsertWorkspace(db, {
     id: 'ws_1',
     clientId: 'lqbot',
@@ -151,8 +168,10 @@ function setup(
   };
   const service = createRunService({
     config,
-    db,
+    persistence,
     runnerFactory,
+    runLogService: options.runLogService,
+    daemonLogger: options.daemonLogger,
     capabilityProbe: async () => options.capabilities ?? {},
     timer: timerHarness.timer,
     clock: () => 5000,
@@ -171,7 +190,57 @@ function setup(
     },
   });
 
-  return { root, config, db, workspace, workspaceCwd, service, runners, ...timerHarness };
+  return { root, config, db, workspace, workspaceCwd, service, runners, webhookSpies, ...timerHarness };
+}
+
+function createWebhookSpyPersistence(base: RunnerPersistence) {
+  const insertRunWebhook = vi.fn(async (input: InsertRunWebhookInput) => ({
+    id: input.id,
+    runId: input.runId,
+    clientId: input.clientId,
+    url: input.url,
+    secret: input.secret ?? null,
+    statuses: input.statuses,
+    metadata: input.metadata ?? null,
+    createdAt: input.now,
+    updatedAt: input.now,
+  }));
+  const createWebhookDeliveryForRunStatus = vi.fn(
+    async (input: CreateWebhookDeliveryForRunStatusInput) => ({
+      id: input.id,
+      runId: input.runId,
+      webhookId: input.webhookId,
+      clientId: input.clientId,
+      eventType: input.eventType,
+      runStatus: input.runStatus,
+      deliveryStatus: 'pending' as const,
+      payload: input.payload,
+      payloadSha256: input.payloadSha256,
+      attemptCount: 0,
+      nextAttemptAt: input.nextAttemptAt,
+      lockedAt: null,
+      lockedBy: null,
+      lastAttemptAt: null,
+      deliveredAt: null,
+      responseStatus: null,
+      responseBodyPreview: null,
+      errorMessage: null,
+      createdAt: input.now,
+      updatedAt: input.now,
+    }),
+  );
+
+  function wrap(persistence: RunnerPersistence): RunnerPersistence {
+    return {
+      ...persistence,
+      transaction: async <T,>(fn: (tx: RunnerPersistence) => Promise<T>) =>
+        persistence.transaction((tx) => fn(wrap(tx))),
+      insertRunWebhook,
+      createWebhookDeliveryForRunStatus,
+    };
+  }
+
+  return { persistence: wrap(base), insertRunWebhook, createWebhookDeliveryForRunStatus };
 }
 
 async function runScheduledStart(runNextTimer: () => unknown): Promise<void> {
@@ -182,6 +251,7 @@ async function runScheduledStart(runNextTimer: () => unknown): Promise<void> {
 async function flushAsync(): Promise<void> {
   for (let index = 0; index < 10; index += 1) {
     await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 0));
   }
 }
 
@@ -209,7 +279,7 @@ describe('run service', () => {
   it('creates durable queued run data before starting the fake runner', async () => {
     const { config, db, workspace, service, runners, runNextTimer } = setup();
 
-    const result = service.createRun({
+    const result = await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -242,10 +312,10 @@ describe('run service', () => {
     expect(runners).toHaveLength(1);
   });
 
-  it('replays an existing run for the same idempotency key and fingerprint', () => {
+  it('replays an existing run for the same idempotency key and fingerprint', async () => {
     const { config, workspace, service, runners, pendingTimers } = setup();
 
-    const first = service.createRun({
+    const first = await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -257,7 +327,7 @@ describe('run service', () => {
         idempotencyKey: 'dispatch:1',
       },
     });
-    const second = service.createRun({
+    const second = await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -278,10 +348,10 @@ describe('run service', () => {
     expect(pendingTimers()).toHaveLength(1);
   });
 
-  it('stores a versioned idempotency fingerprint', () => {
+  it('stores a versioned idempotency fingerprint', async () => {
     const { config, db, workspace, service } = setup();
 
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -313,7 +383,175 @@ describe('run service', () => {
     );
   });
 
-  it('replays an existing idempotency key before queue capacity checks', () => {
+  it('stores run webhook config and creates a queued webhook delivery when requested', async () => {
+    const { config, workspace, service, webhookSpies } = setup({ withWebhookSpy: true });
+
+    await service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'generate',
+        skillId: 'report-writer',
+        prompt: 'Generate the report.',
+        webhook: {
+          url: 'http://192.168.88.20:8000/api/daemon/webhook',
+          secret: 'webhook-secret',
+          statuses: ['queued', 'running', 'succeeded'],
+          metadata: { businessTaskId: 'task_001' },
+        },
+      },
+    });
+
+    expect(webhookSpies?.insertRunWebhook).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 'run_1',
+        clientId: 'lqbot',
+        url: 'http://192.168.88.20:8000/api/daemon/webhook',
+        secret: 'webhook-secret',
+        statuses: ['queued', 'running', 'succeeded'],
+        metadata: { businessTaskId: 'task_001' },
+      }),
+    );
+    expect(webhookSpies?.createWebhookDeliveryForRunStatus).toHaveBeenCalledTimes(1);
+    expect(webhookSpies?.createWebhookDeliveryForRunStatus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 'run_1',
+        clientId: 'lqbot',
+        eventType: 'run.status_changed',
+        runStatus: 'queued',
+        payload: expect.objectContaining({
+          eventType: 'run.status_changed',
+          run: expect.objectContaining({ id: 'run_1', status: 'queued' }),
+          metadata: { businessTaskId: 'task_001' },
+        }),
+      }),
+    );
+  });
+
+  it('creates webhook deliveries for running and terminal status changes', async () => {
+    const { config, workspace, service, runners, runNextTimer, webhookSpies } = setup({
+      withWebhookSpy: true,
+    });
+
+    await service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'revise',
+        prompt: 'Revise.',
+        artifactRuleIds: [],
+        webhook: {
+          url: 'http://192.168.88.20:8000/api/daemon/webhook',
+          statuses: ['running', 'succeeded'],
+        },
+      },
+    });
+    await runScheduledStart(runNextTimer);
+    await vi.waitFor(() => expect(runners).toHaveLength(1));
+
+    runners[0]!.complete({
+      status: 'succeeded',
+      exitCode: 0,
+      signal: null,
+      stdoutTail: '',
+      stderrTail: '',
+    });
+    await flushAsync();
+
+    await vi.waitFor(() => {
+      const statuses = webhookSpies?.createWebhookDeliveryForRunStatus.mock.calls.map(
+        ([delivery]) => delivery.runStatus,
+      );
+      expect(statuses).toEqual(['running', 'succeeded']);
+    });
+    expect(webhookSpies?.createWebhookDeliveryForRunStatus.mock.calls[0]?.[0].payload).toEqual(
+      expect.objectContaining({
+        run: expect.objectContaining({ id: 'run_1', status: 'running' }),
+      }),
+    );
+    expect(webhookSpies?.createWebhookDeliveryForRunStatus.mock.calls[1]?.[0].payload).toEqual(
+      expect.objectContaining({
+        run: expect.objectContaining({ id: 'run_1', status: 'succeeded' }),
+      }),
+    );
+  });
+
+  it('rejects idempotency key reuse when webhook parameters differ', async () => {
+    const { config, workspace, service } = setup({ withWebhookSpy: true });
+
+    await service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'generate',
+        skillId: 'report-writer',
+        prompt: 'Generate the report.',
+        idempotencyKey: 'dispatch:1',
+        webhook: {
+          url: 'http://192.168.88.20:8000/api/daemon/webhook',
+          statuses: ['succeeded'],
+        },
+      },
+    });
+
+    await expect(
+      service.createRun({
+        client: config.clients[0]!,
+        request: {
+          profileId: 'report-docx',
+          workspaceId: workspace.id,
+          kind: 'generate',
+          skillId: 'report-writer',
+          prompt: 'Generate the report.',
+          idempotencyKey: 'dispatch:1',
+          webhook: {
+            url: 'http://192.168.88.21:8000/api/daemon/webhook',
+            statuses: ['succeeded'],
+          },
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: 'IDEMPOTENCY_KEY_CONFLICT',
+      status: 409,
+    });
+  });
+
+  it('replays an existing webhook run before applying current URL policy checks', async () => {
+    const { config, workspace, service } = setup({ withWebhookSpy: true });
+    const request = {
+      profileId: 'report-docx',
+      workspaceId: workspace.id,
+      kind: 'generate' as const,
+      skillId: 'report-writer',
+      prompt: 'Generate the report.',
+      idempotencyKey: 'dispatch:webhook-policy',
+      webhook: {
+        url: 'http://192.168.88.20:8000/api/daemon/webhook',
+        statuses: ['succeeded' as const],
+      },
+    };
+
+    const first = await service.createRun({
+      client: config.clients[0]!,
+      request,
+    });
+    config.server.webhooks.allowPrivateNetworks = false;
+
+    await expect(
+      service.createRun({
+        client: config.clients[0]!,
+        request,
+      }),
+    ).resolves.toEqual({
+      ...first,
+      idempotentReplay: true,
+    });
+  });
+
+  it('replays an existing idempotency key before queue capacity checks', async () => {
     const { config, workspace, service } = setup({
       configure: (config) => {
         config.server.globalConcurrency = 1;
@@ -321,7 +559,7 @@ describe('run service', () => {
       },
     });
 
-    const first = service.createRun({
+    const first = await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -333,7 +571,7 @@ describe('run service', () => {
         idempotencyKey: 'dispatch:1',
       },
     });
-    const replay = service.createRun({
+    const replay = await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -364,13 +602,13 @@ describe('run service', () => {
       artifactRuleIds: ['report-docx'],
       idempotencyKey: 'dispatch:1',
     };
-    const first = service.createRun({
+    const first = await service.createRun({
       client: config.clients[0]!,
       request,
     });
 
     await service.shutdownActive();
-    const replay = service.createRun({
+    const replay = await service.createRun({
       client: config.clients[0]!,
       request,
     });
@@ -380,10 +618,10 @@ describe('run service', () => {
     expect(replay.idempotentReplay).toBe(true);
   });
 
-  it('rejects reuse of an idempotency key with different run parameters', () => {
+  it('rejects reuse of an idempotency key with different run parameters', async () => {
     const { config, workspace, service } = setup();
 
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -396,7 +634,7 @@ describe('run service', () => {
       },
     });
 
-    expect(() =>
+    await expect(
       service.createRun({
         client: config.clients[0]!,
         request: {
@@ -409,16 +647,16 @@ describe('run service', () => {
           idempotencyKey: 'dispatch:1',
         },
       }),
-    ).toThrow(expect.objectContaining({
+    ).rejects.toThrow(expect.objectContaining({
       code: 'IDEMPOTENCY_KEY_CONFLICT',
       status: 409,
     }));
   });
 
-  it('creates a new run when idempotency key changes', () => {
+  it('creates a new run when idempotency key changes', async () => {
     const { config, workspace, service } = setup();
 
-    const first = service.createRun({
+    const first = await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -430,7 +668,7 @@ describe('run service', () => {
         idempotencyKey: 'dispatch:1',
       },
     });
-    const second = service.createRun({
+    const second = await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -447,10 +685,10 @@ describe('run service', () => {
     expect(second.idempotentReplay).toBeUndefined();
   });
 
-  it('does not apply idempotency when no idempotency key is provided', () => {
+  it('does not apply idempotency when no idempotency key is provided', async () => {
     const { config, workspace, service } = setup();
 
-    const first = service.createRun({
+    const first = await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -459,7 +697,7 @@ describe('run service', () => {
         prompt: 'Revise.',
       },
     });
-    const second = service.createRun({
+    const second = await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -472,7 +710,7 @@ describe('run service', () => {
     expect(second.runId).not.toBe(first.runId);
   });
 
-  it('rejects explicit conversation ids owned by a different workspace before inserting a run', () => {
+  it('rejects explicit conversation ids owned by a different workspace before inserting a run', async () => {
     const { config, db, workspace, service } = setup();
     const otherWorkspace = upsertWorkspace(db, {
       id: 'ws_2',
@@ -483,7 +721,7 @@ describe('run service', () => {
       projectId: 'project_123',
       now: 1000,
     });
-    const otherRun = service.createRun({
+    const otherRun = await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -494,7 +732,7 @@ describe('run service', () => {
       },
     });
 
-    expect(() =>
+    await expect(
       service.createRun({
         client: config.clients[0]!,
         request: {
@@ -506,14 +744,14 @@ describe('run service', () => {
           artifactRuleIds: [],
         },
       }),
-    ).toThrow(expect.objectContaining({ code: 'BAD_REQUEST', status: 400 }));
+    ).rejects.toThrow(expect.objectContaining({ code: 'BAD_REQUEST', status: 400 }));
     expect(getRunDetail(db, { runId: 'run_2', clientId: 'lqbot' })).toBeNull();
   });
 
-  it('rejects collection modes above the profile cap before inserting a run', () => {
+  it('rejects collection modes above the profile cap before inserting a run', async () => {
     const { config, db, workspace, service } = setup();
 
-    expect(() =>
+    await expect(
       service.createRun({
         client: config.clients[0]!,
         request: {
@@ -525,18 +763,100 @@ describe('run service', () => {
           artifactRuleIds: [],
         },
       }),
-    ).toThrow(expect.objectContaining({ code: 'COLLECTION_MODE_NOT_ALLOWED', status: 403 }));
+    ).rejects.toThrow(expect.objectContaining({ code: 'COLLECTION_MODE_NOT_ALLOWED', status: 403 }));
     expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })).toBeNull();
   });
 
-  it('stores business context snapshots at create time even if the queued run is canceled', () => {
+  it('rejects webhook requests when webhooks are disabled before inserting a run', async () => {
+    const { config, db, workspace, service, webhookSpies } = setup({ withWebhookSpy: true });
+    config.server.webhooks.enabled = false;
+
+    await expect(
+      service.createRun({
+        client: config.clients[0]!,
+        request: {
+          profileId: 'report-docx',
+          workspaceId: workspace.id,
+          kind: 'generate',
+          skillId: 'report-writer',
+          prompt: 'Generate a report.',
+          artifactRuleIds: [],
+          webhook: { url: 'http://192.168.88.20:8000/api/daemon/webhook' },
+        },
+      }),
+    ).rejects.toThrow(
+      expect.objectContaining({
+        code: 'BAD_REQUEST',
+        details: { reason: 'webhooks_disabled' },
+        status: 400,
+      }),
+    );
+    expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })).toBeNull();
+    expect(webhookSpies?.insertRunWebhook).not.toHaveBeenCalled();
+    expect(webhookSpies?.createWebhookDeliveryForRunStatus).not.toHaveBeenCalled();
+  });
+
+  it('rejects disallowed webhook URLs before inserting a run', async () => {
+    const { config, db, workspace, service, webhookSpies } = setup({ withWebhookSpy: true });
+
+    await expect(
+      service.createRun({
+        client: config.clients[0]!,
+        request: {
+          profileId: 'report-docx',
+          workspaceId: workspace.id,
+          kind: 'generate',
+          skillId: 'report-writer',
+          prompt: 'Generate a report.',
+          artifactRuleIds: [],
+          webhook: { url: 'http://127.0.0.1:8000/api/daemon/webhook' },
+        },
+      }),
+    ).rejects.toThrow(expect.objectContaining({ code: 'WEBHOOK_URL_NOT_ALLOWED', status: 400 }));
+    expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })).toBeNull();
+    expect(webhookSpies?.insertRunWebhook).not.toHaveBeenCalled();
+    expect(webhookSpies?.createWebhookDeliveryForRunStatus).not.toHaveBeenCalled();
+  });
+
+  it('rejects oversized webhook metadata before inserting a run', async () => {
+    const { config, db, workspace, service, webhookSpies } = setup({ withWebhookSpy: true });
+
+    await expect(
+      service.createRun({
+        client: config.clients[0]!,
+        request: {
+          profileId: 'report-docx',
+          workspaceId: workspace.id,
+          kind: 'generate',
+          skillId: 'report-writer',
+          prompt: 'Generate a report.',
+          artifactRuleIds: [],
+          webhook: {
+            url: 'http://192.168.88.20:8000/api/daemon/webhook',
+            metadata: { payload: 'x'.repeat(20_000) },
+          },
+        },
+      }),
+    ).rejects.toThrow(
+      expect.objectContaining({
+        code: 'BAD_REQUEST',
+        details: expect.objectContaining({ reason: 'webhook_metadata_too_large' }),
+        status: 400,
+      }),
+    );
+    expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })).toBeNull();
+    expect(webhookSpies?.insertRunWebhook).not.toHaveBeenCalled();
+    expect(webhookSpies?.createWebhookDeliveryForRunStatus).not.toHaveBeenCalled();
+  });
+
+  it('stores business context snapshots at create time even if the queued run is canceled', async () => {
     const { config, db, workspace, service } = setup({
       configure: (config) => {
         config.profiles[0]!.maxCollectionMode = 'diagnostic';
       },
     });
 
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -551,7 +871,7 @@ describe('run service', () => {
       },
     });
 
-    expect(service.cancelRun({ client: config.clients[0]!, runId: 'run_1' })).toEqual({ ok: true });
+    await expect(service.cancelRun({ client: config.clients[0]!, runId: 'run_1' })).resolves.toEqual({ ok: true });
     expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.run).toMatchObject({
       status: 'canceled',
       promptMode: 'business-context',
@@ -584,10 +904,10 @@ describe('run service', () => {
     expect(invocation.args).toContain('--include-partial-messages');
   });
 
-  it('rejects disallowed generate skill ids synchronously without inserting a run', () => {
+  it('rejects disallowed generate skill ids synchronously without inserting a run', async () => {
     const { config, db, workspace, service } = setup();
 
-    expect(() =>
+    await expect(
       service.createRun({
         client: config.clients[0]!,
         request: {
@@ -598,7 +918,7 @@ describe('run service', () => {
           prompt: 'Generate a report.',
         },
       }),
-    ).toThrow(expect.objectContaining({ code: 'SKILL_NOT_ALLOWED', status: 400 }));
+    ).rejects.toThrow(expect.objectContaining({ code: 'SKILL_NOT_ALLOWED', status: 400 }));
     expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })).toBeNull();
   });
 
@@ -606,7 +926,7 @@ describe('run service', () => {
     const { config, db, workspace, service, runners, runNextTimer } = setup();
 
     expect(
-      service.createRun({
+      await service.createRun({
         client: config.clients[0]!,
         request: {
           profileId: 'report-docx',
@@ -633,7 +953,7 @@ describe('run service', () => {
     const { root, config, workspace, workspaceCwd, service, runners, runNextTimer } = setup();
     writeSkill(root, { sideFiles: true });
 
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -660,7 +980,7 @@ describe('run service', () => {
     const { root, config, workspace, service, runners, runNextTimer } = setup();
     writeSkill(root);
 
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -688,7 +1008,7 @@ describe('run service', () => {
     });
     writeSkill(root, { sideFiles: true });
 
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -731,7 +1051,7 @@ describe('run service', () => {
   it('composes daemon-composed revise prompts from prior conversation messages in stable order', async () => {
     const { config, db, workspace, service, runners, runNextTimer } = setup();
 
-    const first = service.createRun({
+    const first = await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -752,7 +1072,7 @@ describe('run service', () => {
     });
     await flushAsync();
 
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -792,7 +1112,7 @@ describe('run service', () => {
     rmSync(path.join(workspaceCwd, '.claude-runner-skills'), { recursive: true, force: true });
     writeFileSync(path.join(workspaceCwd, '.claude-runner-skills'), 'not a directory');
 
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -822,13 +1142,13 @@ describe('run service', () => {
         config.profiles[0]!.profileConcurrency = 2;
       },
     });
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: { profileId: 'report-docx', workspaceId: workspace.id, kind: 'revise', prompt: 'One.', artifactRuleIds: [] },
     });
     await runScheduledStart(runNextTimer);
 
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: { profileId: 'report-docx', workspaceId: workspace.id, kind: 'revise', prompt: 'Two.', artifactRuleIds: [] },
     });
@@ -863,12 +1183,12 @@ describe('run service', () => {
       now: 1000,
     });
 
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: { profileId: 'report-docx', workspaceId: workspace.id, kind: 'revise', prompt: 'One.', artifactRuleIds: [] },
     });
     await runScheduledStart(runNextTimer);
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: { profileId: 'report-docx', workspaceId: otherWorkspace.id, kind: 'revise', prompt: 'Two.', artifactRuleIds: [] },
     });
@@ -895,16 +1215,16 @@ describe('run service', () => {
       now: 1000,
     });
 
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: { profileId: 'report-docx', workspaceId: workspace.id, kind: 'revise', prompt: 'One.', artifactRuleIds: [] },
     });
     await runScheduledStart(runNextTimer);
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: { profileId: 'report-docx', workspaceId: workspace.id, kind: 'revise', prompt: 'Two.', artifactRuleIds: [] },
     });
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: { profileId: 'report-docx', workspaceId: otherWorkspace.id, kind: 'revise', prompt: 'Three.', artifactRuleIds: [] },
     });
@@ -937,12 +1257,12 @@ describe('run service', () => {
       now: 1000,
     });
 
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: { profileId: 'report-docx', workspaceId: workspace.id, kind: 'revise', prompt: 'One.', artifactRuleIds: [] },
     });
     await runScheduledStart(runNextTimer);
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: { profileId: 'summary-docx', workspaceId: secondProfileWorkspace.id, kind: 'revise', prompt: 'Two.', artifactRuleIds: [] },
     });
@@ -968,22 +1288,22 @@ describe('run service', () => {
       now: 1000,
     });
 
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: { profileId: 'report-docx', workspaceId: workspace.id, kind: 'revise', prompt: 'One.', artifactRuleIds: [] },
     });
     await runScheduledStart(runNextTimer);
 
-    expect(() =>
+    await expect(
       service.createRun({
         client: config.clients[0]!,
         request: { profileId: 'report-docx', workspaceId: otherWorkspace.id, kind: 'revise', prompt: 'Two.', artifactRuleIds: [] },
       }),
-    ).toThrow(expect.objectContaining({ code: 'RUN_QUEUE_FULL', status: 429 }));
+    ).rejects.toThrow(expect.objectContaining({ code: 'RUN_QUEUE_FULL', status: 429 }));
     expect(getRunDetail(db, { runId: 'run_2', clientId: 'lqbot' })).toBeNull();
   });
 
-  it('counts earlier queued runs when checking maxQueueSize before dispatch has started', () => {
+  it('counts earlier queued runs when checking maxQueueSize before dispatch has started', async () => {
     const { config, db, workspace, service } = setup({
       configure: (config) => {
         config.server.globalConcurrency = 1;
@@ -1000,17 +1320,17 @@ describe('run service', () => {
       now: 1000,
     });
 
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: { profileId: 'report-docx', workspaceId: workspace.id, kind: 'revise', prompt: 'One.', artifactRuleIds: [] },
     });
 
-    expect(() =>
+    await expect(
       service.createRun({
         client: config.clients[0]!,
         request: { profileId: 'report-docx', workspaceId: otherWorkspace.id, kind: 'revise', prompt: 'Two.', artifactRuleIds: [] },
       }),
-    ).toThrow(expect.objectContaining({ code: 'RUN_QUEUE_FULL', status: 429 }));
+    ).rejects.toThrow(expect.objectContaining({ code: 'RUN_QUEUE_FULL', status: 429 }));
     expect(getRunDetail(db, { runId: 'run_2', clientId: 'lqbot' })).toBeNull();
   });
 
@@ -1041,21 +1361,21 @@ describe('run service', () => {
       now: 1000,
     });
 
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: { profileId: 'report-docx', workspaceId: workspace.id, kind: 'revise', prompt: 'One.', artifactRuleIds: [] },
     });
     await runScheduledStart(runNextTimer);
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: { profileId: 'report-docx', workspaceId: ws2.id, kind: 'revise', prompt: 'Two.', artifactRuleIds: [] },
     });
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: { profileId: 'report-docx', workspaceId: ws3.id, kind: 'revise', prompt: 'Three.', artifactRuleIds: [] },
     });
 
-    expect(service.cancelRun({ client: config.clients[0]!, runId: 'run_2' })).toEqual({ ok: true });
+    await expect(service.cancelRun({ client: config.clients[0]!, runId: 'run_2' })).resolves.toEqual({ ok: true });
     expect(getRunDetail(db, { runId: 'run_2', clientId: 'lqbot' })?.run.status).toBe('canceled');
     expect(getRunDetail(db, { runId: 'run_2', clientId: 'lqbot' })?.messages[1]).toMatchObject({
       runStatus: 'canceled',
@@ -1076,7 +1396,7 @@ describe('run service', () => {
     const { config, db, workspace, service, runners, runNextTimer } = setup({
       capabilities: { partialMessages: true },
     });
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -1091,7 +1411,7 @@ describe('run service', () => {
     expect(runners[0]!.input.capabilities).toEqual({ partialMessages: true });
     runners[0]!.input.onEvent({ type: 'text_delta', delta: 'hello' });
 
-    expect(service.replayRunEvents({ client: config.clients[0]!, runId: 'run_1', after: '2' })).toEqual([
+    await expect(service.replayRunEvents({ client: config.clients[0]!, runId: 'run_1', after: '2' })).resolves.toEqual([
       { id: '3', event: { type: 'text_delta', delta: 'hello' } },
     ]);
     expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.run.lastRunEventId).toBeNull();
@@ -1099,7 +1419,7 @@ describe('run service', () => {
 
   it('flushes messages and marks run terminal when the runner completes', async () => {
     const { config, db, workspace, service, runners, runNextTimer } = setup();
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -1134,7 +1454,7 @@ describe('run service', () => {
       runStatus: 'succeeded',
       endedAt: 5000,
     });
-    expect(service.replayRunEvents({ client: config.clients[0]!, runId: 'run_1' }).at(-1)).toEqual({
+    expect((await service.replayRunEvents({ client: config.clients[0]!, runId: 'run_1' })).at(-1)).toEqual({
       id: '4',
       event: { type: 'end', status: 'succeeded' },
     });
@@ -1142,7 +1462,7 @@ describe('run service', () => {
 
   it('persists separate assistant messages for separate Claude assistant message starts', async () => {
     const { config, db, workspace, service, runners, runNextTimer } = setup();
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -1182,7 +1502,7 @@ describe('run service', () => {
   it('persists artifact events before terminal end on successful generate', async () => {
     const { root, config, db, workspace, workspaceCwd, service, runners, runNextTimer } = setup();
     writeSkill(root);
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -1215,10 +1535,84 @@ describe('run service', () => {
     expect(eventTypes.indexOf('artifact_finalized')).toBeLessThan(eventTypes.indexOf('end'));
   });
 
+  it('persists run log close warning before terminal end without changing final status', async () => {
+    const daemonLogger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      flush: vi.fn(async () => {}),
+    };
+    const closeError = new Error('disk full');
+    const runLogService = {
+      dataDir: '',
+      openRunLogs: vi.fn(async () => ({
+        stdout: vi.fn(),
+        stderr: vi.fn(),
+        debugEvent: vi.fn(),
+        close: vi.fn(async () => {
+          throw closeError;
+        }),
+      })),
+      getRunLogs: vi.fn(),
+      getRunLogDownload: vi.fn(),
+      pruneExpiredLogs: vi.fn(),
+    } satisfies RunLogService;
+    const { root, config, db, workspace, workspaceCwd, service, runners, runNextTimer } = setup({
+      daemonLogger,
+      runLogService,
+    });
+    writeSkill(root);
+
+    await service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'generate',
+        prompt: 'Write the report.',
+        skillId: 'report-writer',
+      },
+    });
+    await runScheduledStart(runNextTimer);
+    await vi.waitFor(() => expect(runners).toHaveLength(1));
+    writeFileSync(path.join(workspaceCwd, 'output', 'report.docx'), 'docx');
+
+    runners[0]!.complete({
+      status: 'succeeded',
+      exitCode: 0,
+      signal: null,
+      stdoutTail: '',
+      stderrTail: '',
+    });
+    await flushAsync();
+
+    await vi.waitFor(() => {
+      expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.run.status).toBe('succeeded');
+    });
+    const detail = getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' });
+    const events = detail?.messages[1]?.events as Array<{ type: string; code?: string }>;
+    const eventTypes = events.map((event) => event.type);
+    expect(detail?.run.status).toBe('succeeded');
+    expect(eventTypes).toEqual(expect.arrayContaining(['artifact_finalized', 'warning', 'end']));
+    expect(eventTypes.indexOf('artifact_finalized')).toBeLessThan(eventTypes.indexOf('warning'));
+    expect(eventTypes.indexOf('warning')).toBeLessThan(eventTypes.indexOf('end'));
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'warning',
+        code: 'RUN_LOG_WRITE_FAILED',
+      }),
+    );
+    expect(daemonLogger.warn).toHaveBeenCalledWith('run_log_write_failed', {
+      error: closeError,
+      runId: 'run_1',
+    });
+  });
+
   it('rewrites successful runs to failed when required artifacts are missing', async () => {
     const { root, config, db, workspace, service, runners, runNextTimer } = setup();
     writeSkill(root);
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -1259,7 +1653,7 @@ describe('run service', () => {
   it('fails terminally with ARTIFACT_SCAN_FAILED when artifact finalization throws', async () => {
     const { root, config, db, workspace, workspaceCwd, service, runners, runNextTimer } = setup();
     writeSkill(root);
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -1292,7 +1686,7 @@ describe('run service', () => {
 
   it('drops in-memory event streams after TTL while durable detail remains', async () => {
     const { config, db, workspace, service, runners, runNextTimer } = setup();
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -1312,7 +1706,7 @@ describe('run service', () => {
     runNextTimer();
     runNextTimer();
 
-    expect(() => service.replayRunEvents({ client: config.clients[0]!, runId: 'run_1' })).toThrow(
+    await expect(service.replayRunEvents({ client: config.clients[0]!, runId: 'run_1' })).rejects.toThrow(
       expect.objectContaining({ code: 'NOT_FOUND' }),
     );
     expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.run.status).toBe('succeeded');
@@ -1320,7 +1714,7 @@ describe('run service', () => {
 
   it('cancels a running run through the runner handle', async () => {
     const { config, db, workspace, service, runners, runNextTimer } = setup();
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -1332,7 +1726,7 @@ describe('run service', () => {
     });
     await runScheduledStart(runNextTimer);
 
-    expect(service.cancelRun({ client: config.clients[0]!, runId: 'run_1' })).toEqual({ ok: true });
+    await expect(service.cancelRun({ client: config.clients[0]!, runId: 'run_1' })).resolves.toEqual({ ok: true });
     expect(runners[0]!.cancel).toHaveBeenCalledTimes(1);
     runners[0]!.complete({
       status: 'canceled',
@@ -1341,7 +1735,7 @@ describe('run service', () => {
       stdoutTail: '',
       stderrTail: '',
     });
-    await Promise.resolve();
+    await flushAsync();
 
     expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.run.status).toBe('canceled');
   });
@@ -1352,7 +1746,7 @@ describe('run service', () => {
         config.profiles[0]!.runTimeoutMs = 50;
       },
     });
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -1365,7 +1759,7 @@ describe('run service', () => {
     await runScheduledStart(runNextTimer);
 
     expect(pendingTimers().some((timer) => timer.delayMs === 50)).toBe(true);
-    expect(service.cancelRun({ client: config.clients[0]!, runId: 'run_1' })).toEqual({ ok: true });
+    await expect(service.cancelRun({ client: config.clients[0]!, runId: 'run_1' })).resolves.toEqual({ ok: true });
 
     expect(runners[0]!.cancel).toHaveBeenCalledTimes(1);
     expect(pendingTimers().some((timer) => timer.delayMs === 50)).toBe(false);
@@ -1377,7 +1771,7 @@ describe('run service', () => {
         config.profiles[0]!.runTimeoutMs = 50;
       },
     });
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -1398,7 +1792,7 @@ describe('run service', () => {
       status: 'failed',
       errorCode: 'RUN_TIMEOUT',
     });
-    expect(service.replayRunEvents({ client: config.clients[0]!, runId: 'run_1' })).toEqual(
+    await expect(service.replayRunEvents({ client: config.clients[0]!, runId: 'run_1' })).resolves.toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           event: { type: 'error', code: 'RUN_TIMEOUT', message: 'Run exceeded total timeout.' },
@@ -1409,7 +1803,7 @@ describe('run service', () => {
 
   it('shutdownActive interrupts queued runs without spawning them', async () => {
     const { config, db, workspace, service, runners } = setup();
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -1435,7 +1829,7 @@ describe('run service', () => {
 
   it('shutdownActive waits up to graceMs for running runner completion before returning', async () => {
     const { config, db, workspace, service, runners, runNextTimer, pendingTimers } = setup();
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',
@@ -1494,7 +1888,7 @@ describe('run service', () => {
     mkdirSync(path.join(secondWorkspaceCwd, '.claude-runner-skills'), { recursive: true });
 
     for (const workspaceId of [workspace.id, secondWorkspace.id]) {
-      service.createRun({
+      await service.createRun({
         client: config.clients[0]!,
         request: {
           profileId: 'report-docx',
@@ -1536,7 +1930,7 @@ describe('run service', () => {
         config.profiles[0]!.runTimeoutMs = 50;
       },
     });
-    service.createRun({
+    await service.createRun({
       client: config.clients[0]!,
       request: {
         profileId: 'report-docx',

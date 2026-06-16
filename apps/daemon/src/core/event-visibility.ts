@@ -34,6 +34,7 @@ const eventVisibilityByType: Record<RunEvent['type'], EventVisibility> = {
   text_delta: 'quiet',
   usage: 'quiet',
   error: 'quiet',
+  warning: 'quiet',
   artifact_finalized: 'quiet',
   end: 'quiet',
   thinking_start: 'normal',

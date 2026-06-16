@@ -42,6 +42,7 @@ The console shows three business adapter flows:
    - Creates `POST /api/runs` with `kind: "generate"` and `skillId`.
    - Opens `/api/runs/:runId/events` with authenticated `fetch`.
    - Reconciles final durable detail and artifact list after terminal `data.type === "end"`.
+   - Treats non-terminal `warning` events and future unknown event types as informational, not as run failure.
 
 2. `Generate + Poll`
    - Creates the same kind of `generate` run.
@@ -49,6 +50,7 @@ The console shows three business adapter flows:
    - Polls lightweight `GET /api/runs/:runId/status`.
    - Does not render daemon messages from the poll path.
    - Fetches artifacts after the run reaches a terminal status.
+   - May observe a short tail delay before terminal while the daemon flushes run logs.
 
 3. `Revise`
    - Requires an existing workspace from an earlier run.

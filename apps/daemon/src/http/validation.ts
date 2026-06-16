@@ -18,6 +18,16 @@ const metadataSchema = z.record(z.string(), z.unknown());
 const runShortStringSchema = z.string().min(1).max(128);
 const runPromptSchema = z.string().min(1).max(200_000);
 const businessContextSchema = z.record(z.string(), z.unknown());
+const webhookSecretSchema = z.string().min(8).max(512);
+const webhookUrlSchema = z.string().min(1).max(2_048).url();
+const webhookRequestSchema = z
+  .object({
+    url: webhookUrlSchema,
+    secret: webhookSecretSchema.optional(),
+    statuses: z.array(z.enum(runStatuses)).min(1).max(runStatuses.length).optional(),
+    metadata: metadataSchema.optional(),
+  })
+  .strict();
 const contextPolicySchema = z
   .object({
     recentMessages: z.number().int().min(0).max(100).optional(),
@@ -104,6 +114,7 @@ export const createRunRequestSchema: z.ZodType<CreateRunRequest> = z
     eventVisibility: z.enum(eventVisibilityLevels).optional(),
     metadata: metadataSchema.optional(),
     idempotencyKey: runShortStringSchema.optional(),
+    webhook: webhookRequestSchema.optional(),
   })
   .strict()
   .superRefine((value, context) => {

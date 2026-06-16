@@ -12,15 +12,19 @@ import { createRunFeedbackService, type RunFeedbackService } from './core/run-fe
 import { createRunLogService, type RunLogService } from './core/run-log-service.js';
 import { createRunService, type RunService } from './core/run-service.js';
 import { createUploadTempService, type UploadTempService } from './core/upload-temp-service.js';
+import {
+  createWebhookDeliveryService,
+  type WebhookDeliveryService,
+} from './core/webhook-delivery-service.js';
 import { createWorkspaceService, type WorkspaceService } from './core/workspace-service.js';
-import { openRunnerDatabase, type RunnerDatabase } from './db/connection.js';
-import { markInterruptedRunsOnStartup } from './db/repositories.js';
-import { applySchema } from './db/schema.js';
+import { assertPostgresSchemaReady } from './db/postgres/migrate.js';
+import { createPostgresRunnerPersistence } from './db/postgres/repositories.js';
+import type { RunnerPersistence } from './db/types.js';
 import { createApp } from './http/app.js';
 
 export interface ServerContext {
   config: DaemonConfig;
-  db: RunnerDatabase;
+  persistence: RunnerPersistence;
   workspaceService: WorkspaceService;
   artifactService: ArtifactService;
   runLogService: RunLogService;
@@ -28,6 +32,7 @@ export interface ServerContext {
   feedbackService: RunFeedbackService;
   runService: RunService;
   uploadTempService: UploadTempService;
+  webhookDeliveryService: WebhookDeliveryService | null;
   daemonLogger: DaemonLogger;
   app: ReturnType<typeof createApp>;
   interruptedRuns: number;
@@ -36,6 +41,7 @@ export interface ServerContext {
 interface CreateServerContextOptions {
   clock?: () => number;
   daemonLogger?: DaemonLogger;
+  webhookDeliveryService?: WebhookDeliveryService;
 }
 
 interface SignalTarget {
@@ -44,27 +50,48 @@ interface SignalTarget {
   off(signal: NodeJS.Signals, listener: () => void | Promise<void>): unknown;
 }
 
-export function createServerContext(
+export async function createServerContext(
   config: DaemonConfig,
   options: CreateServerContextOptions = {},
-): ServerContext {
+): Promise<ServerContext> {
   const daemonLogger = options.daemonLogger ?? createDaemonLogger({ dataDir: config.server.dataDir });
-  const db = openRunnerDatabase(config.server.dataDir);
-  applySchema(db);
+  await assertPostgresSchemaReady(config.server.persistence.databaseUrl);
+  const persistence = createPostgresRunnerPersistence({
+    databaseUrl: config.server.persistence.databaseUrl,
+    poolMax: config.server.persistence.poolMax,
+  });
   const now = options.clock ?? Date.now;
   const startupNow = now();
-  const interruptedRuns = markInterruptedRunsOnStartup(db, startupNow);
-  const workspaceService = createWorkspaceService({ db });
-  const artifactService = createArtifactService({ config, db, clock: options.clock });
-  const runLogService = createRunLogService({ config, db });
-  const reviewBundleService = createReviewBundleService({ config, db, runLogService });
-  const feedbackService = createRunFeedbackService({ db, clock: options.clock });
-  const runService = createRunService({ config, db, artifactService, runLogService, clock: options.clock });
+  const interruptedRuns = await persistence.markInterruptedRunsOnStartup(startupNow);
+  const workspaceService = createWorkspaceService({ persistence });
+  const artifactService = createArtifactService({ config, persistence, clock: options.clock });
+  const runLogService = createRunLogService({ config, persistence });
+  const reviewBundleService = createReviewBundleService({ config, persistence, runLogService });
+  const feedbackService = createRunFeedbackService({ persistence, clock: options.clock });
+  const runService = createRunService({
+    config,
+    persistence,
+    artifactService,
+    runLogService,
+    daemonLogger,
+    clock: options.clock,
+  });
   const uploadTempService = createUploadTempService({ config });
-  uploadTempService.pruneExpiredUploads({ now: startupNow });
+  await uploadTempService.pruneExpiredUploads({ now: startupNow });
+  const webhookDeliveryService = config.server.webhooks.enabled
+    ? options.webhookDeliveryService ??
+      createWebhookDeliveryService({
+        config: config.server.webhooks,
+        persistence,
+        databaseUrl: config.server.persistence.databaseUrl,
+        daemonLogger,
+        clock: options.clock,
+      })
+    : null;
+  webhookDeliveryService?.start();
   const app = createApp({
     config,
-    db,
+    persistence,
     workspaceService,
     runService,
     runLogService,
@@ -82,7 +109,7 @@ export function createServerContext(
 
   return {
     config,
-    db,
+    persistence,
     workspaceService,
     artifactService,
     runLogService,
@@ -90,6 +117,7 @@ export function createServerContext(
     feedbackService,
     runService,
     uploadTempService,
+    webhookDeliveryService,
     daemonLogger,
     app,
     interruptedRuns,
@@ -112,13 +140,17 @@ export function startServer(context: ServerContext): Server {
   });
   server.on('error', (error) => {
     context.daemonLogger.error('daemon_server_error', { error });
+    void context.daemonLogger.flush().catch(() => {});
   });
   installShutdownHandlers(context, server);
   return server;
 }
 
 export function installShutdownHandlers(
-  context: Pick<ServerContext, 'config' | 'db' | 'runService'> & { daemonLogger?: DaemonLogger },
+  context: Pick<ServerContext, 'config' | 'persistence' | 'runService'> & {
+    daemonLogger?: DaemonLogger;
+    webhookDeliveryService?: WebhookDeliveryService | null;
+  },
   server: Pick<Server, 'close'>,
   signalTarget: SignalTarget = process,
 ): void {
@@ -134,8 +166,10 @@ export function installShutdownHandlers(
       server.close(() => resolve());
     });
     await context.runService.shutdownActive({ graceMs: getMaxCancelGraceMs(context.config) });
-    context.db.close();
+    await context.webhookDeliveryService?.stop();
+    await context.persistence.close();
     context.daemonLogger?.info('daemon_shutdown_complete');
+    await context.daemonLogger?.flush();
     signalTarget.exitCode = 0;
   };
 
@@ -147,24 +181,22 @@ function getMaxCancelGraceMs(config: DaemonConfig): number {
   return Math.max(0, ...config.profiles.map((profile) => profile.cancelGraceMs));
 }
 
-export function main(
+export async function main(
   argv: readonly string[] = process.argv.slice(2),
   env: NodeJS.ProcessEnv = process.env,
-): Server | undefined {
+): Promise<Server | undefined> {
   const configPath = getConfigPathFromArgs(argv, env);
   if (!configPath) {
     throw new Error('Missing --config <path> or CLAUDE_RUNNER_CONFIG');
   }
 
   const config = loadDaemonConfig(configPath, env);
-  return startServer(createServerContext(config));
+  return startServer(await createServerContext(config));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  try {
-    main();
-  } catch (error) {
+  void main().catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : error);
     process.exitCode = 1;
-  }
+  });
 }

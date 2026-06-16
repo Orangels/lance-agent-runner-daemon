@@ -11,6 +11,7 @@ import {
   type WorkspaceRecord,
 } from '../../src/db/repositories.js';
 import { applySchema } from '../../src/db/schema.js';
+import { createSqliteRunnerPersistence } from '../../src/db/sqlite-persistence.js';
 import { DaemonError } from '../../src/core/errors.js';
 import { createArtifactService } from '../../src/core/artifact-service.js';
 import { getWorkspaceCwd } from '../../src/core/workspace-service.js';
@@ -38,6 +39,9 @@ function makeConfig(root: string): DaemonConfig {
         dataDir: path.join(root, 'data'),
         globalConcurrency: 4,
         maxQueueSize: 100,
+        persistence: {
+          databaseUrl: 'postgres://user:pass@localhost:5432/lance_agent_daemon_test',
+        },
       },
       clients: [
         { id: 'lqbot', apiKey: 'secret', allowedProfileIds: ['report-docx'] },
@@ -79,6 +83,7 @@ function setup() {
   const config = makeConfig(root);
   const db = openInMemoryDatabase();
   applySchema(db);
+  const persistence = createSqliteRunnerPersistence(db);
   const workspace = upsertWorkspace(db, {
     id: 'ws_1',
     clientId: 'lqbot',
@@ -119,7 +124,7 @@ function setup() {
   });
   const service = createArtifactService({
     config,
-    db,
+    persistence,
     clock: () => 5000,
     ids: { artifactId: () => 'artifact_1' },
   });
@@ -127,6 +132,7 @@ function setup() {
     root,
     config,
     db,
+    persistence,
     service,
     workspace,
     otherWorkspace,
@@ -212,11 +218,11 @@ describe('artifact service', () => {
   });
 
   it('keeps the highest-priority role when multiple artifact rules match the same file', async () => {
-    const { config, profile, workspace, db } = setup();
+    const { config, profile, workspace, db, persistence } = setup();
     let artifactSequence = 0;
     const service = createArtifactService({
       config,
-      db,
+      persistence,
       clock: () => 5000,
       ids: { artifactId: () => `artifact_${++artifactSequence}` },
     });
@@ -252,10 +258,10 @@ describe('artifact service', () => {
   });
 
   it('surfaces scan failures as ARTIFACT_SCAN_FAILED without leaking paths', async () => {
-    const { config, db, profile, workspace } = setup();
+    const { config, persistence, profile, workspace } = setup();
     const service = createArtifactService({
       config,
-      db,
+      persistence,
       scanner: async () => {
         throw new Error(`/private/root/${workspace.id}/boom`);
       },
@@ -284,11 +290,11 @@ describe('artifact service', () => {
       artifactRuleIds: ['report-docx'],
     });
 
-    expect(service.listRunArtifacts({ client, runId: 'run_1' })).toEqual([
+    await expect(service.listRunArtifacts({ client, runId: 'run_1' })).resolves.toEqual([
       expect.objectContaining({ id: 'artifact_1', relativePath: 'output/report.docx' }),
     ]);
-    expect(service.listRunArtifacts({ client: adminClient, runId: 'run_1' })).toHaveLength(1);
-    expect(() => service.listRunArtifacts({ client: otherClient, runId: 'run_1' })).toThrow(
+    await expect(service.listRunArtifacts({ client: adminClient, runId: 'run_1' })).resolves.toHaveLength(1);
+    await expect(service.listRunArtifacts({ client: otherClient, runId: 'run_1' })).rejects.toThrow(
       expect.objectContaining({ code: 'NOT_FOUND' }),
     );
 

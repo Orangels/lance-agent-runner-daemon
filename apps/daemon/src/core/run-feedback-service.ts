@@ -1,10 +1,4 @@
-import type { RunnerDatabase } from '../db/connection.js';
-import {
-  getRunForClient,
-  insertRunFeedback,
-  listRunFeedbackForClient,
-  type RunFeedbackRecord,
-} from '../db/repositories.js';
+import type { RunnerPersistence, RunFeedbackRecord } from '../db/types.js';
 import { createId } from './ids.js';
 import { sanitizeLogText, sanitizeReviewValue } from './log-sanitizer.js';
 import { notFound } from './errors.js';
@@ -21,12 +15,12 @@ export interface RunFeedbackService {
     category: string;
     message: string;
     metadata?: unknown;
-  }): RunFeedbackRecord;
-  listRunFeedback(input: { runId: string; client: RunFeedbackClient }): RunFeedbackRecord[];
+  }): Promise<RunFeedbackRecord>;
+  listRunFeedback(input: { runId: string; client: RunFeedbackClient }): Promise<RunFeedbackRecord[]>;
 }
 
 export interface CreateRunFeedbackServiceInput {
-  db: RunnerDatabase;
+  persistence?: RunnerPersistence;
   clock?: () => number;
   ids?: {
     feedbackId?: () => string;
@@ -36,10 +30,14 @@ export interface CreateRunFeedbackServiceInput {
 export function createRunFeedbackService(input: CreateRunFeedbackServiceInput): RunFeedbackService {
   const now = input.clock ?? Date.now;
   const nextFeedbackId = input.ids?.feedbackId ?? (() => createId('feedback'));
+  const persistence = input.persistence;
+  if (!persistence) {
+    throw new Error('RunFeedbackService requires persistence');
+  }
 
   return {
-    createRunFeedback: ({ runId, client, category, message, metadata }) => {
-      const run = getRunForClient(input.db, {
+    createRunFeedback: async ({ runId, client, category, message, metadata }) => {
+      const run = await persistence.getRunForClient({
         runId,
         clientId: client.id,
         isAdmin: client.isAdmin,
@@ -48,7 +46,7 @@ export function createRunFeedbackService(input: CreateRunFeedbackServiceInput): 
         throw notFound('Run not found');
       }
 
-      return insertRunFeedback(input.db, {
+      return persistence.insertRunFeedback({
         id: nextFeedbackId(),
         runId,
         clientId: client.id,
@@ -58,8 +56,8 @@ export function createRunFeedbackService(input: CreateRunFeedbackServiceInput): 
         now: now(),
       });
     },
-    listRunFeedback: ({ runId, client }) => {
-      const feedback = listRunFeedbackForClient(input.db, {
+    listRunFeedback: async ({ runId, client }) => {
+      const feedback = await persistence.listRunFeedbackForClient({
         runId,
         clientId: client.id,
         isAdmin: client.isAdmin,
