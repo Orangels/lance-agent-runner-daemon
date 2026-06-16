@@ -84,7 +84,7 @@ If migration tests still need old SQLite schema creation, move that fixture code
 - Use narrow typed fakes only when a test is about non-persistence service or route behavior and a real database would obscure the assertion.
 - Preserve existing test intent and API response assertions while changing the backing persistence.
 - Add a static guard that fails if runtime code or non-migration tests import the removed SQLite backend modules.
-- Do not convert a large test file to one PostgreSQL schema reset per `it` when it has many cases. Use `beforeEach`/`afterEach` cleanup or a file-level lock/reset strategy that is explicit in the converted test.
+- Do not convert persistence-backed test files to one PostgreSQL schema reset plus full migration per `it`. Prefer `createPostgresFilePersistenceHarness()` with one file-level schema reset/migration, `afterEach` data truncation, and `afterAll` cleanup. Keep one-off reset/migrate harness usage only for migration tests or very small focused cases where the isolation cost is intentional.
 - The final merge gate must include a command that proves PostgreSQL-gated tests actually ran with `CLAUDE_RUNNER_TEST_PG_URL` configured.
 - A GitHub Actions workflow is recommended but not required by this cleanup plan. If the workflow is not added in this task, the PR must include manual `pnpm test:daemon:pg` evidence before merge.
 
@@ -296,7 +296,7 @@ git commit -m "test: isolate sqlite migration source fixtures"
 At the top of each converted service test file, use:
 
 ```ts
-import { createPostgresPersistenceHarness } from '../helpers/postgres-persistence-harness.js';
+import { createPostgresFilePersistenceHarness } from '../helpers/postgres-persistence-harness.js';
 import { requirePostgresTestUrl } from '../helpers/postgres.js';
 
 const postgresDescribe = requirePostgresTestUrl() === null ? describe.skip : describe;
@@ -317,8 +317,23 @@ const persistence = createSqliteRunnerPersistence(db);
 to:
 
 ```ts
+let harness: Awaited<ReturnType<typeof createPostgresFilePersistenceHarness>> | null = null;
+
+beforeAll(async () => {
+  harness = await createPostgresFilePersistenceHarness();
+  expect(harness).not.toBeNull();
+});
+
+afterEach(async () => {
+  await harness?.resetData();
+});
+
+afterAll(async () => {
+  await harness?.cleanup();
+  harness = null;
+});
+
 async function setup() {
-  const harness = await createPostgresPersistenceHarness();
   expect(harness).not.toBeNull();
   const persistence = harness!.persistence;
   const workspace = await persistence.upsertWorkspace({
@@ -348,29 +363,29 @@ async function setup() {
     clock: () => 3000,
     ids: { feedbackId: () => 'feedback_1' },
   });
-  return { harness, service };
+  return { service };
 }
 ```
 
 All test call sites must change from `const { service } = setup();` to:
 
 ```ts
-const { harness, service } = await setup();
+const { service } = await setup();
 ```
 
-Use `afterEach` cleanup when several tests share the same harness shape. A guaranteed `finally` is acceptable for one-off tests, but do not rely on scattered cleanup calls when a file already has `afterEach`.
+Use file-level `beforeAll`/`afterEach`/`afterAll` lifecycle for persistence-backed service tests. `afterEach` should call `resetData()` and any temp directory cleanup. `afterAll` should call `cleanup()` once to close the persistence pool and release the advisory lock.
 
 Do not stop after this partial replacement:
 
 ```ts
-const harness = await createPostgresPersistenceHarness();
+const harness = await createPostgresFilePersistenceHarness();
 expect(harness).not.toBeNull();
 const persistence = harness!.persistence;
 ```
 
 That only replaces the database constructor; it leaves SQLite seed helpers behind.
 
-For a single test, cleanup can look like:
+For a single test's temp files, cleanup can still use a local `finally`, but database cleanup should stay in the shared lifecycle:
 
 ```ts
 try {
@@ -453,13 +468,13 @@ git commit -m "test: migrate small service tests to postgres"
 For each route test, prefer:
 
 ```ts
-import { createPostgresPersistenceHarness } from '../helpers/postgres-persistence-harness.js';
+import { createPostgresFilePersistenceHarness } from '../helpers/postgres-persistence-harness.js';
 import { requirePostgresTestUrl } from '../helpers/postgres.js';
 
 const postgresDescribe = requirePostgresTestUrl() === null ? describe.skip : describe;
 ```
 
-Wrap persistence-backed route tests inside a `postgresDescribe` block with the file's concrete suite name, and release the harness from `afterEach` or a guaranteed `finally`.
+Wrap persistence-backed route tests inside a `postgresDescribe` block with the file's concrete suite name. Prefer file-level harness lifecycle: `beforeAll` creates the harness, `afterEach` calls `resetData()` plus temp cleanup, and `afterAll` calls `cleanup()`.
 
 `apps/daemon/tests/http/app-logging.test.ts` may use a narrow typed `RunnerPersistence` fake instead of PostgreSQL if the test only asserts request logging behavior and does not verify persistence semantics. The fake must not import SQLite modules.
 
@@ -547,7 +562,7 @@ git commit -m "test: migrate route tests to postgres"
 The existing setup currently creates an in-memory SQLite DB and calls direct SQLite helpers. Preserve the real `withWebhookSpy?: boolean` option and the existing single-argument `createWebhookSpyPersistence(base)` helper shape:
 
 ```ts
-const harness = await createPostgresPersistenceHarness();
+const harness = await createPostgresFilePersistenceHarness();
 expect(harness).not.toBeNull();
 const basePersistence = harness!.persistence;
 const webhookSpies = options.withWebhookSpy ? createWebhookSpyPersistence(basePersistence) : null;
@@ -568,8 +583,8 @@ Keep the rest of the existing setup return fields that the current tests already
 
 For this file, do not perform one full `DROP SCHEMA + migrate` setup per `it` without measuring the runtime. Use one of these explicit lifecycle shapes:
 
-- `beforeEach` creates the harness and `afterEach` always awaits `cleanup`.
-- Or a file-level PG lock plus per-test schema reset/truncate is implemented in the harness helper and documented in the test.
+- Prefer `beforeAll` creating `createPostgresFilePersistenceHarness()`, `afterEach` truncating data with `resetData()`, and `afterAll` awaiting `cleanup()`.
+- If a specific subset needs full schema rebuild per case, document why that test cannot use file-level truncate reset.
 
 - [ ] **Step 2: Remove direct SQLite repository calls from the test**
 
@@ -896,8 +911,8 @@ git commit -m "test: complete sqlite test residual cleanup"
 - This plan adds `test:daemon:pg` as the required merge gate but does not require creating GitHub Actions in the same cleanup slice. If CI is not added, manual PG-gated evidence is required before merge.
 - Migration tests legitimately need SQLite as the source database format. The cleanup target is runtime SQLite persistence, not old-data migration coverage.
 - Copying the entire old SQLite schema into test fixtures is acceptable if it is clearly named `legacy` or `source`; do not leave it in production runtime modules.
-- Converting every route test to PG may increase test time. Use the existing advisory lock and schema reset pattern for persistence-backed tests, and use narrow typed fakes only for tests whose assertion is independent of persistence behavior.
-- `run-service.test.ts` has enough cases that one full schema reset plus migration per `it` can become slow. Its conversion must use an explicit harness lifecycle rather than many ad hoc try/finally cleanups.
+- Converting every route test to PG may increase test time. Use the file-level advisory-lock harness with per-test data truncation for persistence-backed tests, and use narrow typed fakes only for tests whose assertion is independent of persistence behavior.
+- `run-service.test.ts` has enough cases that one full schema reset plus migration per `it` can become slow. Its conversion must use `createPostgresFilePersistenceHarness()` or another explicit lifecycle that avoids per-`it` full migrations.
 
 ## Completion Criteria
 

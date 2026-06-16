@@ -1,27 +1,36 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { ProfileConfig } from '../../src/config/profiles.js';
 import { DaemonError } from '../../src/core/errors.js';
 import { createWorkspaceService, getWorkspaceCwd } from '../../src/core/workspace-service.js';
-import { createPostgresPersistenceHarness } from '../helpers/postgres-persistence-harness.js';
+import { createPostgresFilePersistenceHarness } from '../helpers/postgres-persistence-harness.js';
 import { requirePostgresTestUrl } from '../helpers/postgres.js';
 
 const postgresDescribe = requirePostgresTestUrl() === null ? describe.skip : describe;
 
 const tempRoots: string[] = [];
-let harness: Awaited<ReturnType<typeof createPostgresPersistenceHarness>> | null = null;
+let harness: Awaited<ReturnType<typeof createPostgresFilePersistenceHarness>> | null = null;
+
+beforeAll(async () => {
+  harness = await createPostgresFilePersistenceHarness();
+  expect(harness).not.toBeNull();
+});
 
 afterEach(async () => {
   try {
-    await harness?.cleanup();
+    await harness?.resetData();
   } finally {
-    harness = null;
     for (const root of tempRoots.splice(0)) {
       rmSync(root, { recursive: true, force: true });
     }
   }
+});
+
+afterAll(async () => {
+  await harness?.cleanup();
+  harness = null;
 });
 
 function makeProfile(root: string, uploadsRoot: string): ProfileConfig {
@@ -54,7 +63,6 @@ async function setup() {
   const uploadsRoot = path.join(root, 'uploads');
   mkdirSync(uploadsRoot, { recursive: true });
   const profile = makeProfile(root, uploadsRoot);
-  harness = await createPostgresPersistenceHarness();
   expect(harness).not.toBeNull();
   const persistence = harness!.persistence;
   const service = createWorkspaceService({

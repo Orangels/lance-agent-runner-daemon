@@ -1,27 +1,36 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { parseDaemonConfig } from '../../src/config/profiles.js';
 import { createReviewBundleService, type ReviewBundleClient } from '../../src/core/review-bundle-service.js';
 import { createRunLogService } from '../../src/core/run-log-service.js';
-import { createPostgresPersistenceHarness } from '../helpers/postgres-persistence-harness.js';
+import { createPostgresFilePersistenceHarness } from '../helpers/postgres-persistence-harness.js';
 import { requirePostgresTestUrl } from '../helpers/postgres.js';
 
 const postgresDescribe = requirePostgresTestUrl() === null ? describe.skip : describe;
 
 const tempDirs: string[] = [];
-let harness: Awaited<ReturnType<typeof createPostgresPersistenceHarness>> | null = null;
+let harness: Awaited<ReturnType<typeof createPostgresFilePersistenceHarness>> | null = null;
+
+beforeAll(async () => {
+  harness = await createPostgresFilePersistenceHarness();
+  expect(harness).not.toBeNull();
+});
 
 afterEach(async () => {
   try {
-    await harness?.cleanup();
+    await harness?.resetData();
   } finally {
-    harness = null;
     for (const dir of tempDirs.splice(0)) {
       rmSync(dir, { recursive: true, force: true });
     }
   }
+});
+
+afterAll(async () => {
+  await harness?.cleanup();
+  harness = null;
 });
 
 async function setup(input: { canReadDebugEvents?: boolean; maxReviewBundleBytes?: number } = {}) {
@@ -66,7 +75,6 @@ async function setup(input: { canReadDebugEvents?: boolean; maxReviewBundleBytes
     },
     { env: {} },
   );
-  harness = await createPostgresPersistenceHarness();
   expect(harness).not.toBeNull();
   const persistence = harness!.persistence;
   const workspace = await persistence.upsertWorkspace({

@@ -1,29 +1,38 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { parseDaemonConfig, type DaemonConfig } from '../../src/config/profiles.js';
 import { DaemonError } from '../../src/core/errors.js';
 import { createArtifactService } from '../../src/core/artifact-service.js';
 import { getWorkspaceCwd } from '../../src/core/workspace-service.js';
 import type { WorkspaceRecord } from '../../src/db/types.js';
-import { createPostgresPersistenceHarness } from '../helpers/postgres-persistence-harness.js';
+import { createPostgresFilePersistenceHarness } from '../helpers/postgres-persistence-harness.js';
 import { requirePostgresTestUrl } from '../helpers/postgres.js';
 
 const postgresDescribe = requirePostgresTestUrl() === null ? describe.skip : describe;
 
 const tempRoots: string[] = [];
-let harness: Awaited<ReturnType<typeof createPostgresPersistenceHarness>> | null = null;
+let harness: Awaited<ReturnType<typeof createPostgresFilePersistenceHarness>> | null = null;
+
+beforeAll(async () => {
+  harness = await createPostgresFilePersistenceHarness();
+  expect(harness).not.toBeNull();
+});
 
 afterEach(async () => {
   try {
-    await harness?.cleanup();
+    await harness?.resetData();
   } finally {
-    harness = null;
     for (const root of tempRoots.splice(0)) {
       rmSync(root, { recursive: true, force: true });
     }
   }
+});
+
+afterAll(async () => {
+  await harness?.cleanup();
+  harness = null;
 });
 
 function makeRoot(): string {
@@ -83,7 +92,6 @@ function makeConfig(root: string): DaemonConfig {
 async function setup() {
   const root = makeRoot();
   const config = makeConfig(root);
-  harness = await createPostgresPersistenceHarness();
   expect(harness).not.toBeNull();
   const persistence = harness!.persistence;
   const workspace = await persistence.upsertWorkspace({

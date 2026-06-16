@@ -21,6 +21,29 @@ export async function resetPostgresSchema(databaseUrl: string): Promise<void> {
   }
 }
 
+export async function truncatePostgresData(databaseUrl: string): Promise<void> {
+  const pool = createPostgresPool({ databaseUrl });
+  try {
+    const result = await pool.query<{ table_identifier: string }>(
+      `
+      SELECT format('%I.%I', table_schema, table_name) AS table_identifier
+      FROM information_schema.tables
+      WHERE table_schema = 'public'
+        AND table_type = 'BASE TABLE'
+        AND table_name <> 'pgmigrations'
+      ORDER BY table_name
+      `,
+    );
+    const tableIdentifiers = result.rows.map((row) => row.table_identifier);
+    if (tableIdentifiers.length === 0) {
+      return;
+    }
+    await pool.query(`TRUNCATE TABLE ${tableIdentifiers.join(', ')} RESTART IDENTITY CASCADE`);
+  } finally {
+    await pool.end();
+  }
+}
+
 export function createPostgresTestPool(databaseUrl: string): pg.Pool {
   return createPostgresPool({ databaseUrl });
 }

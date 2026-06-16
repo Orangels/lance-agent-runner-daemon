@@ -1,28 +1,37 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
   createRunLogService,
   type RunLogClient,
 } from '../../src/core/run-log-service.js';
-import { createPostgresPersistenceHarness } from '../helpers/postgres-persistence-harness.js';
+import { createPostgresFilePersistenceHarness } from '../helpers/postgres-persistence-harness.js';
 import { requirePostgresTestUrl } from '../helpers/postgres.js';
 
 const postgresDescribe = requirePostgresTestUrl() === null ? describe.skip : describe;
 
 const tempDirs: string[] = [];
-let harness: Awaited<ReturnType<typeof createPostgresPersistenceHarness>> | null = null;
+let harness: Awaited<ReturnType<typeof createPostgresFilePersistenceHarness>> | null = null;
+
+beforeAll(async () => {
+  harness = await createPostgresFilePersistenceHarness();
+  expect(harness).not.toBeNull();
+});
 
 afterEach(async () => {
   try {
-    await harness?.cleanup();
+    await harness?.resetData();
   } finally {
-    harness = null;
     for (const dir of tempDirs.splice(0)) {
       rmSync(dir, { recursive: true, force: true });
     }
   }
+});
+
+afterAll(async () => {
+  await harness?.cleanup();
+  harness = null;
 });
 
 function makeDataDir(): string {
@@ -32,7 +41,6 @@ function makeDataDir(): string {
 }
 
 async function setup(input: { maxLogBytesPerRun?: number; logRetentionMs?: number } = {}) {
-  harness = await createPostgresPersistenceHarness();
   expect(harness).not.toBeNull();
   const persistence = harness!.persistence;
   const dataDir = makeDataDir();

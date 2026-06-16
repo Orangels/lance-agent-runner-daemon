@@ -1,22 +1,27 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { createRunFeedbackService, type RunFeedbackClient } from '../../src/core/run-feedback-service.js';
-import { createPostgresPersistenceHarness } from '../helpers/postgres-persistence-harness.js';
+import { createPostgresFilePersistenceHarness } from '../helpers/postgres-persistence-harness.js';
 import { requirePostgresTestUrl } from '../helpers/postgres.js';
 
 const postgresDescribe = requirePostgresTestUrl() === null ? describe.skip : describe;
 
-let harness: Awaited<ReturnType<typeof createPostgresPersistenceHarness>> | null = null;
+let harness: Awaited<ReturnType<typeof createPostgresFilePersistenceHarness>> | null = null;
+
+beforeAll(async () => {
+  harness = await createPostgresFilePersistenceHarness();
+  expect(harness).not.toBeNull();
+});
 
 afterEach(async () => {
-  try {
-    await harness?.cleanup();
-  } finally {
-    harness = null;
-  }
+  await harness?.resetData();
+});
+
+afterAll(async () => {
+  await harness?.cleanup();
+  harness = null;
 });
 
 async function setup() {
-  harness = await createPostgresPersistenceHarness();
   expect(harness).not.toBeNull();
   const persistence = harness!.persistence;
   const workspace = await persistence.upsertWorkspace({
