@@ -1,26 +1,45 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { parseDaemonConfig, type DaemonConfig } from '../../src/config/profiles.js';
 import { createWorkspaceService } from '../../src/core/workspace-service.js';
-import { openInMemoryDatabase } from '../../src/db/connection.js';
-import { applySchema } from '../../src/db/schema.js';
-import { createSqliteRunnerPersistence } from '../../src/db/sqlite-persistence.js';
 import { createApp } from '../../src/http/app.js';
+import { createPostgresFilePersistenceHarness } from '../helpers/postgres-persistence-harness.js';
+import { postgresTestHookTimeoutMs, requirePostgresTestUrl } from '../helpers/postgres.js';
 
+const postgresDescribe = requirePostgresTestUrl() === null ? describe.skip : describe;
 const servers: Array<{ close: (callback: () => void) => void }> = [];
+const tempDirs: string[] = [];
+let harness: Awaited<ReturnType<typeof createPostgresFilePersistenceHarness>> | null = null;
+
+beforeAll(async () => {
+  harness = await createPostgresFilePersistenceHarness();
+  expect(harness).not.toBeNull();
+}, postgresTestHookTimeoutMs);
 
 afterEach(async () => {
-  await Promise.all(
-    servers.splice(0).map(
-      (server) =>
-        new Promise<void>((resolve) => {
-          server.close(resolve);
-        }),
-    ),
-  );
+  try {
+    await Promise.all(
+      servers.splice(0).map(
+        (server) =>
+          new Promise<void>((resolve) => {
+            server.close(resolve);
+          }),
+      ),
+    );
+    await harness?.resetData();
+  } finally {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
+afterAll(async () => {
+  await harness?.cleanup();
+  harness = null;
 });
 
 function makeConfig(root: string): DaemonConfig {
@@ -80,11 +99,11 @@ async function withApp(
   callback: (baseUrl: string, root: string) => Promise<void>,
 ): Promise<void> {
   const root = mkdtempSync(path.join(tmpdir(), 'runner-http-test-'));
+  tempDirs.push(root);
   mkdirSync(path.join(root, 'uploads'), { recursive: true });
   const config = makeConfig(root);
-  const db = openInMemoryDatabase();
-  applySchema(db);
-  const persistence = createSqliteRunnerPersistence(db);
+  expect(harness).not.toBeNull();
+  const persistence = harness!.persistence;
   const app = createApp({
     config,
     persistence,
@@ -100,7 +119,7 @@ async function withApp(
   await callback(`http://127.0.0.1:${port}`, root);
 }
 
-describe('health route', () => {
+postgresDescribe('health route', () => {
   it('returns ok without auth', async () => {
     await withApp(async (baseUrl) => {
       const response = await fetch(`${baseUrl}/api/health`);
@@ -111,7 +130,7 @@ describe('health route', () => {
   });
 });
 
-describe('profiles route', () => {
+postgresDescribe('profiles route', () => {
   it('requires auth', async () => {
     await withApp(async (baseUrl) => {
       const response = await fetch(`${baseUrl}/api/profiles`);
@@ -148,7 +167,7 @@ describe('profiles route', () => {
   });
 });
 
-describe('request body errors', () => {
+postgresDescribe('request body errors', () => {
   it('maps malformed JSON bodies to a generic 400 without leaking parser details', async () => {
     await withApp(async (baseUrl) => {
       const response = await fetch(`${baseUrl}/api/workspaces`, {
@@ -180,7 +199,7 @@ describe('request body errors', () => {
   });
 });
 
-describe('workspace routes', () => {
+postgresDescribe('workspace routes', () => {
   it('creates or gets a workspace', async () => {
     await withApp(async (baseUrl, root) => {
       const response = await fetch(`${baseUrl}/api/workspaces`, {

@@ -1,29 +1,48 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { parseDaemonConfig, type DaemonConfig } from '../../src/config/profiles.js';
 import { createRunService, type RunServiceRunnerFactory } from '../../src/core/run-service.js';
 import type { ClaudeCliRunResult } from '../../src/core/cli-runner.js';
 import { createWorkspaceService } from '../../src/core/workspace-service.js';
-import { openInMemoryDatabase } from '../../src/db/connection.js';
-import { getRunDetail, upsertWorkspace } from '../../src/db/repositories.js';
-import { applySchema } from '../../src/db/schema.js';
-import { createSqliteRunnerPersistence } from '../../src/db/sqlite-persistence.js';
+import type { RunnerPersistence } from '../../src/db/types.js';
 import { createApp } from '../../src/http/app.js';
+import { createPostgresFilePersistenceHarness } from '../helpers/postgres-persistence-harness.js';
+import { postgresTestHookTimeoutMs, requirePostgresTestUrl } from '../helpers/postgres.js';
 
+const postgresDescribe = requirePostgresTestUrl() === null ? describe.skip : describe;
 const servers: Array<{ close: (callback: () => void) => void }> = [];
+const tempDirs: string[] = [];
+let harness: Awaited<ReturnType<typeof createPostgresFilePersistenceHarness>> | null = null;
+
+beforeAll(async () => {
+  harness = await createPostgresFilePersistenceHarness();
+  expect(harness).not.toBeNull();
+}, postgresTestHookTimeoutMs);
 
 afterEach(async () => {
-  await Promise.all(
-    servers.splice(0).map(
-      (server) =>
-        new Promise<void>((resolve) => {
-          server.close(resolve);
-        }),
-    ),
-  );
+  try {
+    await Promise.all(
+      servers.splice(0).map(
+        (server) =>
+          new Promise<void>((resolve) => {
+            server.close(resolve);
+          }),
+      ),
+    );
+    await harness?.resetData();
+  } finally {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
+afterAll(async () => {
+  await harness?.cleanup();
+  harness = null;
 });
 
 function makeConfig(root: string): DaemonConfig {
@@ -102,14 +121,29 @@ function createTimerHarness() {
       task.callback();
       return task;
     },
+    clearAllTimers: () => {
+      for (const task of timers) {
+        task.cleared = true;
+      }
+    },
   };
+}
+
+async function waitForPersistedRunStatus(
+  persistence: RunnerPersistence,
+  input: { runId: string; status: string },
+): Promise<void> {
+  await vi.waitFor(async () => {
+    const detail = await persistence.getRunDetail({ runId: input.runId, clientId: 'lqbot' });
+    expect(detail?.run.status).toBe(input.status);
+  });
 }
 
 async function withApp(
   callback: (context: {
     baseUrl: string;
     config: DaemonConfig;
-    db: ReturnType<typeof openInMemoryDatabase>;
+    persistence: RunnerPersistence;
     runners: Array<{
       input: Parameters<RunServiceRunnerFactory>[0];
       cancel: ReturnType<typeof vi.fn>;
@@ -122,11 +156,11 @@ async function withApp(
   }) => Promise<void>,
 ): Promise<void> {
   const root = mkdtempSync(path.join(tmpdir(), 'runner-routes-test-'));
+  tempDirs.push(root);
   const config = makeConfig(root);
-  const db = openInMemoryDatabase();
-  applySchema(db);
-  const persistence = createSqliteRunnerPersistence(db);
-  const workspace = upsertWorkspace(db, {
+  expect(harness).not.toBeNull();
+  const persistence = harness!.persistence;
+  const workspace = await persistence.upsertWorkspace({
     id: 'ws_1',
     clientId: 'lqbot',
     profileId: 'report-docx',
@@ -171,33 +205,40 @@ async function withApp(
   const server = app.listen(0);
   servers.push(server);
   const { port } = server.address() as AddressInfo;
-  await callback({
-    baseUrl: `http://127.0.0.1:${port}`,
-    config,
-    db,
-    runners,
-    runNextTimer: timerHarness.runNextTimer,
-    startNextRun: async () => {
-      timerHarness.runNextTimer();
-      for (let index = 0; index < 5; index += 1) {
-        await new Promise((resolve) => setImmediate(resolve));
-        await new Promise((resolve) => setTimeout(resolve, 0));
-      }
-    },
-    runAllTimers: () => {
-      while (true) {
-        try {
-          timerHarness.runNextTimer();
-        } catch {
-          return;
+  try {
+    await callback({
+      baseUrl: `http://127.0.0.1:${port}`,
+      config,
+      persistence,
+      runners,
+      runNextTimer: timerHarness.runNextTimer,
+      startNextRun: async () => {
+        const previousRunnerCount = runners.length;
+        timerHarness.runNextTimer();
+        for (let index = 0; index < 50; index += 1) {
+          if (runners.length > previousRunnerCount) return;
+          await new Promise((resolve) => setImmediate(resolve));
+          await new Promise((resolve) => setTimeout(resolve, 0));
         }
-      }
-    },
-    workspaceId: workspace.id,
-  });
+        throw new Error('Runner did not start');
+      },
+      runAllTimers: () => {
+        while (true) {
+          try {
+            timerHarness.runNextTimer();
+          } catch {
+            return;
+          }
+        }
+      },
+      workspaceId: workspace.id,
+    });
+  } finally {
+    timerHarness.clearAllTimers();
+  }
 }
 
-describe('runs routes', () => {
+postgresDescribe('runs routes', () => {
   it('requires auth for run create', async () => {
     await withApp(async ({ baseUrl, workspaceId }) => {
       const response = await fetch(`${baseUrl}/api/runs`, {
@@ -382,7 +423,7 @@ describe('runs routes', () => {
   });
 
   it('returns durable run detail with filtered messages', async () => {
-    await withApp(async ({ baseUrl, workspaceId, runners, startNextRun }) => {
+    await withApp(async ({ baseUrl, workspaceId, runners, startNextRun, persistence }) => {
       await fetch(`${baseUrl}/api/runs`, {
         method: 'POST',
         headers: { Authorization: 'Bearer secret', 'Content-Type': 'application/json' },
@@ -399,7 +440,7 @@ describe('runs routes', () => {
       runners[0]!.input.onEvent({ type: 'thinking_delta', delta: 'Thinking.' });
       runners[0]!.input.onEvent({ type: 'text_delta', delta: 'Done.' });
       runners[0]!.complete({ status: 'succeeded', exitCode: 0, signal: null, stdoutTail: '', stderrTail: '' });
-      await Promise.resolve();
+      await waitForPersistedRunStatus(persistence, { runId: 'run_1', status: 'succeeded' });
 
       const response = await fetch(`${baseUrl}/api/runs/run_1`, {
         headers: { Authorization: 'Bearer secret' },
@@ -458,7 +499,7 @@ describe('runs routes', () => {
   });
 
   it('does not expose aggregated thinking content to quiet run detail', async () => {
-    await withApp(async ({ baseUrl, workspaceId, runners, startNextRun }) => {
+    await withApp(async ({ baseUrl, workspaceId, runners, startNextRun, persistence }) => {
       await fetch(`${baseUrl}/api/runs`, {
         method: 'POST',
         headers: { Authorization: 'Bearer secret', 'Content-Type': 'application/json' },
@@ -476,7 +517,7 @@ describe('runs routes', () => {
       runners[0]!.input.onEvent({ type: 'thinking_delta', delta: 'Hidden.' });
       runners[0]!.input.onEvent({ type: 'text_delta', delta: 'Done.' });
       runners[0]!.complete({ status: 'succeeded', exitCode: 0, signal: null, stdoutTail: '', stderrTail: '' });
-      await Promise.resolve();
+      await waitForPersistedRunStatus(persistence, { runId: 'run_1', status: 'succeeded' });
 
       const response = await fetch(`${baseUrl}/api/runs/run_1`, {
         headers: { Authorization: 'Bearer secret' },
@@ -496,7 +537,7 @@ describe('runs routes', () => {
   });
 
   it('replays terminal SSE events until in-memory cleanup expires', async () => {
-    await withApp(async ({ baseUrl, workspaceId, runners, startNextRun, runAllTimers, db }) => {
+    await withApp(async ({ baseUrl, workspaceId, runners, startNextRun, runAllTimers, persistence }) => {
       await fetch(`${baseUrl}/api/runs`, {
         method: 'POST',
         headers: { Authorization: 'Bearer secret', 'Content-Type': 'application/json' },
@@ -511,7 +552,7 @@ describe('runs routes', () => {
       await startNextRun();
       runners[0]!.input.onEvent({ type: 'text_delta', delta: 'Done.' });
       runners[0]!.complete({ status: 'succeeded', exitCode: 0, signal: null, stdoutTail: '', stderrTail: '' });
-      await Promise.resolve();
+      await waitForPersistedRunStatus(persistence, { runId: 'run_1', status: 'succeeded' });
 
       const response = await fetch(`${baseUrl}/api/runs/run_1/events?after=2`, {
         headers: { Authorization: 'Bearer secret' },
@@ -527,7 +568,7 @@ describe('runs routes', () => {
         headers: { Authorization: 'Bearer secret' },
       });
       expect(expired.status).toBe(404);
-      expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.run.status).toBe('succeeded');
+      expect((await persistence.getRunDetail({ runId: 'run_1', clientId: 'lqbot' }))?.run.status).toBe('succeeded');
     });
   });
 

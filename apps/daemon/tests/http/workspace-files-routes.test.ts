@@ -11,32 +11,45 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { parseDaemonConfig, type DaemonConfig } from '../../src/config/profiles.js';
 import { createUploadTempService, type UploadTempService } from '../../src/core/upload-temp-service.js';
 import { createWorkspaceService, getWorkspaceCwd } from '../../src/core/workspace-service.js';
-import { openInMemoryDatabase } from '../../src/db/connection.js';
-import { createSqliteRunnerPersistence } from '../../src/db/sqlite-persistence.js';
-import { upsertWorkspace } from '../../src/db/repositories.js';
-import { applySchema } from '../../src/db/schema.js';
 import { createApp } from '../../src/http/app.js';
+import { createPostgresFilePersistenceHarness } from '../helpers/postgres-persistence-harness.js';
+import { postgresTestHookTimeoutMs, requirePostgresTestUrl } from '../helpers/postgres.js';
 
+const postgresDescribe = requirePostgresTestUrl() === null ? describe.skip : describe;
 const servers: Array<{ close: (callback: () => void) => void }> = [];
 const tempDirs: string[] = [];
+let harness: Awaited<ReturnType<typeof createPostgresFilePersistenceHarness>> | null = null;
+
+beforeAll(async () => {
+  harness = await createPostgresFilePersistenceHarness();
+  expect(harness).not.toBeNull();
+}, postgresTestHookTimeoutMs);
 
 afterEach(async () => {
-  await Promise.all(
-    servers.splice(0).map(
-      (server) =>
-        new Promise<void>((resolve) => {
-          server.close(resolve);
-        }),
-    ),
-  );
-
-  for (const dir of tempDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
+  try {
+    await Promise.all(
+      servers.splice(0).map(
+        (server) =>
+          new Promise<void>((resolve) => {
+            server.close(resolve);
+          }),
+      ),
+    );
+    await harness?.resetData();
+  } finally {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }
+});
+
+afterAll(async () => {
+  await harness?.cleanup();
+  harness = null;
 });
 
 function makeConfig(root: string, input: { maxUploadBytesPerFile?: number } = {}): DaemonConfig {
@@ -120,9 +133,8 @@ async function withApp(
   tempDirs.push(root);
   mkdirSync(path.join(root, 'uploads'), { recursive: true });
   const config = makeConfig(root, input);
-  const db = openInMemoryDatabase();
-  applySchema(db);
-  const persistence = createSqliteRunnerPersistence(db);
+  expect(harness).not.toBeNull();
+  const persistence = harness!.persistence;
   const workspaceService = createWorkspaceService({
     persistence,
     ids: { workspaceId: () => 'ws_1' },
@@ -133,7 +145,7 @@ async function withApp(
     profile: config.profiles[0],
     workspace: { originId: 'lqbot', userId: 'user_1', projectId: 'project_123' },
   });
-  upsertWorkspace(db, {
+  await persistence.upsertWorkspace({
     id: 'ws_blocked',
     clientId: 'blocked',
     profileId: 'report-docx',
@@ -189,7 +201,7 @@ function expectTempRootEmpty(uploadTempService: UploadTempService): void {
   expect(readdirSync(tempRoot)).toEqual([]);
 }
 
-describe('workspace files route', () => {
+postgresDescribe('workspace files route', () => {
   it('requires auth before accepting multipart uploads', async () => {
     await withApp(async ({ baseUrl, workspaceId }) => {
       const response = await fetch(`${baseUrl}/api/workspaces/${workspaceId}/files`, {

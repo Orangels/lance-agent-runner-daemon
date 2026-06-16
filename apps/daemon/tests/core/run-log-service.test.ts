@@ -7,7 +7,7 @@ import {
   type RunLogClient,
 } from '../../src/core/run-log-service.js';
 import { createPostgresFilePersistenceHarness } from '../helpers/postgres-persistence-harness.js';
-import { requirePostgresTestUrl } from '../helpers/postgres.js';
+import { postgresTestHookTimeoutMs, requirePostgresTestUrl } from '../helpers/postgres.js';
 
 const postgresDescribe = requirePostgresTestUrl() === null ? describe.skip : describe;
 
@@ -17,7 +17,7 @@ let harness: Awaited<ReturnType<typeof createPostgresFilePersistenceHarness>> | 
 beforeAll(async () => {
   harness = await createPostgresFilePersistenceHarness();
   expect(harness).not.toBeNull();
-});
+}, postgresTestHookTimeoutMs);
 
 afterEach(async () => {
   try {

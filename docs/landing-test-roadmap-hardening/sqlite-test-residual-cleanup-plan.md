@@ -463,7 +463,7 @@ git commit -m "test: migrate small service tests to postgres"
 - Modify: `apps/daemon/tests/http/workspaces-routes.test.ts`
 - Reference: `apps/daemon/tests/http/postgres-api-flow.test.ts`
 
-- [ ] **Step 1: Use `postgres-api-flow.test.ts` as the route-test pattern**
+- [x] **Step 1: Use `postgres-api-flow.test.ts` as the route-test pattern**
 
 For each route test, prefer:
 
@@ -478,7 +478,7 @@ Wrap persistence-backed route tests inside a `postgresDescribe` block with the f
 
 `apps/daemon/tests/http/app-logging.test.ts` may use a narrow typed `RunnerPersistence` fake instead of PostgreSQL if the test only asserts request logging behavior and does not verify persistence semantics. The fake must not import SQLite modules.
 
-- [ ] **Step 2: Remove direct SQLite DB fields and helper calls from route tests**
+- [x] **Step 2: Remove direct SQLite DB fields and helper calls from route tests**
 
 For each converted route test, remove `db` from helper return types such as the `withApp` helper in `runs-routes.test.ts` and delete imports from:
 
@@ -515,7 +515,7 @@ Apply the same async conversion to route tests that currently seed or assert wit
 - `artifacts-routes.test.ts`: replace `upsertWorkspace`, `insertRunQueued`, and `replaceArtifactsForRun` calls that pass `db`.
 - `feedback-routes.test.ts`: replace `upsertWorkspace` and `createRunQueuedWithMessagesAndSnapshot` calls that pass `db`.
 
-- [ ] **Step 3: Keep pure HTTP utility tests database-free**
+- [x] **Step 3: Keep pure HTTP utility tests database-free**
 
 Do not add PG to tests that do not currently use persistence, such as:
 
@@ -523,7 +523,7 @@ Do not add PG to tests that do not currently use persistence, such as:
 - `apps/daemon/tests/http/sse.test.ts`
 - `apps/daemon/tests/http/validation.test.ts`
 
-- [ ] **Step 4: Run each route test after conversion**
+- [x] **Step 4: Run each route test after conversion**
 
 Run:
 
@@ -540,7 +540,7 @@ CLAUDE_RUNNER_TEST_PG_URL="$CLAUDE_RUNNER_TEST_PG_URL" pnpm --filter @lance-agen
 
 Expected: each converted file passes on PostgreSQL.
 
-- [ ] **Step 5: Commit the route migration slice**
+- [x] **Step 5: Commit the route migration slice**
 
 ```bash
 git add apps/daemon/tests/http apps/daemon/tests/helpers

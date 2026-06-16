@@ -3,6 +3,9 @@ import { createPostgresPool } from '../../src/db/postgres/connection.js';
 
 const testLockKey = 4_210_614;
 
+// File-level PG harnesses share one advisory lock and each holder resets+migrates the schema.
+export const postgresTestHookTimeoutMs = 60_000;
+
 export function requirePostgresTestUrl(): string | null {
   const databaseUrl = process.env.CLAUDE_RUNNER_TEST_PG_URL ?? null;
   if (process.env.CI === 'true' && databaseUrl === null) {

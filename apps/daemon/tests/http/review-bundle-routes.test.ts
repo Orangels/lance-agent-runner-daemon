@@ -2,29 +2,39 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { parseDaemonConfig, type DaemonConfig } from '../../src/config/profiles.js';
 import { createReviewBundleService } from '../../src/core/review-bundle-service.js';
 import { createRunLogService } from '../../src/core/run-log-service.js';
 import { createWorkspaceService } from '../../src/core/workspace-service.js';
-import { openInMemoryDatabase } from '../../src/db/connection.js';
-import {
-  createRunQueuedWithMessagesAndSnapshot,
-  upsertRunPromptSnapshot,
-  upsertWorkspace,
-} from '../../src/db/repositories.js';
-import { applySchema } from '../../src/db/schema.js';
-import { createSqliteRunnerPersistence } from '../../src/db/sqlite-persistence.js';
 import { createApp } from '../../src/http/app.js';
+import { createPostgresFilePersistenceHarness } from '../helpers/postgres-persistence-harness.js';
+import { postgresTestHookTimeoutMs, requirePostgresTestUrl } from '../helpers/postgres.js';
 
+const postgresDescribe = requirePostgresTestUrl() === null ? describe.skip : describe;
 const servers: Array<{ close: (callback: () => void) => void }> = [];
 const tempDirs: string[] = [];
+let harness: Awaited<ReturnType<typeof createPostgresFilePersistenceHarness>> | null = null;
+
+beforeAll(async () => {
+  harness = await createPostgresFilePersistenceHarness();
+  expect(harness).not.toBeNull();
+}, postgresTestHookTimeoutMs);
 
 afterEach(async () => {
-  await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(resolve))));
-  for (const dir of tempDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
+  try {
+    await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(resolve))));
+    await harness?.resetData();
+  } finally {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }
+});
+
+afterAll(async () => {
+  await harness?.cleanup();
+  harness = null;
 });
 
 function makeConfig(root: string): DaemonConfig {
@@ -74,10 +84,9 @@ async function withApp(callback: (context: { baseUrl: string }) => Promise<void>
   const root = mkdtempSync(path.join(tmpdir(), 'review-bundle-routes-test-'));
   tempDirs.push(root);
   const config = makeConfig(root);
-  const db = openInMemoryDatabase();
-  applySchema(db);
-  const persistence = createSqliteRunnerPersistence(db);
-  const workspace = upsertWorkspace(db, {
+  expect(harness).not.toBeNull();
+  const persistence = harness!.persistence;
+  const workspace = await persistence.upsertWorkspace({
     id: 'ws_1',
     clientId: 'lqbot',
     profileId: 'report-docx',
@@ -86,7 +95,7 @@ async function withApp(callback: (context: { baseUrl: string }) => Promise<void>
     projectId: 'project_1',
     now: 1000,
   });
-  createRunQueuedWithMessagesAndSnapshot(db, {
+  await persistence.createRunQueuedWithMessagesAndSnapshot({
     runId: 'run_1',
     conversationId: 'conv_1',
     userMessageId: 'msg_user',
@@ -99,7 +108,7 @@ async function withApp(callback: (context: { baseUrl: string }) => Promise<void>
     profileSnapshot: { profileId: workspace.profileId },
     now: 2000,
   });
-  upsertRunPromptSnapshot(db, {
+  await persistence.upsertRunPromptSnapshot({
     runId: 'run_1',
     promptSnapshot: 'final prompt',
     promptSnapshotHash: 'sha256:prompt',
@@ -126,7 +135,7 @@ async function withApp(callback: (context: { baseUrl: string }) => Promise<void>
   await callback({ baseUrl: `http://127.0.0.1:${port}` });
 }
 
-describe('review bundle routes', () => {
+postgresDescribe('review bundle routes', () => {
   it('requires auth', async () => {
     await withApp(async ({ baseUrl }) => {
       expect((await fetch(`${baseUrl}/api/runs/run_1/review-bundle/download`)).status).toBe(401);
