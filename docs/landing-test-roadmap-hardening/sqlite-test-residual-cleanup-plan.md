@@ -98,7 +98,7 @@ If migration tests still need old SQLite schema creation, move that fixture code
 - Create: `apps/daemon/tests/helpers/postgres-domain-fixtures.ts`
 - Test through first converted service test.
 
-- [ ] **Step 1: Add reusable fixture helpers around the existing harness**
+- [x] **Step 1: Add reusable fixture helpers around the existing harness**
 
 Add a helper file for repeated PG domain setup. Keep the helper small and PG-specific. Start with this workspace fixture:
 
@@ -133,7 +133,7 @@ export async function seedWorkspace(
 }
 ```
 
-- [ ] **Step 2: Keep CI fail-fast semantics intact**
+- [x] **Step 2: Keep CI fail-fast semantics intact**
 
 Do not change `apps/daemon/tests/helpers/postgres.ts` unless a converted test reveals a real harness gap. If it is touched, preserve this behavior:
 
@@ -143,7 +143,7 @@ if (process.env.CI === 'true' && databaseUrl === null) {
 }
 ```
 
-- [ ] **Step 3: Run the first PG-backed test slice**
+- [x] **Step 3: Run the first PG-backed test slice**
 
 Run:
 
@@ -165,7 +165,7 @@ Expected: the test runs against PostgreSQL and passes. If `CLAUDE_RUNNER_TEST_PG
 - Keep: `apps/daemon/src/db/migration/sqlite-to-postgres.ts`
 - Keep: `apps/daemon/src/db/migration/verify-sqlite-to-postgres.ts`
 
-- [ ] **Step 1: Create a migration-only SQLite source fixture helper**
+- [x] **Step 1: Create a migration-only SQLite source fixture helper**
 
 Create `apps/daemon/tests/db/sqlite-source-fixtures.ts`. It must replace all imports from runtime SQLite modules in migration tests.
 
@@ -185,7 +185,7 @@ export function openSqliteSourceDatabase(filename = ':memory:'): SqliteSourceDat
 
 Then move the current `applySchema` implementation from `apps/daemon/src/db/schema.ts` into `applyLegacySqliteSourceSchema(db)`. The implementation must paste the real legacy SQLite schema SQL into the test fixture helper so migration tests can create old source databases without importing runtime SQLite modules.
 
-- [ ] **Step 2: Move migration-test SQLite write helpers into the fixture helper**
+- [x] **Step 2: Move migration-test SQLite write helpers into the fixture helper**
 
 The migration tests currently use runtime repository helpers. Replace those dependencies by moving the needed old-source writes into `sqlite-source-fixtures.ts`.
 
@@ -233,7 +233,7 @@ This table list is required because migration tests assert run detail messages a
 
 Also remove the unused `insertRunQueued` import from `sqlite-to-postgres.test.ts` if it is still unused after the helper migration.
 
-- [ ] **Step 3: Update migration tests to import only migration fixture helpers**
+- [x] **Step 3: Update migration tests to import only migration fixture helpers**
 
 Replace imports of runtime SQLite modules:
 
@@ -260,7 +260,7 @@ import {
 
 After this step, these two tests must not import from `../../src/db/connection.js`, `../../src/db/schema.js`, or `../../src/db/repositories.js`.
 
-- [ ] **Step 4: Run migration tests**
+- [x] **Step 4: Run migration tests**
 
 Run:
 

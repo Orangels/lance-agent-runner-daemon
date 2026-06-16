@@ -2,16 +2,15 @@ import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { openDatabase } from '../../src/db/connection.js';
 import { migrateSqliteToPostgres } from '../../src/db/migration/sqlite-to-postgres.js';
 import { runPostgresMigrations } from '../../src/db/postgres/migrate.js';
 import { createPostgresRunnerPersistence } from '../../src/db/postgres/repositories.js';
 import {
-  createRunQueuedWithMessagesAndSnapshot,
-  insertRunQueued,
-  upsertWorkspace,
-} from '../../src/db/repositories.js';
-import { applySchema } from '../../src/db/schema.js';
+  applyLegacySqliteSourceSchema,
+  createLegacyRunWithMessages,
+  createLegacyWorkspace,
+  openSqliteSourceDatabase,
+} from './sqlite-source-fixtures.js';
 import {
   acquirePostgresTestLock,
   createPostgresTestPool,
@@ -132,9 +131,9 @@ postgresDescribe('sqlite to postgres migration', () => {
 function createPopulatedSqliteSource(): string {
   const root = mkdtempSync(path.join(tmpdir(), 'runner-sqlite-source-'));
   const sqlitePath = path.join(root, 'runner.sqlite');
-  const db = openDatabase(sqlitePath);
-  applySchema(db);
-  const workspace = upsertWorkspace(db, {
+  const db = openSqliteSourceDatabase(sqlitePath);
+  applyLegacySqliteSourceSchema(db);
+  const workspace = createLegacyWorkspace(db, {
     id: 'ws_1',
     clientId: 'lqbot',
     profileId: 'report-docx',
@@ -143,7 +142,7 @@ function createPopulatedSqliteSource(): string {
     projectId: 'project_123',
     now: 1000,
   });
-  createRunQueuedWithMessagesAndSnapshot(db, {
+  createLegacyRunWithMessages(db, {
     runId: 'run_1',
     conversationId: 'conv_1',
     userMessageId: 'msg_user',
@@ -165,7 +164,7 @@ function createPopulatedSqliteSource(): string {
 function createOldSqliteSource(): string {
   const root = mkdtempSync(path.join(tmpdir(), 'runner-old-sqlite-source-'));
   const sqlitePath = path.join(root, 'runner.sqlite');
-  const db = openDatabase(sqlitePath);
+  const db = openSqliteSourceDatabase(sqlitePath);
   db.exec(`
     CREATE TABLE workspaces (
       id TEXT PRIMARY KEY,
@@ -305,7 +304,7 @@ function createOldSqliteSource(): string {
 function createInvalidForeignKeySqliteSource(): string {
   const root = mkdtempSync(path.join(tmpdir(), 'runner-invalid-sqlite-source-'));
   const sqlitePath = path.join(root, 'runner.sqlite');
-  const db = openDatabase(sqlitePath);
+  const db = openSqliteSourceDatabase(sqlitePath);
   db.exec(`
     CREATE TABLE workspaces (
       id TEXT PRIMARY KEY,

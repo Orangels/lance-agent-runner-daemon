@@ -2,15 +2,15 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { openDatabase } from '../../src/db/connection.js';
 import { migrateSqliteToPostgres } from '../../src/db/migration/sqlite-to-postgres.js';
 import { verifySqliteToPostgres } from '../../src/db/migration/verify-sqlite-to-postgres.js';
 import { runPostgresMigrations } from '../../src/db/postgres/migrate.js';
 import {
-  createRunQueuedWithMessagesAndSnapshot,
-  upsertWorkspace,
-} from '../../src/db/repositories.js';
-import { applySchema } from '../../src/db/schema.js';
+  applyLegacySqliteSourceSchema,
+  createLegacyRunWithMessages,
+  createLegacyWorkspace,
+  openSqliteSourceDatabase,
+} from './sqlite-source-fixtures.js';
 import {
   acquirePostgresTestLock,
   createPostgresTestPool,
@@ -66,9 +66,9 @@ postgresDescribe('sqlite to postgres verification', () => {
 function createPopulatedSqliteSource(): string {
   const root = mkdtempSync(path.join(tmpdir(), 'runner-verify-sqlite-source-'));
   const sqlitePath = path.join(root, 'runner.sqlite');
-  const db = openDatabase(sqlitePath);
-  applySchema(db);
-  const workspace = upsertWorkspace(db, {
+  const db = openSqliteSourceDatabase(sqlitePath);
+  applyLegacySqliteSourceSchema(db);
+  const workspace = createLegacyWorkspace(db, {
     id: 'ws_verify',
     clientId: 'lqbot',
     profileId: 'report-docx',
@@ -77,7 +77,7 @@ function createPopulatedSqliteSource(): string {
     projectId: 'project_123',
     now: 1000,
   });
-  createRunQueuedWithMessagesAndSnapshot(db, {
+  createLegacyRunWithMessages(db, {
     runId: 'run_verify',
     conversationId: 'conv_verify',
     userMessageId: 'msg_verify_user',
