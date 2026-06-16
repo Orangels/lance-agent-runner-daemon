@@ -457,7 +457,7 @@ Business-context 示例：
 
 如果同一个 `idempotencyKey` 搭配了不同 webhook 参数，例如不同 URL、statuses、metadata 或 secret，daemon 会返回 `409 IDEMPOTENCY_KEY_CONFLICT`。业务端主动 retry / 新派发应使用新的 `idempotencyKey`。
 
-Webhook delivery 是异步 outbox，不阻塞 run 创建或执行。daemon 会在 create-run 阶段校验 webhook URL 是否符合 `server.webhooks` 的协议、host、端口和内网 CIDR 策略，但不会预先 POST 探测业务端接口是否可用。URL 无法访问、返回 429/5xx 或超时会按 daemon 配置重试；不可重试 4xx 或达到最大次数后会标记为 abandoned。业务端仍可以继续使用 Poll/SSE 作为兜底。
+Webhook delivery 是异步 outbox，不阻塞 run 创建或执行。daemon 会在新建 run 时校验 webhook URL 是否符合 `server.webhooks` 的协议、host、端口和内网 CIDR 策略，但不会预先 POST 探测业务端接口是否可用。若同一 `idempotencyKey` 命中已有 run 且 fingerprint 一致，daemon 会直接返回旧 run，不会重新按当前 webhook URL 策略校验旧请求。URL 无法访问、返回 429/5xx 或超时会按 daemon 配置重试；不可重试 4xx 或达到最大次数后会标记为 abandoned。业务端仍可以继续使用 Poll/SSE 作为兜底。
 
 Webhook payload 示例：
 

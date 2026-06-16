@@ -199,7 +199,7 @@ Default internal deployment behavior:
 | `claimLimit` | Maximum due rows claimed per drain. Keep close to `maxConcurrentDeliveries` so claimed rows are processed well inside `lockTimeoutMs`. |
 | `maxConcurrentDeliveries` | Maximum concurrent HTTP webhook deliveries per daemon worker. |
 | `stopGraceMs` | Maximum shutdown wait for in-flight webhook HTTP requests before aborting and relying on durable outbox recovery. |
-| `responseBodyPreviewBytes` | Bounded response body tail stored for diagnostics. |
+| `responseBodyPreviewBytes` | Maximum webhook response-body tail bytes stored for diagnostics. Response preview reading is bounded and covered by `requestTimeoutMs`. |
 
 The worker uses PostgreSQL `LISTEN/NOTIFY` as a wake-up hint and claims work with `FOR UPDATE SKIP LOCKED`; it does not poll the outbox on a fixed interval. The URL policy performs DNS lookup before fetch and disables redirects. This is an SSRF guardrail for a trusted-caller deployment model, not a complete DNS-rebinding defense.
 

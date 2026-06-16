@@ -1,8 +1,10 @@
 # Webhook Notifications Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Status, 2026-06-15:** Implemented on the PostgreSQL persistence branch. Tasks 1-9 are complete and the plan is now an implementation confirmation record. Task 10 remains a verification checklist: automated daemon typecheck/build and targeted webhook tests have been run during implementation, while the optional local webhook receiver smoke test should be run when a real receiver is available.
 
-**Goal:** Add optional, durable webhook notifications for daemon run status changes so business backends can receive active callbacks while Poll, SSE, artifacts, and logs remain the source of truth.
+> **Historical agent note:** This plan was originally written for agentic workers to execute task-by-task. Checkboxes below now reflect implementation status rather than open planning work.
+
+**Goal:** Add durable, per-run optional webhook notifications for daemon run status changes so business backends can receive active callbacks while Poll, SSE, artifacts, and logs remain the source of truth and recovery paths.
 
 **Architecture:** Store optional per-run webhook configuration at run creation time, create webhook delivery jobs from committed run status transitions using PostgreSQL outbox tables, and deliver callbacks from an asynchronous worker with timeout, retry, backoff, signing, SSRF guardrails, and audit history. Never block run creation, run execution, artifact finalization, terminal state persistence, Poll, or SSE on a remote webhook endpoint.
 
@@ -762,232 +764,232 @@ If `shutdownActiveRuns()` creates `interrupted` webhook deliveries during shutdo
 
 ### Task 1: Request Types And Validation
 
-- [ ] Add webhook request types to `apps/daemon/src/core/run-types.ts`.
-- [ ] Add validation tests in `tests/http/validation.test.ts`:
-  - [ ] accepts a valid webhook object.
-  - [ ] accepts omitted `statuses`.
-  - [ ] rejects empty `url`.
-  - [ ] rejects non-array `statuses`.
-  - [ ] rejects unknown status.
-  - [ ] rejects overlong secret.
-  - [ ] rejects unknown fields due strict schema.
-- [ ] Update `apps/daemon/src/http/validation.ts`.
-- [ ] Run `pnpm --filter @lance-agent-runner/daemon test -- tests/http/validation.test.ts`.
+- [x] Add webhook request types to `apps/daemon/src/core/run-types.ts`.
+- [x] Add validation tests in `tests/http/validation.test.ts`:
+  - [x] accepts a valid webhook object.
+  - [x] accepts omitted `statuses`.
+  - [x] rejects empty `url`.
+  - [x] rejects non-array `statuses`.
+  - [x] rejects unknown status.
+  - [x] rejects overlong secret.
+  - [x] rejects unknown fields due strict schema.
+- [x] Update `apps/daemon/src/http/validation.ts`.
+- [x] Run `pnpm --filter @lance-agent-runner/daemon test -- tests/http/validation.test.ts`.
 
 Expected red first: strict schema rejects `webhook`.
 
 ### Task 2: Config Model
 
-- [ ] Add `WebhookConfig` to `apps/daemon/src/config/profiles.ts`.
-- [ ] Add config parser tests in the existing config test file:
-  - [ ] existing configs that omit `server.webhooks` still parse because the whole object has a default.
-  - [ ] default webhook config is applied.
-  - [ ] explicit webhook config is parsed.
-  - [ ] invalid timeout/concurrency values are rejected.
-  - [ ] `lockTimeoutMs` must be greater than `requestTimeoutMs`.
-  - [ ] `lockTimeoutMs` materially exceeds the default `requestTimeoutMs` in default config.
-  - [ ] `allowedHosts` accepts non-empty host strings.
-  - [ ] `listenReconnectBackoffMs` is parsed and is not treated as a polling interval.
-  - [ ] `listenKeepaliveMs` is parsed and is not treated as a polling interval.
-  - [ ] `listenKeepaliveTimeoutMs` is parsed and must be less than or equal to `listenKeepaliveMs`.
-  - [ ] `stopGraceMs` is parsed and bounds shutdown wait.
-  - [ ] `maxAttempts` must be at least `1`.
-  - [ ] default `claimLimit` stays close to `maxConcurrentDeliveries`.
-  - [ ] default `claimLimit`, `maxConcurrentDeliveries`, `requestTimeoutMs`, and `lockTimeoutMs` satisfy the conservative 3x claimed-batch safety invariant: `ceil(claimLimit / maxConcurrentDeliveries) * requestTimeoutMs <= lockTimeoutMs / 3`.
-- [ ] Update configuration docs after implementation, not before tests pass.
-- [ ] Run the relevant config test file.
+- [x] Add `WebhookConfig` to `apps/daemon/src/config/profiles.ts`.
+- [x] Add config parser tests in the existing config test file:
+  - [x] existing configs that omit `server.webhooks` still parse because the whole object has a default.
+  - [x] default webhook config is applied.
+  - [x] explicit webhook config is parsed.
+  - [x] invalid timeout/concurrency values are rejected.
+  - [x] `lockTimeoutMs` must be greater than `requestTimeoutMs`.
+  - [x] `lockTimeoutMs` materially exceeds the default `requestTimeoutMs` in default config.
+  - [x] `allowedHosts` accepts non-empty host strings.
+  - [x] `listenReconnectBackoffMs` is parsed and is not treated as a polling interval.
+  - [x] `listenKeepaliveMs` is parsed and is not treated as a polling interval.
+  - [x] `listenKeepaliveTimeoutMs` is parsed and must be less than or equal to `listenKeepaliveMs`.
+  - [x] `stopGraceMs` is parsed and bounds shutdown wait.
+  - [x] `maxAttempts` must be at least `1`.
+  - [x] default `claimLimit` stays close to `maxConcurrentDeliveries`.
+  - [x] default `claimLimit`, `maxConcurrentDeliveries`, `requestTimeoutMs`, and `lockTimeoutMs` satisfy the conservative 3x claimed-batch safety invariant: `ceil(claimLimit / maxConcurrentDeliveries) * requestTimeoutMs <= lockTimeoutMs / 3`.
+- [x] Update configuration docs after implementation, not before tests pass.
+- [x] Run the relevant config test file.
 
 Expected red first: parser rejects `server.webhooks`, or existing config tests fail if the object-level default is missing.
 
 ### Task 3: PostgreSQL Schema And Repository
 
-- [ ] Add migration `apps/daemon/src/db/postgres/migrations/20260615T000000_create_webhook_notifications.ts`.
-- [ ] Include `down(pgm)` in the migration and drop tables in dependency order: `webhook_delivery_attempts`, then `webhook_deliveries`, then `run_webhooks`.
-- [ ] Add records and repository inputs to `apps/daemon/src/db/types.ts`.
-- [ ] Implement row mapping and repository methods in `apps/daemon/src/db/postgres/repositories.ts`.
-- [ ] If the legacy SQLite test facade still implements `RunnerPersistence`, add minimal webhook method stubs there for type compatibility only. Do not add webhook tables to the SQLite schema.
-- [ ] Add PG-gated tests in `tests/db/postgres-repositories.test.ts`:
-  - [ ] inserts webhook config for a run.
-  - [ ] creates a queued delivery only once for the same webhook/status.
-  - [ ] claims due deliveries with `FOR UPDATE SKIP LOCKED` semantics.
-  - [ ] reclaims stale `delivering` deliveries when `locked_at < now - lockTimeoutMs`.
-  - [ ] does not reclaim fresh `delivering` deliveries.
-  - [ ] increments `attempt_count` atomically in `claimDueWebhookDeliveries(...)` when a row is moved to `delivering`.
-  - [ ] stale recovery increments `attempt_count` again and may create skipped `deliveryAttempt` values after crash-before-send.
-  - [ ] due or stale rows that already reached `maxAttempts` are marked `abandoned` during claim, returned in `abandonedIds`, and are not returned for HTTP delivery.
-  - [ ] claimed delivery jobs include `webhookUrl` and `webhookSecret` from `run_webhooks`.
-  - [ ] claim result mapping handles `json_agg` rows where `bigint` fields arrive as JavaScript numbers instead of strings.
-  - [ ] claim clears `response_status`, `response_body_preview`, and `error_message` when moving a row to `delivering`.
-  - [ ] claim uses one captured `now` value for due comparison, stale-lock cutoff, lock timestamp, and `last_attempt_at`.
-  - [ ] marks success and records delivered timestamp.
-  - [ ] marks retry with next attempt and error preview.
-  - [ ] abandons after max attempts without overwriting the last real `error_message`.
-  - [ ] worker-driven abandon after the final real HTTP/network failure stores that attempt's actual error details.
-  - [ ] inserts attempt audit rows.
-  - [ ] sends `NOTIFY daemon_webhook_delivery` when a new delivery insert wins.
-  - [ ] sends delivery insert `NOTIFY` on the same transaction client as the insert and only after commit reaches listeners.
-  - [ ] does not notify when delivery insert is skipped by `ON CONFLICT DO NOTHING`.
-  - [ ] sends `NOTIFY daemon_webhook_delivery` when a retrying row is rescheduled, including future `nextAttemptAt`.
-  - [ ] sends retry `NOTIFY` on the same transaction client as the retry update and rolls it back if the transaction rolls back.
-  - [ ] does not notify from claim, succeeded, or abandoned updates.
-  - [ ] returns the nearest future pending/retrying `next_attempt_at` from `getNextWebhookDeliveryDueAt({ lockTimeoutMs })`.
-  - [ ] returns the nearest stale-delivering recovery time from `getNextWebhookDeliveryDueAt({ lockTimeoutMs })`.
-  - [ ] startup interrupted update creates interrupted delivery rows with payloads built by the shared payload builder.
-  - [ ] startup interrupted delivery insertion uses conflict-safe semantics and does not duplicate interrupted deliveries.
-- [ ] Add or update a typecheck-facing test/compile path so adding webhook methods to `RunnerPersistence` does not break the legacy SQLite test facade.
-- [ ] Run `pnpm --filter @lance-agent-runner/daemon test -- tests/db/postgres-repositories.test.ts` with `CLAUDE_RUNNER_TEST_PG_URL`.
+- [x] Add migration `apps/daemon/src/db/postgres/migrations/20260615T000000_create_webhook_notifications.ts`.
+- [x] Include `down(pgm)` in the migration and drop tables in dependency order: `webhook_delivery_attempts`, then `webhook_deliveries`, then `run_webhooks`.
+- [x] Add records and repository inputs to `apps/daemon/src/db/types.ts`.
+- [x] Implement row mapping and repository methods in `apps/daemon/src/db/postgres/repositories.ts`.
+- [x] If the legacy SQLite test facade still implements `RunnerPersistence`, add minimal webhook method stubs there for type compatibility only. Do not add webhook tables to the SQLite schema.
+- [x] Add PG-gated tests in `tests/db/postgres-repositories.test.ts`:
+  - [x] inserts webhook config for a run.
+  - [x] creates a queued delivery only once for the same webhook/status.
+  - [x] claims due deliveries with `FOR UPDATE SKIP LOCKED` semantics.
+  - [x] reclaims stale `delivering` deliveries when `locked_at < now - lockTimeoutMs`.
+  - [x] does not reclaim fresh `delivering` deliveries.
+  - [x] increments `attempt_count` atomically in `claimDueWebhookDeliveries(...)` when a row is moved to `delivering`.
+  - [x] stale recovery increments `attempt_count` again and may create skipped `deliveryAttempt` values after crash-before-send.
+  - [x] due or stale rows that already reached `maxAttempts` are marked `abandoned` during claim, returned in `abandonedIds`, and are not returned for HTTP delivery.
+  - [x] claimed delivery jobs include `webhookUrl` and `webhookSecret` from `run_webhooks`.
+  - [x] claim result mapping handles `json_agg` rows where `bigint` fields arrive as JavaScript numbers instead of strings.
+  - [x] claim clears `response_status`, `response_body_preview`, and `error_message` when moving a row to `delivering`.
+  - [x] claim uses one captured `now` value for due comparison, stale-lock cutoff, lock timestamp, and `last_attempt_at`.
+  - [x] marks success and records delivered timestamp.
+  - [x] marks retry with next attempt and error preview.
+  - [x] abandons after max attempts without overwriting the last real `error_message`.
+  - [x] worker-driven abandon after the final real HTTP/network failure stores that attempt's actual error details.
+  - [x] inserts attempt audit rows.
+  - [x] sends `NOTIFY daemon_webhook_delivery` when a new delivery insert wins.
+  - [x] sends delivery insert `NOTIFY` on the same transaction client as the insert and only after commit reaches listeners.
+  - [x] does not notify when delivery insert is skipped by `ON CONFLICT DO NOTHING`.
+  - [x] sends `NOTIFY daemon_webhook_delivery` when a retrying row is rescheduled, including future `nextAttemptAt`.
+  - [x] sends retry `NOTIFY` on the same transaction client as the retry update and rolls it back if the transaction rolls back.
+  - [x] does not notify from claim, succeeded, or abandoned updates.
+  - [x] returns the nearest future pending/retrying `next_attempt_at` from `getNextWebhookDeliveryDueAt({ lockTimeoutMs })`.
+  - [x] returns the nearest stale-delivering recovery time from `getNextWebhookDeliveryDueAt({ lockTimeoutMs })`.
+  - [x] startup interrupted update creates interrupted delivery rows with payloads built by the shared payload builder.
+  - [x] startup interrupted delivery insertion uses conflict-safe semantics and does not duplicate interrupted deliveries.
+- [x] Add or update a typecheck-facing test/compile path so adding webhook methods to `RunnerPersistence` does not break the legacy SQLite test facade.
+- [x] Run `pnpm --filter @lance-agent-runner/daemon test -- tests/db/postgres-repositories.test.ts` with `CLAUDE_RUNNER_TEST_PG_URL`.
 
 Expected red first: new tables and methods do not exist.
 
 ### Task 4: Run Service Outbox Creation
 
-- [ ] Keep existing SQLite-backed `tests/core/run-service.test.ts` focused on non-webhook behavior unless and until the SQLite test facade is removed. It should continue to pass without creating webhook tables.
-- [ ] Add a guard regression test using the existing SQLite-backed setup: create a run without `webhook` and drive it through running/terminal paths while the legacy webhook facade methods throw. The test must prove no webhook persistence method is called when no webhook was requested.
-- [ ] Add PG-backed run-service or API-flow webhook tests using the existing PostgreSQL harness:
-  - [ ] create run with terminal-only webhook stores config but no queued delivery by default.
-  - [ ] create run with `queued` subscription creates exactly one queued delivery.
-  - [ ] idempotent replay does not create duplicate webhook config or delivery.
-  - [ ] `running` transition creates a running delivery when subscribed.
-  - [ ] terminal success creates a delivery with artifact summary.
-  - [ ] cancel/fail/interrupted terminal transitions create terminal deliveries.
-  - [ ] webhook fields participate in idempotency conflict detection.
-- [ ] Add a regression test that omitting `webhook` preserves the current idempotency fingerprint. A run created before this change and replayed without webhook must not fail with `IDEMPOTENCY_KEY_CONFLICT`.
-- [ ] Add a regression test that webhook secret contributes only as a hash in the fingerprint input.
-- [ ] Add a regression test that transition decisions use `RunState` webhook subscription data and do not query persistence to discover webhook config.
-- [ ] Add tests for the shared payload builder so queued/running/terminal/startup-interrupted payloads share one schema source.
-- [ ] Update create-run normalization and fingerprint code.
-- [ ] Insert webhook config inside the same create-run transaction as run creation.
-- [ ] Insert status delivery rows through repository outbox helpers.
-- [ ] Keep remote HTTP delivery out of run-service tests and run-service implementation.
-- [ ] Run the new PG-backed webhook test file with `CLAUDE_RUNNER_TEST_PG_URL`.
-- [ ] Run `pnpm --filter @lance-agent-runner/daemon test -- tests/core/run-service.test.ts` to prove old non-webhook tests still pass.
+- [x] Keep existing SQLite-backed `tests/core/run-service.test.ts` focused on non-webhook behavior unless and until the SQLite test facade is removed. It should continue to pass without creating webhook tables.
+- [x] Add a guard regression test using the existing SQLite-backed setup: create a run without `webhook` and drive it through running/terminal paths while the legacy webhook facade methods throw. The test must prove no webhook persistence method is called when no webhook was requested.
+- [x] Add PG-backed run-service or API-flow webhook tests using the existing PostgreSQL harness:
+  - [x] create run with terminal-only webhook stores config but no queued delivery by default.
+  - [x] create run with `queued` subscription creates exactly one queued delivery.
+  - [x] idempotent replay does not create duplicate webhook config or delivery.
+  - [x] `running` transition creates a running delivery when subscribed.
+  - [x] terminal success creates a delivery with artifact summary.
+  - [x] cancel/fail/interrupted terminal transitions create terminal deliveries.
+  - [x] webhook fields participate in idempotency conflict detection.
+- [x] Add a regression test that omitting `webhook` preserves the current idempotency fingerprint. A run created before this change and replayed without webhook must not fail with `IDEMPOTENCY_KEY_CONFLICT`.
+- [x] Add a regression test that webhook secret contributes only as a hash in the fingerprint input.
+- [x] Add a regression test that transition decisions use `RunState` webhook subscription data and do not query persistence to discover webhook config.
+- [x] Add tests for the shared payload builder so queued/running/terminal/startup-interrupted payloads share one schema source.
+- [x] Update create-run normalization and fingerprint code.
+- [x] Insert webhook config inside the same create-run transaction as run creation.
+- [x] Insert status delivery rows through repository outbox helpers.
+- [x] Keep remote HTTP delivery out of run-service tests and run-service implementation.
+- [x] Run the new PG-backed webhook test file with `CLAUDE_RUNNER_TEST_PG_URL`.
+- [x] Run `pnpm --filter @lance-agent-runner/daemon test -- tests/core/run-service.test.ts` to prove old non-webhook tests still pass.
 
 Expected red first: webhook fields are ignored and no outbox rows are created.
 
 ### Task 5: Delivery Worker
 
-- [ ] Create `apps/daemon/src/core/webhook-url-policy.ts`.
-- [ ] Create `apps/daemon/src/core/webhook-signing.ts`.
-- [ ] Create `apps/daemon/src/core/webhook-delivery-service.ts`.
-- [ ] Add unit tests:
-  - [ ] signs payload with `X-Daemon-Webhook-*` headers.
-  - [ ] unsigned payload omits signature header but still sends delivery id and timestamp.
-  - [ ] rejects unsafe URLs before fetch.
-  - [ ] documents and tests the supported guardrails without claiming complete DNS-rebinding protection.
-  - [ ] does not follow redirects.
-  - [ ] marks 2xx as succeeded.
-  - [ ] retries timeout, network errors, `429`, and 5xx.
-  - [ ] abandons non-retryable 4xx.
-  - [ ] abandons after `maxAttempts`.
-  - [ ] on a retryable failure where claimed `attempt_count >= maxAttempts`, marks the delivery abandoned directly instead of marking it retrying.
-  - [ ] uses the `attempt_count` returned by claim as `deliveryAttempt` and does not perform a separate post-claim counter increment.
-  - [ ] injects `deliveryAttempt` into the final body before signing and sending.
-  - [ ] signs the exact raw JSON body sent on the wire after `deliveryAttempt` injection.
-  - [ ] reclaims stale `delivering` deliveries through claim or startup recovery.
-  - [ ] records attempt audit for success and failure.
-  - [ ] `stop()` waits for in-flight deliveries but prevents new claims.
-  - [ ] logs redacted diagnostics only.
-  - [ ] starts a dedicated PostgreSQL LISTEN connection and subscribes to `daemon_webhook_delivery`.
-  - [ ] uses an independent `pg.Client` for the listener, not a long-lived checkout from the normal `poolMax` pool.
-  - [ ] establishes LISTEN before running startup recovery so no insert can fall between scan and subscription.
-  - [ ] does not run fixed-interval polling when idle.
-  - [ ] runs `listenKeepaliveMs` health checks on the listener connection without querying `webhook_deliveries`.
-  - [ ] keepalive query timeout is bounded by `listenKeepaliveTimeoutMs`; a hung keepalive tears down listener state, reconnects, re-LISTENs, and runs recovery.
-  - [ ] proves keepalive runs on the physical listener connection, not by borrowing from the normal `poolMax` pool.
-  - [ ] reconnects and runs recovery when listener keepalive fails.
-  - [ ] every reconnect path executes `LISTEN daemon_webhook_delivery` before recovery so no insert can fall between reconnect scan and subscription.
-  - [ ] drains immediately when a notification has `nextAttemptAt <= now`.
-  - [ ] schedules a local next-due timer when a notification has `nextAttemptAt > now`.
-  - [ ] min-merges next-due timers: an existing earlier timer is not delayed by a later `nextAttemptAt`.
-  - [ ] schedules a local next-due timer for stale `delivering` recovery based on `locked_at + lockTimeoutMs`.
-  - [ ] drains immediately when `getNextWebhookDeliveryDueAt({ lockTimeoutMs }) <= now`.
-  - [ ] `drainDue()` returns the claimed HTTP-delivery count only; when `claimed.length === 0` and `abandonedIds.length > 0`, continuation/floor-delay logic treats it as zero claimed work.
-  - [ ] applies a minimum recheck delay, for example `250ms`, when a past-due drain claims zero rows.
-  - [ ] malformed notifications trigger one recovery scan and do not crash the worker.
-  - [ ] treats invalid JSON, non-object payload, missing `deliveryId`, non-string `deliveryId`, missing `nextAttemptAt`, non-finite `nextAttemptAt`, and negative `nextAttemptAt` as malformed.
-  - [ ] notification handler exceptions are caught and cause redacted logging plus recovery or reconnect.
-  - [ ] startup recovery drains due/stale work and schedules the nearest future retry.
-  - [ ] LISTEN reconnect runs recovery and schedules the nearest future retry.
-  - [ ] overlapping wake-ups are single-flight: concurrent NOTIFY/timer/recovery calls coalesce and do not create parallel drain loops.
-  - [ ] `claimLimit` continuation runs under the same single-flight drain and does not release/reacquire the active-drain flag between batches.
-  - [ ] `stop()` prevents new claims from direct drain entrypoints, queued `drainAgain`, and `claimLimit` continuation.
-  - [ ] `maxConcurrentDeliveries` is enforced as one worker-level limiter across all wake-up sources.
-  - [ ] overlapping wake-ups do not move more than `claimLimit` rows to `delivering` before the active drain finishes.
-  - [ ] multiple workers awakened by the same notification do not duplicate claim because claim uses `FOR UPDATE SKIP LOCKED`.
-  - [ ] PG-gated: two real worker instances using separate PostgreSQL connections call `drainDue()` concurrently against the same due rows; assert each delivery is claimed once and no duplicate attempt audit rows are created.
-  - [ ] PG-gated: concurrent workers do not duplicate `abandonedIds` when exhausted rows are cleaned up with `FOR UPDATE SKIP LOCKED`.
-  - [ ] attempt audit rows use independent random IDs rather than ids derived from attempt count.
-- [ ] Use fake `fetch`, fake clock, and fake timers in tests.
-- [ ] Run the new worker test file.
+- [x] Create `apps/daemon/src/core/webhook-url-policy.ts`.
+- [x] Create `apps/daemon/src/core/webhook-signing.ts`.
+- [x] Create `apps/daemon/src/core/webhook-delivery-service.ts`.
+- [x] Add unit tests:
+  - [x] signs payload with `X-Daemon-Webhook-*` headers.
+  - [x] unsigned payload omits signature header but still sends delivery id and timestamp.
+  - [x] rejects unsafe URLs before fetch.
+  - [x] documents and tests the supported guardrails without claiming complete DNS-rebinding protection.
+  - [x] does not follow redirects.
+  - [x] marks 2xx as succeeded.
+  - [x] retries timeout, network errors, `429`, and 5xx.
+  - [x] abandons non-retryable 4xx.
+  - [x] abandons after `maxAttempts`.
+  - [x] on a retryable failure where claimed `attempt_count >= maxAttempts`, marks the delivery abandoned directly instead of marking it retrying.
+  - [x] uses the `attempt_count` returned by claim as `deliveryAttempt` and does not perform a separate post-claim counter increment.
+  - [x] injects `deliveryAttempt` into the final body before signing and sending.
+  - [x] signs the exact raw JSON body sent on the wire after `deliveryAttempt` injection.
+  - [x] reclaims stale `delivering` deliveries through claim or startup recovery.
+  - [x] records attempt audit for success and failure.
+  - [x] `stop()` waits for in-flight deliveries but prevents new claims.
+  - [x] logs redacted diagnostics only.
+  - [x] starts a dedicated PostgreSQL LISTEN connection and subscribes to `daemon_webhook_delivery`.
+  - [x] uses an independent `pg.Client` for the listener, not a long-lived checkout from the normal `poolMax` pool.
+  - [x] establishes LISTEN before running startup recovery so no insert can fall between scan and subscription.
+  - [x] does not run fixed-interval polling when idle.
+  - [x] runs `listenKeepaliveMs` health checks on the listener connection without querying `webhook_deliveries`.
+  - [x] keepalive query timeout is bounded by `listenKeepaliveTimeoutMs`; a hung keepalive tears down listener state, reconnects, re-LISTENs, and runs recovery.
+  - [x] proves keepalive runs on the physical listener connection, not by borrowing from the normal `poolMax` pool.
+  - [x] reconnects and runs recovery when listener keepalive fails.
+  - [x] every reconnect path executes `LISTEN daemon_webhook_delivery` before recovery so no insert can fall between reconnect scan and subscription.
+  - [x] drains immediately when a notification has `nextAttemptAt <= now`.
+  - [x] schedules a local next-due timer when a notification has `nextAttemptAt > now`.
+  - [x] min-merges next-due timers: an existing earlier timer is not delayed by a later `nextAttemptAt`.
+  - [x] schedules a local next-due timer for stale `delivering` recovery based on `locked_at + lockTimeoutMs`.
+  - [x] drains immediately when `getNextWebhookDeliveryDueAt({ lockTimeoutMs }) <= now`.
+  - [x] `drainDue()` returns the claimed HTTP-delivery count only; when `claimed.length === 0` and `abandonedIds.length > 0`, continuation/floor-delay logic treats it as zero claimed work.
+  - [x] applies a minimum recheck delay, for example `250ms`, when a past-due drain claims zero rows.
+  - [x] malformed notifications trigger one recovery scan and do not crash the worker.
+  - [x] treats invalid JSON, non-object payload, missing `deliveryId`, non-string `deliveryId`, missing `nextAttemptAt`, non-finite `nextAttemptAt`, and negative `nextAttemptAt` as malformed.
+  - [x] notification handler exceptions are caught and cause redacted logging plus recovery or reconnect.
+  - [x] startup recovery drains due/stale work and schedules the nearest future retry.
+  - [x] LISTEN reconnect runs recovery and schedules the nearest future retry.
+  - [x] overlapping wake-ups are single-flight: concurrent NOTIFY/timer/recovery calls coalesce and do not create parallel drain loops.
+  - [x] `claimLimit` continuation runs under the same single-flight drain and does not release/reacquire the active-drain flag between batches.
+  - [x] `stop()` prevents new claims from direct drain entrypoints, queued `drainAgain`, and `claimLimit` continuation.
+  - [x] `maxConcurrentDeliveries` is enforced as one worker-level limiter across all wake-up sources.
+  - [x] overlapping wake-ups do not move more than `claimLimit` rows to `delivering` before the active drain finishes.
+  - [x] multiple workers awakened by the same notification do not duplicate claim because claim uses `FOR UPDATE SKIP LOCKED`.
+  - [x] PG-gated: two real worker instances using separate PostgreSQL connections call `drainDue()` concurrently against the same due rows; assert each delivery is claimed once and no duplicate attempt audit rows are created.
+  - [x] PG-gated: concurrent workers do not duplicate `abandonedIds` when exhausted rows are cleaned up with `FOR UPDATE SKIP LOCKED`.
+  - [x] attempt audit rows use independent random IDs rather than ids derived from attempt count.
+- [x] Use fake `fetch`, fake clock, and fake timers in tests.
+- [x] Run the new worker test file.
 
 Expected red first: no worker exists.
 
 ### Task 6: Server Wiring And Shutdown
 
-- [ ] Add `webhookDeliveryService` to `ServerContext`.
-- [ ] Start the worker when enabled.
-- [ ] Stop the worker during shutdown before closing persistence.
-- [ ] Add tests in `tests/index.test.ts`:
-  - [ ] context starts worker when enabled.
-  - [ ] context does not start worker when disabled.
-  - [ ] configs that omit `server.webhooks` still create context successfully.
-  - [ ] worker performs startup recovery once when enabled.
-  - [ ] shutdown stops worker before persistence closes.
-  - [ ] startup interrupted rows create delivery jobs through persistence.
-  - [ ] worker timers do not leak after shutdown.
-  - [ ] `stop()` waits only up to `stopGraceMs` for in-flight deliveries before aborting and continuing shutdown.
-  - [ ] interrupted deliveries created during shutdown are durable and may be delivered by next startup recovery rather than blocking shutdown.
-- [ ] Run `pnpm --filter @lance-agent-runner/daemon test -- tests/index.test.ts`.
+- [x] Add `webhookDeliveryService` to `ServerContext`.
+- [x] Start the worker when enabled.
+- [x] Stop the worker during shutdown before closing persistence.
+- [x] Add tests in `tests/index.test.ts`:
+  - [x] context starts worker when enabled.
+  - [x] context does not start worker when disabled.
+  - [x] configs that omit `server.webhooks` still create context successfully.
+  - [x] worker performs startup recovery once when enabled.
+  - [x] shutdown stops worker before persistence closes.
+  - [x] startup interrupted rows create delivery jobs through persistence.
+  - [x] worker timers do not leak after shutdown.
+  - [x] `stop()` waits only up to `stopGraceMs` for in-flight deliveries before aborting and continuing shutdown.
+  - [x] interrupted deliveries created during shutdown are durable and may be delivered by next startup recovery rather than blocking shutdown.
+- [x] Run `pnpm --filter @lance-agent-runner/daemon test -- tests/index.test.ts`.
 
 Expected red first: context has no worker.
 
 ### Task 7: HTTP Flow Integration
 
-- [ ] Add or extend API flow tests:
-  - [ ] `POST /api/runs` accepts webhook and returns the existing response shape.
-  - [ ] `GET /api/runs/:runId/status` stays unchanged.
-  - [ ] SSE stays unchanged.
-  - [ ] terminal run creates a webhook delivery row.
-  - [ ] create-run without webhook creates no webhook rows.
-  - [ ] idempotent replay with webhook does not create duplicate delivery rows.
-  - [ ] idempotent replay without webhook keeps the old response semantics.
-  - [ ] when `server.webhooks.enabled` is false, `POST /api/runs` with `webhook` returns `400 BAD_REQUEST` and creates no run, webhook, or delivery rows.
-  - [ ] the disabled-webhook error body includes a stable reason such as `webhooks_disabled`.
-- [ ] Verify auth/client scoping still follows the run's authenticated client.
-- [ ] Run the relevant HTTP route/API flow test.
+- [x] Add or extend API flow tests:
+  - [x] `POST /api/runs` accepts webhook and returns the existing response shape.
+  - [x] `GET /api/runs/:runId/status` stays unchanged.
+  - [x] SSE stays unchanged.
+  - [x] terminal run creates a webhook delivery row.
+  - [x] create-run without webhook creates no webhook rows.
+  - [x] idempotent replay with webhook does not create duplicate delivery rows.
+  - [x] idempotent replay without webhook keeps the old response semantics.
+  - [x] when `server.webhooks.enabled` is false, `POST /api/runs` with `webhook` returns `400 BAD_REQUEST` and creates no run, webhook, or delivery rows.
+  - [x] the disabled-webhook error body includes a stable reason such as `webhooks_disabled`.
+- [x] Verify auth/client scoping still follows the run's authenticated client.
+- [x] Run the relevant HTTP route/API flow test.
 
 Expected red first: validation rejects webhook and no delivery rows exist.
 
 ### Task 8: Demo Type Synchronization
 
-- [ ] Update `apps/web/src/api/types.ts` with optional webhook request types.
-- [ ] Update `apps/rpa-local-web/src/shared/daemon-types.ts` with optional webhook request types.
-- [ ] Do not modify UI or make demos send webhooks by default.
-- [ ] Run:
-  - [ ] `pnpm typecheck:web`
-  - [ ] `pnpm typecheck:rpa-local-web`
+- [x] Update `apps/web/src/api/types.ts` with optional webhook request types.
+- [x] Update `apps/rpa-local-web/src/shared/daemon-types.ts` with optional webhook request types.
+- [x] Do not modify UI or make demos send webhooks by default.
+- [x] Run:
+  - [x] `pnpm typecheck:web`
+  - [x] `pnpm typecheck:rpa-local-web`
 
 Expected red first only if types are used before implementation. These checks mainly prevent drift.
 
 ### Task 9: Documentation
 
-- [ ] Update `docs/api-reference.md`:
-  - [ ] `POST /api/runs` request field table.
-  - [ ] webhook payload schema.
-  - [ ] signing headers.
-  - [ ] retry and at-least-once semantics.
-  - [ ] security warnings and secret storage warning.
-  - [ ] business receiver idempotency expectation using `eventId`.
-  - [ ] warning that `deliveryAttempt` is a claim attempt number, can skip values, and must not be used as a consecutive sequence.
-- [ ] Update `docs/business-run-chat-integration-guide.md`:
-  - [ ] Poll remains the recommended baseline.
-  - [ ] Webhook is optional callback acceleration.
-  - [ ] Business still must be able to recover by polling.
-  - [ ] Receiver must deduplicate by `eventId`.
-  - [ ] Receiver must not rely on `deliveryAttempt` being consecutive; repeated crash-before-send can even exhaust attempts before a callback is observed, so polling remains required for recovery.
-- [ ] Update `docs/business-agent-adapter-handoff.md` if it describes daemon invocation fields.
-- [ ] Update `docs/configuration-reference.md` with `server.webhooks`.
-- [ ] Update `docs/claude-code-runner-daemon-version-roadmap.md` to mark the plan as implemented or in progress after code lands.
+- [x] Update `docs/api-reference.md`:
+  - [x] `POST /api/runs` request field table.
+  - [x] webhook payload schema.
+  - [x] signing headers.
+  - [x] retry and at-least-once semantics.
+  - [x] security warnings and secret storage warning.
+  - [x] business receiver idempotency expectation using `eventId`.
+  - [x] warning that `deliveryAttempt` is a claim attempt number, can skip values, and must not be used as a consecutive sequence.
+- [x] Update `docs/business-run-chat-integration-guide.md`:
+  - [x] Webhook is the recommended business completion-notification path.
+  - [x] Poll remains a low-frequency fallback for recovery, reconciliation, and troubleshooting.
+  - [x] Business still must be able to recover by polling when webhook delivery is unavailable.
+  - [x] Receiver must deduplicate by `eventId`.
+  - [x] Receiver must not rely on `deliveryAttempt` being consecutive; repeated crash-before-send can even exhaust attempts before a callback is observed, so polling remains required for recovery.
+- [x] Update `docs/business-agent-adapter-handoff.md` if it describes daemon invocation fields.
+- [x] Update `docs/configuration-reference.md` with `server.webhooks`.
+- [x] Update `docs/claude-code-runner-daemon-version-roadmap.md` to mark webhook notifications as implemented.
 
 ### Task 10: Full Verification
 

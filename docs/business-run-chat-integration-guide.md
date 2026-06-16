@@ -27,7 +27,7 @@
 - 决定何时创建 generate run，何时创建 revise run。
 - 选择 `promptMode`，并提供 legacy `prompt` 或 `business-context` 模式下的
   `currentPrompt` / `businessContext`。
-- 如果使用 webhook，提供一个业务端 HTTP callback，校验 daemon 签名、幂等处理 webhook event，并把 run 状态写回业务数据库。
+- 提供业务端 HTTP callback，优先使用 webhook 接收 daemon run 状态变化，校验 daemon 签名、幂等处理 webhook event，并把 run 状态写回业务数据库。
 
 ## 关键 ID 映射
 
@@ -193,6 +193,8 @@ targetPath workspace 相对路径，例如 input/source.docx
 POST /api/runs
 ```
 
+生产接入默认应同时传 `idempotencyKey` 和 `webhook`。`idempotencyKey` 用于业务 worker 崩溃恢复时安全重放同一次派发；`webhook` 用于让 daemon 主动通知业务端 run 状态变化。临时本地调试可以不传 `webhook`，但不要把 Poll 当成业务主路径。
+
 请求：
 
 ```json
@@ -205,8 +207,18 @@ POST /api/runs
   "model": "sonnet",
   "artifactRuleIds": ["report-docx"],
   "eventVisibility": "normal",
+  "idempotencyKey": "gaclaw:task_001:1",
   "metadata": {
-    "businessMessageId": "msg_001"
+    "businessMessageId": "msg_001",
+    "businessTaskId": "task_001"
+  },
+  "webhook": {
+    "url": "http://192.168.88.20:8000/api/daemon/webhook",
+    "secret": "shared-webhook-secret",
+    "statuses": ["succeeded", "failed", "canceled", "interrupted"],
+    "metadata": {
+      "businessTaskId": "task_001"
+    }
   }
 }
 ```
@@ -231,35 +243,13 @@ POST /api/runs
 - 不传 `artifactRuleIds` 时使用 profile 的 `defaultArtifactRuleIds`。
 - run 创建后可能先排队，业务端要展示 `queued` 状态。
 - daemon 会返回 `conversationId/userMessageId/assistantMessageId`，业务端可以保存它们用于后续多轮对齐。
+- 同一次业务派发重试时复用同一个 `idempotencyKey`；用户主动重新生成或新建任务时换新 key。
 
-### 5. 不订阅 SSE 的报告生成轮询
+### 5. 使用 webhook 接收状态通知
 
-如果业务方只需要知道“任务何时结束、报告是否生成”，推荐使用轻量状态接口，不要高频调用完整 run detail：
+如果业务方只需要知道“任务何时结束、报告是否生成”，默认应使用 webhook，由 daemon 在 run 状态变化后主动通知业务端。不要把轮询作为主要任务完成通知机制；`GET /api/runs/:runId/status` 只保留为 webhook 异常、业务服务重启、定时对账或人工排障时的兜底。
 
-```text
-POST /api/runs
-  -> 得到 runId
-
-循环 GET /api/runs/:runId/status
-  -> status = queued/running 继续等
-  -> terminal = true 停止轮询
-
-GET /api/runs/:runId/artifacts
-  -> 找 role=primary 的报告
-
-GET /api/runs/:runId/artifacts/:artifactId/download
-  -> 下载报告
-```
-
-`GET /api/runs/:runId/status` 不返回 `messages/events/content/thinkingContent`，适合高频 poll。`GET /api/runs/:runId` 仍保留为完整详情接口，用于历史查看、诊断或需要还原 agent 过程输出的场景。
-
-daemon 会在 terminal 状态写入前尽量 flush 本次 run logs。因此 Poll 模式下，Claude 子进程实际结束到 `/status` 返回 `terminal=true` 之间可能有很短尾延迟。业务端不需要改变调用方式，继续按 2-5 秒间隔轮询即可。
-
-### 5a. 可选：使用 webhook 接收状态通知
-
-业务端可以继续只用 Generate + Poll。Webhook 是可选增强，用于让 daemon 在 run 状态变化后主动通知业务端，减少业务 worker 的轮询压力。
-
-Webhook-enhanced 业务流程：
+Webhook-first 业务流程：
 
 ```text
 业务后端创建本地 generation_task
@@ -282,28 +272,19 @@ daemon 状态变化
   -> 返回 2xx
 
 业务端兜底 worker
-  -> 仍可低频 Poll 或按业务超时补偿
+  -> 仅在 webhook 异常、业务服务重启或长时间未收到 terminal 通知时低频 Poll
   -> webhook 异常时继续通过 GET /api/runs/:runId/status 和 artifacts API 对账
 ```
 
-创建 run 时增加 `webhook`：
+`webhook` 字段应随第 4 步 `POST /api/runs` 一起提交。字段示例：
 
 ```json
 {
-  "profileId": "report-docx",
-  "workspaceId": "ws_xxx",
-  "kind": "generate",
-  "skillId": "report-gen",
-  "prompt": "请基于 input/source.docx 生成一份正式报告，输出到 output/report.docx。",
-  "artifactRuleIds": ["report-docx"],
-  "idempotencyKey": "gaclaw:task_001:1",
-  "webhook": {
-    "url": "http://192.168.88.20:8000/api/daemon/webhook",
-    "secret": "shared-webhook-secret",
-    "statuses": ["succeeded", "failed", "canceled", "interrupted"],
-    "metadata": {
-      "businessTaskId": "task_001"
-    }
+  "url": "http://192.168.88.20:8000/api/daemon/webhook",
+  "secret": "shared-webhook-secret",
+  "statuses": ["succeeded", "failed", "canceled", "interrupted"],
+  "metadata": {
+    "businessTaskId": "task_001"
   }
 }
 ```
@@ -313,9 +294,9 @@ daemon 状态变化
 - `webhook` 不改变 `POST /api/runs` 响应结构，业务端仍然拿 `runId/status/conversationId/userMessageId/assistantMessageId`。
 - 默认未传 `statuses` 时只通知 terminal 状态：`succeeded/failed/canceled/interrupted`。
 - 可以传内网 URL；当前 daemon 默认允许 `http` 和 `192.168.88.0/24`，实际允许范围由 `server.webhooks` 配置控制。
-- daemon 会在创建 run 阶段校验 webhook URL 是否符合协议、端口、host 和内网 CIDR 策略；不符合会拒绝整个 create-run。daemon 不会在创建 run 前 POST 探测 webhook 是否可用。URL 无法访问、超时、`429`、`5xx` 会异步重试；不可重试 `4xx` 或达到最大次数后标记 abandoned。
+- daemon 会在新建 run 时校验 webhook URL 是否符合协议、端口、host 和内网 CIDR 策略；不符合会拒绝整个 create-run。daemon 不会在创建 run 前 POST 探测 webhook 是否可用。若同一 `idempotencyKey` 命中已有 run 且 fingerprint 一致，daemon 会直接返回旧 run，不会重新按当前 webhook URL 策略校验旧请求。URL 无法访问、超时、`429`、`5xx` 会异步重试；不可重试 `4xx` 或达到最大次数后标记 abandoned。
 - `webhook.metadata` 稳定 JSON 后最多 16KiB。daemon 配置禁用 webhook 时，传 `webhook` 会返回 `400 BAD_REQUEST`，`details.reason` 为 `webhooks_disabled`。
-- 业务端应继续保留 Poll/SSE 兜底能力，尤其是在 webhook 接收服务维护或网络异常时。
+- 业务端应继续保留 Poll/SSE 兜底能力，但正常后台任务完成通知应优先依赖 webhook，不要高频轮询 daemon。
 - `deliveryAttempt` 是 daemon 的 claim attempt number，可能跳号，业务端不能把它当作连续序列；业务端必须用 `eventId` / `X-Daemon-Webhook-Id` 做幂等去重。
 - 如果使用 `idempotencyKey`，webhook URL、statuses、metadata 和 secret hash 都参与幂等 fingerprint。同 key 但 webhook 参数不同会返回 `409 IDEMPOTENCY_KEY_CONFLICT`。
 
@@ -420,6 +401,26 @@ GET /api/runs/:runId/artifacts
   -> 找 primary artifact
   -> GET /api/runs/:runId/artifacts/:artifactId/download
 ```
+
+### 5a. 兜底状态查询
+
+`GET /api/runs/:runId/status` 不返回 `messages/events/content/thinkingContent`，适合兜底对账。业务端不要用它替代 webhook 做主要任务完成通知。
+
+兜底流程：
+
+```text
+GET /api/runs/:runId/status
+  -> status = queued/running 继续等待 webhook 或低频补偿
+  -> terminal = true 停止兜底查询
+
+GET /api/runs/:runId/artifacts
+  -> 找 role=primary 的报告
+
+GET /api/runs/:runId/artifacts/:artifactId/download
+  -> 下载报告
+```
+
+建议兜底查询间隔为 10-30 秒，`queued` 可适当拉长。daemon 会在 terminal 状态写入前尽量 flush 本次 run logs，因此 Claude 子进程实际结束到 `/status` 返回 `terminal=true` 之间可能有很短尾延迟。
 
 ### 6. 订阅 SSE
 

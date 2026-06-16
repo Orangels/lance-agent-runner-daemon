@@ -102,20 +102,24 @@ The following capabilities are intentionally deferred to later versions. Do not 
 
 ### Webhook Notifications
 
-- Dedicated implementation plan: `docs/webhook-notifications/implementation-plan.md`.
-- Optional business-callback webhook support for callers that do not want to rely only on polling or SSE.
-- Allow a run-create request to include a caller-provided webhook target and callback metadata after a dedicated API contract is defined.
-- This should not be implemented by polling run status from inside the daemon. The daemon already owns the status transition points, so webhook notification should be triggered from durable state changes.
-- Persist webhook configuration with the run, then create webhook delivery jobs when run status changes are committed.
-- Use a webhook delivery/outbox table and a delivery worker for timeout, retry, backoff, and audit instead of blocking the main run execution path on a remote callback.
-- Define a daemon-owned webhook payload schema for run status changes, including run id, workspace id, profile id, kind, status, timestamps, error summary, artifact summary when available, and idempotency replay context when relevant.
-- Trigger webhook delivery when durable run status changes, especially terminal states such as `succeeded`, `failed`, `canceled`, and `interrupted`.
-- Cover normal transitions such as `queued` and `running`, terminal transitions from `finishRun()`, and restart recovery transitions where old queued/running rows are marked `interrupted`.
-- Keep webhook delivery generic and client-scoped; do not embed product-specific business fields outside caller-provided metadata.
-- Add retry, timeout, signing, secret handling, idempotent delivery event ids, and delivery audit logs.
-- Add SSRF protections such as URL validation, allowed hosts or networks, and no redirects to unsafe targets before accepting arbitrary callback URLs.
-- Preserve polling, SSE, and artifact APIs as the source of truth; webhook delivery should be a notification mechanism, not the only way to recover state.
-- Before implementation, write a dedicated design plan and review the run-create API shape, webhook security model, delivery durability, retry semantics, and business-side idempotency expectations in detail.
+- Implemented on the PostgreSQL persistence branch. Confirmation record: `docs/webhook-notifications/implementation-plan.md`.
+- `POST /api/runs` accepts per-run webhook target, statuses, signing secret, and caller metadata.
+- Webhook delivery is triggered from durable daemon run state transitions, not by daemon-side status polling.
+- Run webhook config is stored with the run, and delivery jobs are written to PostgreSQL outbox tables when subscribed statuses are committed.
+- Delivery uses a background worker with PostgreSQL `LISTEN/NOTIFY`, `FOR UPDATE SKIP LOCKED` claims, timeout, retry/backoff, bounded response previews, attempt audit rows, and stale `delivering` recovery.
+- Payload schema is daemon-owned (`daemon.webhook.run.v1`) and includes run id, workspace id, profile id, kind, status, timestamps, error summary, artifact summary when available, idempotency key, stable event id, and caller-provided webhook metadata.
+- Normal `queued/running` notifications are supported when subscribed; terminal states `succeeded/failed/canceled/interrupted` are the default subscription.
+- Restart recovery marks old queued/running rows `interrupted` and creates matching interrupted webhook deliveries when the run had webhook config.
+- Delivery remains daemon-generic and client-scoped; product-specific correlation stays in caller-provided metadata.
+- Security guardrails include URL policy validation, allowed hosts/private CIDRs, redirect blocking, request timeout, signing, secret redaction, and no raw payload/secret logging.
+- Polling, SSE, artifacts, and logs remain authoritative recovery paths. Business backends should prefer webhook for normal completion notification and retain low-frequency Poll for recovery, reconciliation, and troubleshooting.
+
+Future hardening candidates:
+
+- Public webhook delivery inspection APIs.
+- Optional per-client webhook defaults or dynamic administration.
+- Stronger DNS-rebinding protection through IP pinning or equivalent connection control.
+- Operational metrics for delivery latency, retry rate, abandoned deliveries, and listener reconnects.
 
 ### Runtime Configuration
 

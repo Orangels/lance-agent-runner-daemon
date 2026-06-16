@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts --config ../../.claude-runner/config.local.json",
     "start": "node dist/index.js",
-    "start:local": "node dist/index.js --config ../../.claude-runner/config.local.json",
+    "start:local": "node --env-file=../../.env dist/index.js --config ../../.claude-runner/config.local.json",
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
