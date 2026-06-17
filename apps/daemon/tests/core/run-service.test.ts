@@ -2270,6 +2270,106 @@ postgresDescribe('run service', () => {
     });
   });
 
+  it('shutdownActive waits for runner completion before terminal persistence', async () => {
+    const { config, persistence, workspace, service, runners, runNextTimer } = await setup();
+    await service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'revise',
+        prompt: 'Run.',
+        artifactRuleIds: [],
+      },
+    });
+    await runScheduledStart(runNextTimer);
+    await waitForRunnerCount(runners, 1);
+
+    const shutdown = service.shutdownActive({ graceMs: 100 });
+    await flushAsync();
+
+    expect(runners[0]!.cancel).toHaveBeenCalledTimes(1);
+    expect((await persistence.getRunDetail({ runId: 'run_1', clientId: 'lqbot' }))?.run.status).toBe('running');
+
+    runners[0]!.input.onEvent({ type: 'text_delta', delta: 'tail output before close' });
+    runners[0]!.complete({
+      status: 'canceled',
+      exitCode: null,
+      signal: 'SIGTERM',
+      stdoutTail: '',
+      stderrTail: '',
+    });
+
+    await expect(shutdown).resolves.toEqual({ interrupted: 1 });
+    const detail = await persistence.getRunDetail({ runId: 'run_1', clientId: 'lqbot' });
+    expect(detail?.run).toMatchObject({
+      status: 'interrupted',
+      errorCode: 'RUN_INTERRUPTED_BY_DAEMON_RESTART',
+    });
+    expect(detail?.messages[1]?.content).toBe('tail output before close');
+  });
+
+  it('shutdownActive waits for an in-flight finishRun started before shutdown', async () => {
+    const closeDeferred = createDeferred<void>();
+    const runLogService = {
+      dataDir: '',
+      openRunLogs: vi.fn(async () => ({
+        stdout: vi.fn(),
+        stderr: vi.fn(),
+        debugEvent: vi.fn(),
+        close: vi.fn(() => closeDeferred.promise),
+      })),
+      getRunLogs: vi.fn(),
+      getRunLogDownload: vi.fn(),
+      pruneExpiredLogs: vi.fn(),
+    } satisfies RunLogService;
+    const { config, persistence, workspace, service, runners, runNextTimer } = await setup({
+      runLogService,
+      configure: (config) => {
+        config.server.runLogCloseTimeoutMs = 10_000;
+      },
+    });
+    await service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'revise',
+        prompt: 'Run.',
+        artifactRuleIds: [],
+      },
+    });
+    await runScheduledStart(runNextTimer);
+    await waitForRunnerCount(runners, 1);
+
+    runners[0]!.complete({
+      status: 'succeeded',
+      exitCode: 0,
+      signal: null,
+      stdoutTail: '',
+      stderrTail: '',
+    });
+    await flushAsync();
+
+    let settled = false;
+    const shutdown = service.shutdownActive({ graceMs: 0 }).then((result) => {
+      settled = true;
+      return result;
+    });
+    await flushAsync();
+
+    expect(settled).toBe(false);
+    expect((await persistence.getRunDetail({ runId: 'run_1', clientId: 'lqbot' }))?.run.status).toBe('running');
+
+    closeDeferred.resolve();
+
+    await expect(shutdown).resolves.toEqual({ interrupted: 0 });
+    expect((await persistence.getRunDetail({ runId: 'run_1', clientId: 'lqbot' }))?.run).toMatchObject({
+      status: 'succeeded',
+      errorCode: null,
+    });
+  });
+
   it('shutdownActive cancels all running runs before waiting for graceMs', async () => {
     const { config, persistence, workspace, service, runners, runNextTimer, pendingTimers } = await setup({
       configure: (config) => {

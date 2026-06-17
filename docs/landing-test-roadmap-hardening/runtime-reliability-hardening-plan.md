@@ -15,7 +15,7 @@
 - `finishRun()` finalizes artifacts, then awaits `state.logHandle.close()`, then emits terminal `end`, flushes the accumulator, and persists `runs.status`.
 - A rejected `close()` already emits `RUN_LOG_WRITE_FAILED` before `end`.
 - A never-settling or very slow `close()` can currently block terminal persistence, SSE completion, and terminal webhook delivery creation.
-- `shutdownActive()` already cancels active runners and waits up to its own `graceMs` for runner completion after marking runs interrupted.
+- `shutdownActive()` cancels active runners, waits up to its own `graceMs` for runner completion, then persists interrupted terminal state for runs that were not already in terminal finalization.
 - The CLI runner may still emit output around cancellation. Events emitted after terminal persistence should not be appended after `end`.
 
 ## Semantics To Preserve Or Define
@@ -524,6 +524,14 @@ git commit -m "fix: bound terminal run log close"
 
 ## Deferred Follow-Up: Shutdown Parallelization
 
-`shutdownActive()` currently finalizes non-terminal runs serially. With `server.runLogCloseTimeoutMs = 5000`, worst-case shutdown time can include up to `activeRunCount * runLogCloseTimeoutMs` before the separate runner `graceMs` wait completes.
+`shutdownActive()` currently finalizes non-terminal runs serially. For runs that are canceled by shutdown, the worst-case wait is approximately:
 
-This plan intentionally does not change that behavior because parallel finalization affects multi-run shutdown ordering, shared persistence pressure, and webhook delivery creation timing. The item is tracked in the roadmap as a later runtime-reliability optimization. If it is picked up later, create a dedicated plan that includes concurrent shutdown finalization tests, high-concurrency stress coverage, and operator-facing shutdown timeout guidance.
+```text
+graceMs + interruptedRunCount * server.runLogCloseTimeoutMs
+```
+
+The implementation keeps terminal finalization serial, but shutdown now cancels active runners and waits for runner completion or grace timeout before persisting the interrupted terminal state. If a run has already entered `finishRun()` before shutdown starts, shutdown waits for that in-flight terminal persistence and preserves the original terminal result instead of converting it to `interrupted`. This prevents terminal message flushes and PostgreSQL writes from racing against PostgreSQL pool shutdown.
+
+When `graceMs` is `0`, shutdown does not wait for child processes to exit after cancellation before writing interrupted state. That is acceptable for fast local/test shutdowns, but operators who need stronger child-process cleanup should use a positive shutdown grace window.
+
+This plan intentionally does not parallelize terminal finalization because parallel finalization affects multi-run shutdown ordering, shared persistence pressure, and webhook delivery creation timing. The item is tracked in the roadmap as a later runtime-reliability optimization. If it is picked up later, create a dedicated plan that includes concurrent shutdown finalization tests, high-concurrency stress coverage, and operator-facing shutdown timeout guidance.

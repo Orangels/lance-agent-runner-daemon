@@ -160,6 +160,167 @@ Observed result:
 - `GET /api/profiles` returned the configured `report-docx` profile with `report-gen` skill access, `report-docx` and `report-any` artifact rules, default model `opus`, and `profileConcurrency: 1`.
 - The daemon process was stopped after the smoke check.
 
+## 2026-06-17 API Smoke Coverage
+
+Branch under test: `codex/landing-test-roadmap-hardening`.
+
+Production-like local config smoke used:
+
+```bash
+pnpm start:daemon:local:test
+```
+
+### Workspace Prepare / SSE / Cancel / Logs
+
+Evidence directory: `/tmp/landing-smoke-20260617-140953`.
+
+| Field | Value |
+| --- | --- |
+| workspace id | `ws_e21a5985a0e14637b9dde78948a3662d` |
+| workspace key | `landing_smoke/user_20260617/prepare_sse_cancel_20260617-140953` |
+| prepared target | `input/prepared.txt` |
+| prepared size | `118` bytes |
+| run id | `run_da81e41652a343ecbecd7a531e4e4e8f` |
+| create response status | `queued` |
+| cancel HTTP status | `200` |
+| final run status | `canceled` |
+| terminal | `true` |
+| last run event id | `3` |
+
+SSE event stream returned:
+
+```text
+id: 1
+event: agent
+data: {"type":"status","label":"queued"}
+
+id: 2
+event: agent
+data: {"type":"status","label":"running"}
+
+id: 3
+event: agent
+data: {"type":"end","status":"canceled"}
+```
+
+`GET /api/runs/:runId/logs` returned `200` with stdout, stderr, and debug event log summaries available. The three log files were empty for this fast cancel smoke, which is expected.
+
+The public JSON/SSE responses from health, workspace, prepare, create-run, status, detail, and SSE were scanned for:
+
+```text
+/data/sandboxes
+uploads/tmp
+/home/orangels/ls_dev
+apps/daemon/uploads
+```
+
+Result: no matches.
+
+### Controlled Fake Daemon Smoke
+
+The following deterministic checks used a temporary daemon config on port `17891` with a temporary fake `claudeBin`. The fake runner was used only to make success, failure, and queue behavior repeatable without spending real model time. Runtime code, PostgreSQL persistence, HTTP routes, artifact scan, logs, queueing, and status transitions were the current branch implementation.
+
+Evidence directories:
+
+- `/tmp/landing-fake-20260617-141802/evidence-20260617-141932`
+- `/tmp/landing-fake-20260617-141802/artifact-evidence-20260617-142109`
+
+Successful generate with artifact:
+
+| Field | Value |
+| --- | --- |
+| run id | `run_e99dceb258064f53b9cc5adb8f8c6b12` |
+| final status | `succeeded` |
+| primary artifact id | `artifact_bb8a6a8bb6b8443182a471dcc0dcf5b3` |
+| relative path | `output/report.docx` |
+| size | `36` bytes |
+| sha256 | `ac8c9bad4c056dbb80656927648067c416bed8796a71017a18ec409d4a568169` |
+
+Successful revise with artifact:
+
+| Field | Value |
+| --- | --- |
+| run id | `run_162601290f0c4e7b98a1df68007e618d` |
+| final status | `succeeded` |
+| primary artifact id | `artifact_e2ecd79259734b32a2285f7c619e2c13` |
+| relative path | `output/report.docx` |
+| size | `36` bytes |
+| sha256 | `ac8c9bad4c056dbb80656927648067c416bed8796a71017a18ec409d4a568169` |
+
+Failed run with durable diagnostics:
+
+| Field | Value |
+| --- | --- |
+| run id | `run_ea2fce04908e430f9e35a7cb367f5f62` |
+| final status | `failed` |
+| error code | `CLAUDE_CLI_FAILED` |
+| error message | `Claude CLI failed.` |
+| durable event types | `status`, `error`, `end` |
+| stderr log size | `36` bytes |
+| debug events log size | `173` bytes |
+
+Queue behavior with `globalConcurrency = 1` and `profileConcurrency = 1`:
+
+| Run | Status before cancel | Terminal before cancel |
+| --- | --- | --- |
+| `run_0771476fea92474cba5a9bc80da43dd8` | `running` | `false` |
+| `run_a50e4795a514416dbd0baab57e94fdc8` | `queued` | `false` |
+| `run_773930b7101540e0a26ac1d7ec6b0433` | `queued` | `false` |
+
+All three cancel requests returned `200`, and all three runs reached terminal `canceled`.
+
+The controlled fake daemon public JSON responses were scanned for:
+
+```text
+/tmp/landing-fake
+/data/sandboxes
+uploads/tmp
+/home/orangels/ls_dev
+```
+
+Result: no matches.
+
+### Restart Interruption Smoke
+
+Evidence directory: `/tmp/landing-restart-20260617-142534/evidence`.
+
+This check used a temporary daemon config on port `17892`, created a sleeping run, verified it was `running`, killed only that temporary daemon process with `SIGKILL`, restarted the daemon with the same config, and queried the run again.
+
+| Field | Value |
+| --- | --- |
+| run id | `run_1fd11b7682644c758e27738d7f1fd0b1` |
+| status before kill | `running` |
+| status after restart | `interrupted` |
+| error code after restart | `RUN_INTERRUPTED_BY_DAEMON_RESTART` |
+| error message after restart | `Run interrupted by daemon restart` |
+| terminal after restart | `true` |
+
+During this smoke, an initial graceful shutdown attempt exposed a shutdown ordering bug where active-run message flush could race with PostgreSQL pool close. The implementation was updated so `shutdownActive()` cancels runners, waits for runner completion or grace timeout before terminal persistence, and lets shutdown own the interrupted terminal write. A follow-up review found the related in-flight `finishRun()` case; shutdown now waits for that existing terminal persistence and preserves its original terminal result. Both regressions are covered by `tests/core/run-service.test.ts`.
+
+After all smoke checks, process scan found no residual daemon or fake runner process matching the temporary smoke commands.
+
+## 2026-06-17 Final Verification
+
+Commands run on `codex/landing-test-roadmap-hardening`:
+
+```bash
+pnpm typecheck
+pnpm build
+pnpm test
+set -a; source .env; set +a; pnpm test:daemon:pg
+```
+
+Results:
+
+- `pnpm typecheck`: passed.
+- `pnpm build`: passed.
+- `pnpm test`: passed.
+  - daemon: 37 files passed, 19 skipped; 271 tests passed, 174 skipped.
+  - web: 10 files passed; 40 tests passed.
+  - rpa-local-web: 50 files passed; 252 tests passed.
+- `pnpm test:daemon:pg`: passed.
+  - daemon PG-gated suite: 56 files passed; 445 tests passed.
+
 ## Landing-Test Coverage Status
 
 Covered by this test:
@@ -173,16 +334,19 @@ Covered by this test:
 - Webhook terminal notification.
 - Business webhook receiver idempotency response.
 - Post-run process cleanup.
+- Current branch startup smoke with `pnpm start:daemon:local:test`.
+- `POST /api/workspaces/:workspaceId/prepare` smoke.
+- SSE event stream smoke.
+- Cancel flow smoke.
+- Logs API smoke.
+- Successful controlled `revise` run.
+- Failed controlled run with durable diagnostics.
+- Daemon restart interruption behavior.
+- Queue behavior under global/profile concurrency limits.
+- Response audit for sandbox absolute paths and upload temp paths.
+- Final `pnpm typecheck`, `pnpm build`, `pnpm test`, and PostgreSQL-gated daemon test evidence.
 
 Still required before declaring the first version production-ready:
 
-- `POST /api/workspaces/:workspaceId/prepare` smoke test.
-- SSE event stream smoke test.
-- Cancel flow smoke test.
-- Logs API smoke test.
-- Successful `revise` run.
-- Failed run with durable diagnostics.
-- Daemon restart interruption behavior.
-- Queue behavior under global, profile, and workspace concurrency limits.
-- Explicit response audit for sandbox absolute paths and upload temp paths.
-- Final `pnpm typecheck`, `pnpm build`, and `pnpm test` evidence on the tested production candidate commit.
+- Real business-side `revise` landing test with a production skill prompt and business artifact.
+- Higher-volume queue/concurrency soak if production traffic patterns require it.

@@ -125,8 +125,8 @@ The following capabilities are intentionally deferred to later versions. Do not 
 
 Terminal log finalization now has a bounded timeout, and close failures or timeouts are reported as durable warning events without changing the terminal run status. Future hardening candidates:
 
-- Decide whether `shutdownActive()` should finalize multiple active runs in parallel during daemon shutdown. Current shutdown finalization is serial, so the worst-case close wait can scale with `activeRunCount * server.runLogCloseTimeoutMs`. This should be handled as a dedicated follow-up because parallel shutdown changes multi-run ordering, PostgreSQL write pressure, and terminal webhook delivery timing.
-- Further define whether child-process tail output after cancel must be awaited before closing run logs, or should remain best-effort diagnostics after terminal status persistence.
+- Decide whether `shutdownActive()` should finalize multiple active runs in parallel during daemon shutdown. Current shutdown finalization is serial, so shutdown can wait up to `graceMs + interruptedRunCount * server.runLogCloseTimeoutMs` for runs interrupted by shutdown. This should be handled as a dedicated follow-up because parallel shutdown changes multi-run ordering, PostgreSQL write pressure, and terminal webhook delivery timing.
+- Further define whether child-process tail output after cancel must be awaited before closing run logs, or should remain best-effort diagnostics after terminal status persistence. In particular, `graceMs = 0` favors fast shutdown and may leave post-cancel child-process cleanup to the operating environment.
 
 ### Webhook Hardening
 

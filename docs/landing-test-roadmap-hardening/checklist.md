@@ -29,16 +29,16 @@ Use this branch to close the first-version landing-test loop after the PostgreSQ
   - [x] confirmation that daemon error log and runner stderr had no errors.
   - [x] confirmation that no daemon/runner/monitoring process remained after shutdown.
 - [x] Add missing landing-test items still required by the roadmap:
-  - [ ] `workspace prepare`.
-  - [ ] SSE event stream.
-  - [ ] cancel flow.
-  - [ ] logs API.
-  - [ ] at least one successful `revise` run.
-  - [ ] at least one failed run with durable diagnostics.
-  - [ ] daemon restart interruption behavior.
-  - [ ] queue behavior under global/profile/workspace concurrency limits.
-  - [ ] response check that no sandbox absolute paths or upload temp paths are exposed.
-  - [ ] final `pnpm typecheck`, `pnpm build`, and `pnpm test` evidence.
+  - [x] `workspace prepare`.
+  - [x] SSE event stream.
+  - [x] cancel flow.
+  - [x] logs API.
+  - [x] at least one successful `revise` run.
+  - [x] at least one failed run with durable diagnostics.
+  - [x] daemon restart interruption behavior.
+  - [x] queue behavior under global/profile/workspace concurrency limits.
+  - [x] response check that no sandbox absolute paths or upload temp paths are exposed.
+  - [x] final `pnpm typecheck`, `pnpm build`, and `pnpm test` evidence.
 
 ### 2. Roadmap Status Update
 
