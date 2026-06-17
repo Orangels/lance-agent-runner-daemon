@@ -657,7 +657,7 @@ git commit -m "test: migrate run service tests to postgres"
 - Verify: `apps/daemon/tests/db/postgres-migrations.test.ts`
 - Verify: `apps/daemon/tests/db/postgres-repositories.test.ts`
 
-- [ ] **Step 1: Confirm PostgreSQL tests cover the old SQLite DB concerns**
+- [x] **Step 1: Confirm PostgreSQL tests cover the old SQLite DB concerns**
 
 Run:
 
@@ -667,7 +667,7 @@ CLAUDE_RUNNER_TEST_PG_URL="$CLAUDE_RUNNER_TEST_PG_URL" pnpm --filter @lance-agen
 
 Expected: PostgreSQL schema, repository, and type-mapping tests pass.
 
-- [ ] **Step 2: Delete old SQLite runtime DB tests**
+- [x] **Step 2: Delete old SQLite runtime DB tests**
 
 Delete:
 
@@ -676,7 +676,7 @@ apps/daemon/tests/db/schema.test.ts
 apps/daemon/tests/db/repositories.test.ts
 ```
 
-- [ ] **Step 3: Run the DB test slice**
+- [x] **Step 3: Run the DB test slice**
 
 Run:
 
@@ -686,7 +686,7 @@ CLAUDE_RUNNER_TEST_PG_URL="$CLAUDE_RUNNER_TEST_PG_URL" pnpm --filter @lance-agen
 
 Expected: pass on PostgreSQL.
 
-- [ ] **Step 4: Commit the SQLite DB test removal**
+- [x] **Step 4: Commit the SQLite DB test removal**
 
 ```bash
 git add apps/daemon/tests/db
