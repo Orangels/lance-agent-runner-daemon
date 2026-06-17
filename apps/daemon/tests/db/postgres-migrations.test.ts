@@ -39,7 +39,9 @@ postgresDescribe('postgres migrations', () => {
       `,
     );
 
-    expect(tables.rows.map((row) => row.table_name)).toEqual(
+    const tableNames = tables.rows.map((row) => row.table_name);
+
+    expect(tableNames).toEqual(
       expect.arrayContaining([
         postgresMigrationsTable,
         'artifacts',
@@ -55,6 +57,7 @@ postgresDescribe('postgres migrations', () => {
         'workspaces',
       ]),
     );
+    expect(tableNames).not.toContain('run_events');
 
     const indexes = await pool.query<{ indexname: string }>(
       `

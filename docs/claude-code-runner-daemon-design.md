@@ -2,6 +2,8 @@
 
 日期：2026-05-30
 
+> Historical design note: this document records the original first-version daemon design, including the former SQLite runtime persistence direction. The current daemon runtime is PostgreSQL-only; SQLite remains only as a read-only migration source and historical backup format. For current runtime persistence, use `AGENTS.md`, `docs/configuration-reference.md`, and `docs/claude-code-runner-daemon-version-roadmap.md`.
+
 ## 背景
 
 我们希望从 lanceDesign 中抽取 Claude Code CLI 后台执行 pipeline 的经验，做成一个独立的通用服务。这个服务以后可以被 lqBot、lanceDesign 或其他 Python、Go、Rust、Node 项目调用。

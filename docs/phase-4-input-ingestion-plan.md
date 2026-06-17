@@ -1,5 +1,7 @@
 # Phase 4 Input Ingestion Implementation Plan
 
+> Historical plan note: this phase plan records the original SQLite-based implementation path. The current daemon runtime is PostgreSQL-only; SQLite remains only as a read-only migration source and historical backup format.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a daemon-owned workspace upload path so trusted callers can send files directly to the daemon and place them in a workspace without relying on shared local `allowedInputRoots`.

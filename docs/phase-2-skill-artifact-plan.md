@@ -1,5 +1,7 @@
 # Phase 2 Skill and Artifact Implementation Plan
 
+> Historical plan note: this phase plan records the original SQLite-based implementation path. The current daemon runtime is PostgreSQL-only; SQLite remains only as a read-only migration source and historical backup format.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Enable the first useful `kind=generate` flow by resolving a profile-allowed skill, staging its side files into the workspace, composing the skill prompt, scanning terminal artifacts, and exposing artifact list/download APIs.

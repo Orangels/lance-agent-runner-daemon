@@ -796,17 +796,16 @@ apps/daemon/src/db/sqlite-persistence.ts
 better-sqlite3
 ```
 
-Allowed SQLite locations:
+Allowed TypeScript SQLite import locations:
 
 ```text
 apps/daemon/src/db/migration/
 apps/daemon/tests/db/sqlite-source-fixtures.ts
 apps/daemon/tests/db/sqlite-to-postgres.test.ts
 apps/daemon/tests/db/verify-sqlite-to-postgres.test.ts
-scripts/migrate-sqlite-to-postgres.sh
 ```
 
-The static test should scan TypeScript import statements rather than rely only on broad free-text `rg` output. It may still include a small free-text assertion for `createSqliteRunnerPersistence` and `openInMemoryDatabase` because those symbols should disappear entirely.
+The static test should scan TypeScript import statements rather than rely only on broad free-text `rg` output. The shell wrapper `scripts/migrate-sqlite-to-postgres.sh` remains valid offline migration tooling, but it is outside this TypeScript import scan. The test may still include a small free-text assertion for `createSqliteRunnerPersistence` and `openInMemoryDatabase` because those symbols should disappear entirely.
 
 - [x] **Step 5: Run the static guard**
 
