@@ -31,7 +31,7 @@ The feature is optional per run. Existing callers that omit webhook configuratio
 
 If `server.webhooks.enabled` is `false`, callers must not be able to create webhook-backed runs. A `POST /api/runs` request that includes `webhook` while webhooks are disabled must return `400 BAD_REQUEST` and must not create `run_webhooks` or `webhook_deliveries` rows. This avoids accepting durable delivery jobs that no worker will process.
 
-Runtime persistence is PostgreSQL-only. SQLite must not be treated as a supported runtime backend for this feature. Any SQLite references in this plan are limited to the temporary legacy test facade that still exists in the repository.
+Runtime persistence is PostgreSQL-only. SQLite must not be treated as a supported runtime backend for this feature. Any SQLite references in this plan are historical implementation notes or migration-source context.
 
 Do not add a public "webhook management" API in this slice. Delivery audit can be inspected through database records and daemon logs first. Public delivery query APIs can be designed later if needed.
 
@@ -513,7 +513,7 @@ Add PostgreSQL-specific notification support without exposing it through busines
 
 Prefer methods that can run inside `persistence.transaction(...)` so state transition and outbox insert commit together.
 
-Runtime persistence is PostgreSQL-only. Do not add webhook tables or real webhook behavior to the legacy SQLite schema. The repository still contains a temporary SQLite test facade for older unit tests; if `RunnerPersistence` grows webhook methods before that facade is removed, add minimal facade methods that satisfy TypeScript and throw `webhooks require postgres persistence` when called. Existing SQLite-backed tests do not pass `request.webhook` and must not exercise those methods. All real webhook outbox behavior belongs in PostgreSQL-gated tests.
+Runtime persistence is PostgreSQL-only. Do not add webhook tables or real webhook behavior to any SQLite source fixtures. The earlier temporary SQLite test facade has been removed; all real webhook outbox behavior belongs in PostgreSQL-gated tests.
 
 ### PostgreSQL Repository
 
@@ -635,7 +635,7 @@ SELECT
 - Make the PostgreSQL implementation of `markInterruptedRunsOnStartup(now)` update queued/running rows with `UPDATE ... RETURNING *`, create interrupted webhook deliveries for matching run webhook configs inside the same transaction, and still return the interrupted count to existing callers.
 - `markInterruptedRunsOnStartup(...)` must use the shared `buildWebhookRunStatusPayload(...)` helper to construct `payload_json`; do not duplicate payload schema construction inside `repositories.ts`.
 - Startup interrupted delivery insertion must also use `ON CONFLICT (webhook_id, run_status) DO NOTHING`, matching normal delivery creation.
-- Keep the `markInterruptedRunsOnStartup(now): Promise<number>` interface signature unchanged. Do not update the legacy SQLite schema or SQLite repository for webhook tables.
+- Keep the `markInterruptedRunsOnStartup(now): Promise<number>` interface signature unchanged. Do not add webhook tables to SQLite migration-source fixtures.
 
 ### Run Service
 
@@ -807,7 +807,7 @@ Expected red first: parser rejects `server.webhooks`, or existing config tests f
 - [x] Include `down(pgm)` in the migration and drop tables in dependency order: `webhook_delivery_attempts`, then `webhook_deliveries`, then `run_webhooks`.
 - [x] Add records and repository inputs to `apps/daemon/src/db/types.ts`.
 - [x] Implement row mapping and repository methods in `apps/daemon/src/db/postgres/repositories.ts`.
-- [x] If the legacy SQLite test facade still implements `RunnerPersistence`, add minimal webhook method stubs there for type compatibility only. Do not add webhook tables to the SQLite schema.
+- [x] Earlier migration step only: if the legacy SQLite test facade still implemented `RunnerPersistence`, add minimal webhook method stubs there for type compatibility only. The facade has since been removed.
 - [x] Add PG-gated tests in `tests/db/postgres-repositories.test.ts`:
   - [x] inserts webhook config for a run.
   - [x] creates a queued delivery only once for the same webhook/status.
@@ -836,15 +836,15 @@ Expected red first: parser rejects `server.webhooks`, or existing config tests f
   - [x] returns the nearest stale-delivering recovery time from `getNextWebhookDeliveryDueAt({ lockTimeoutMs })`.
   - [x] startup interrupted update creates interrupted delivery rows with payloads built by the shared payload builder.
   - [x] startup interrupted delivery insertion uses conflict-safe semantics and does not duplicate interrupted deliveries.
-- [x] Add or update a typecheck-facing test/compile path so adding webhook methods to `RunnerPersistence` does not break the legacy SQLite test facade.
+- [x] Add or update a typecheck-facing test/compile path so adding webhook methods to `RunnerPersistence` does not break persistence implementations.
 - [x] Run `pnpm --filter @lance-agent-runner/daemon test -- tests/db/postgres-repositories.test.ts` with `CLAUDE_RUNNER_TEST_PG_URL`.
 
 Expected red first: new tables and methods do not exist.
 
 ### Task 4: Run Service Outbox Creation
 
-- [x] Keep existing SQLite-backed `tests/core/run-service.test.ts` focused on non-webhook behavior unless and until the SQLite test facade is removed. It should continue to pass without creating webhook tables.
-- [x] Add a guard regression test using the existing SQLite-backed setup: create a run without `webhook` and drive it through running/terminal paths while the legacy webhook facade methods throw. The test must prove no webhook persistence method is called when no webhook was requested.
+- [x] Keep existing run-service tests focused on non-webhook behavior unless webhook is explicitly requested. They should continue to pass without creating webhook deliveries.
+- [x] Add guard regression coverage proving no webhook persistence method is called when no webhook was requested.
 - [x] Add PG-backed run-service or API-flow webhook tests using the existing PostgreSQL harness:
   - [x] create run with terminal-only webhook stores config but no queued delivery by default.
   - [x] create run with `queued` subscription creates exactly one queued delivery.
@@ -1012,7 +1012,7 @@ Expected red first only if types are used before implementation. These checks ma
 
 - SSRF protection is the highest-risk area. Review DNS resolution, IP range checks, redirects, and allowlist semantics carefully. This slice provides guardrails, not complete DNS-rebinding protection.
 - Idempotency fingerprint changes must not break old callers. Omitted webhook must produce the same behavior as today.
-- Runtime persistence remains PostgreSQL-only. Do not add webhook schema or real webhook behavior to the legacy SQLite test facade.
+- Runtime persistence remains PostgreSQL-only. Do not add webhook schema or real webhook behavior to SQLite migration-source fixtures.
 - Stale `delivering` rows must be reclaimable after daemon crash or forced process termination.
 - Stale `delivering` rows must have a scheduled recovery wake-up through `locked_at + lockTimeoutMs`; do not rely on unrelated future notifications.
 - The worker must LISTEN before startup recovery scans, otherwise a delivery committed between scan and subscription can be missed.

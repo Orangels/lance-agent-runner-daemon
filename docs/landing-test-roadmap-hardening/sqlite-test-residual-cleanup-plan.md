@@ -756,11 +756,11 @@ git commit -m "refactor: remove sqlite runtime backend modules"
 - Modify: `package.json`
 - Create: `apps/daemon/tests/static/no-runtime-sqlite-imports.test.ts`
 
-- [ ] **Step 1: Update checklist status**
+- [x] **Step 1: Update checklist status**
 
 Mark Task 3 complete only after all runtime SQLite test references are gone and final PG-gated tests pass.
 
-- [ ] **Step 2: Update docs that still describe SQLite as runtime persistence**
+- [x] **Step 2: Update docs that still describe SQLite as runtime persistence**
 
 Run:
 
@@ -770,21 +770,21 @@ rg -n "SQLite|sqlite|better-sqlite3" docs AGENTS.md CLAUDE.md REFERENCE.md
 
 Expected: runtime docs describe PostgreSQL as the only daemon persistence backend. Mentions of SQLite should be historical, migration-source, or checklist context.
 
-- [ ] **Step 3: Add a root PostgreSQL daemon test gate**
+- [x] **Step 3: Add a root PostgreSQL daemon test gate**
 
 Add a root package script that makes PostgreSQL-gated daemon tests fail fast when the test database URL is missing:
 
 ```json
 {
   "scripts": {
-    "test:daemon:pg": "env CI=true pnpm --filter @lance-agent-runner/daemon test"
+    "test:daemon:pg": "env CI=true pnpm --filter @lance-agent-runner/daemon exec vitest run --no-file-parallelism"
   }
 }
 ```
 
 This script is intentionally separate from `pnpm test:daemon`. Developers may still run the normal daemon test suite locally, but merge verification must run `pnpm test:daemon:pg` with `CLAUDE_RUNNER_TEST_PG_URL` set.
 
-- [ ] **Step 4: Add a mandatory static guard for SQLite runtime imports**
+- [x] **Step 4: Add a mandatory static guard for SQLite runtime imports**
 
 Create `apps/daemon/tests/static/no-runtime-sqlite-imports.test.ts`. The test must fail if any non-whitelisted file imports:
 
@@ -808,7 +808,7 @@ scripts/migrate-sqlite-to-postgres.sh
 
 The static test should scan TypeScript import statements rather than rely only on broad free-text `rg` output. It may still include a small free-text assertion for `createSqliteRunnerPersistence` and `openInMemoryDatabase` because those symbols should disappear entirely.
 
-- [ ] **Step 5: Run the static guard**
+- [x] **Step 5: Run the static guard**
 
 Run:
 
@@ -818,7 +818,7 @@ pnpm --filter @lance-agent-runner/daemon test -- tests/static/no-runtime-sqlite-
 
 Expected: pass, proving SQLite runtime imports are blocked outside migration-source tooling/tests.
 
-- [ ] **Step 6: Run the PostgreSQL daemon test gate**
+- [x] **Step 6: Run the PostgreSQL daemon test gate**
 
 Run:
 
@@ -828,7 +828,7 @@ CLAUDE_RUNNER_TEST_PG_URL="$CLAUDE_RUNNER_TEST_PG_URL" pnpm test:daemon:pg
 
 Expected: daemon tests run with `CI=true` and fail if `CLAUDE_RUNNER_TEST_PG_URL` is missing.
 
-- [ ] **Step 7: Commit docs, scripts, and guard updates**
+- [x] **Step 7: Commit docs, scripts, and guard updates**
 
 ```bash
 git add docs package.json apps/daemon/tests/static

@@ -22,6 +22,7 @@
     "build:rpa-local-web": "pnpm --filter @lance-agent-runner/rpa-local-web build",
     "test": "pnpm test:daemon && pnpm test:web && pnpm test:rpa-local-web",
     "test:daemon": "pnpm --filter @lance-agent-runner/daemon test",
+    "test:daemon:pg": "env CI=true pnpm --filter @lance-agent-runner/daemon exec vitest run --no-file-parallelism",
     "test:web": "pnpm --filter @lance-agent-runner/web test",
     "test:rpa-local-web": "pnpm --filter @lance-agent-runner/rpa-local-web test",
     "typecheck": "pnpm typecheck:daemon && pnpm typecheck:web && pnpm typecheck:rpa-local-web",

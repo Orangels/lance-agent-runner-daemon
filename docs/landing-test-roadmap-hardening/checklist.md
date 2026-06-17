@@ -64,12 +64,12 @@ Use this branch to close the first-version landing-test loop after the PostgreSQ
   - [x] SQLite schema/repository tests.
   - [x] SQLite-backed service or HTTP tests.
   - [x] docs that still describe SQLite as runtime persistence.
-- [ ] Decide which SQLite references must stay for offline migration tooling tests.
-- [ ] Replace runtime/service/HTTP test persistence with PostgreSQL-backed helpers where feasible.
-- [ ] Remove SQLite runtime fixture helpers that are no longer needed.
-- [ ] Keep migration tests explicitly scoped as SQLite-source to PostgreSQL-target tests.
-- [ ] Run focused tests after each cleanup slice.
-- [ ] Run final daemon test suite with `CLAUDE_RUNNER_TEST_PG_URL` configured.
+- [x] Decide which SQLite references must stay for offline migration tooling tests.
+- [x] Replace runtime/service/HTTP test persistence with PostgreSQL-backed helpers where feasible.
+- [x] Remove SQLite runtime fixture helpers that are no longer needed.
+- [x] Keep migration tests explicitly scoped as SQLite-source to PostgreSQL-target tests.
+- [x] Run focused tests after each cleanup slice.
+- [x] Run final daemon test suite with `CLAUDE_RUNNER_TEST_PG_URL` configured.
 
 ### 4. Runtime Reliability Hardening
 
@@ -102,5 +102,5 @@ Use this branch to close the first-version landing-test loop after the PostgreSQ
 - [ ] `pnpm typecheck`
 - [ ] `pnpm build`
 - [ ] `pnpm test:daemon`
-- [ ] PostgreSQL-gated daemon tests with `CLAUDE_RUNNER_TEST_PG_URL`.
+- [x] PostgreSQL-gated daemon tests with `CLAUDE_RUNNER_TEST_PG_URL`.
 - [ ] Manual smoke test for daemon startup with `pnpm start:daemon:local:test`.

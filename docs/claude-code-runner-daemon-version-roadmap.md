@@ -152,10 +152,10 @@ Webhook notifications are implemented. Future hardening candidates:
 
 PostgreSQL runtime persistence is implemented. Remaining follow-up work:
 
-- Add a CI PostgreSQL test gate that sets `CI=true` and injects `CLAUDE_RUNNER_TEST_PG_URL`.
+- Wire the PostgreSQL daemon test gate into CI so it sets `CI=true` and injects `CLAUDE_RUNNER_TEST_PG_URL`.
 - Validate backup/restore and operator runbook steps against the production-like deployment path.
 - Preserve SQLite only as a read-only migration source and historical backup.
-- Remove remaining SQLite-backed unit-test fixtures, schema/repository test references, and `createSqliteRunnerPersistence` usages after the PostgreSQL runtime cutover is fully validated, so the automated test suite no longer relies on the legacy backend.
+- Keep the static SQLite-runtime import guard green so the automated test suite and request-serving runtime cannot drift back to the removed legacy backend.
 
 ### Queue Scale-Out
 
