@@ -705,7 +705,7 @@ git commit -m "test: remove sqlite runtime db tests"
 - Delete: `apps/daemon/src/db/sqlite-persistence.ts`
 - Verify imports across: `apps/daemon/src`, `apps/daemon/tests`, `docs`
 
-- [ ] **Step 1: Run static search before deleting**
+- [x] **Step 1: Run static search before deleting**
 
 Run:
 
@@ -715,7 +715,7 @@ rg -n "createSqliteRunnerPersistence|openInMemoryDatabase|applySchema|src/db/(co
 
 Expected: matches only in files that will be deleted or in migration fixture code that no longer imports runtime SQLite modules.
 
-- [ ] **Step 2: Delete the runtime SQLite modules**
+- [x] **Step 2: Delete the runtime SQLite modules**
 
 Delete:
 
@@ -726,7 +726,7 @@ apps/daemon/src/db/repositories.ts
 apps/daemon/src/db/sqlite-persistence.ts
 ```
 
-- [ ] **Step 3: Run static search after deleting**
+- [x] **Step 3: Run static search after deleting**
 
 Run:
 
@@ -736,7 +736,7 @@ rg -n "createSqliteRunnerPersistence|openInMemoryDatabase|applySchema|src/db/(co
 
 Expected: no runtime SQLite backend imports remain. If `applyLegacySqliteSourceSchema` appears in migration fixture tests, that is allowed.
 
-- [ ] **Step 4: Commit module deletion**
+- [x] **Step 4: Commit module deletion**
 
 ```bash
 git add apps/daemon/src/db apps/daemon/tests
