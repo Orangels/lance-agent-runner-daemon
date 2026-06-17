@@ -73,21 +73,22 @@ Use this branch to close the first-version landing-test loop after the PostgreSQ
 
 ### 4. Runtime Reliability Hardening
 
-- [ ] Write or update a short implementation plan before code changes.
-- [ ] Define terminal log semantics for:
-  - [ ] `canceled`.
-  - [ ] `failed` from timeout.
-  - [ ] `interrupted` on daemon shutdown/restart.
-- [ ] Add a bounded timeout around run-log close/finalization so terminal status persistence and SSE `end` cannot wait indefinitely.
-- [ ] Ensure close timeout emits a durable warning event without changing the terminal run status.
-- [ ] Ensure post-cancel child-process tail output behavior is explicit and tested.
-- [ ] Add regression tests for:
-  - [ ] close success.
-  - [ ] close failure.
-  - [ ] close timeout.
-  - [ ] canceled run terminal behavior.
-  - [ ] interrupted run startup recovery.
-- [ ] Update API/config/operations docs if any externally visible warning or timing behavior changes.
+- [x] Write or update a short implementation plan before code changes:
+  - [x] `docs/landing-test-roadmap-hardening/runtime-reliability-hardening-plan.md`.
+- [x] Define terminal log semantics for:
+  - [x] `canceled`.
+  - [x] `failed` from timeout.
+  - [x] `interrupted` on daemon shutdown/restart.
+- [x] Add a bounded timeout around run-log close/finalization so terminal status persistence and SSE `end` cannot wait indefinitely.
+- [x] Ensure close timeout emits a durable warning event without changing the terminal run status.
+- [x] Ensure post-cancel child-process tail output behavior is explicit and tested.
+- [x] Add regression tests for:
+  - [x] close success.
+  - [x] close failure.
+  - [x] close timeout.
+  - [x] canceled run terminal behavior.
+  - [x] interrupted run startup recovery.
+- [x] Update API/config/operations docs if any externally visible warning or timing behavior changes.
 
 ## Suggested Commit Order
 
@@ -99,8 +100,8 @@ Use this branch to close the first-version landing-test loop after the PostgreSQ
 
 ## Verification
 
-- [ ] `pnpm typecheck`
-- [ ] `pnpm build`
-- [ ] `pnpm test:daemon`
+- [x] `pnpm typecheck`
+- [x] `pnpm build`
+- [x] `pnpm test:daemon`
 - [x] PostgreSQL-gated daemon tests with `CLAUDE_RUNNER_TEST_PG_URL`.
 - [ ] Manual smoke test for daemon startup with `pnpm start:daemon:local:test`.

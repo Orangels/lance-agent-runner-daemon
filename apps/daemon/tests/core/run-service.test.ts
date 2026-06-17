@@ -1678,6 +1678,158 @@ postgresDescribe('run service', () => {
     });
   });
 
+  it('persists a run log close timeout warning before terminal end without changing final status', async () => {
+    const daemonLogger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      flush: vi.fn(async () => {}),
+    };
+    const closeDeferred = createDeferred<void>();
+    const close = vi.fn(() => closeDeferred.promise);
+    const runLogService = {
+      dataDir: '',
+      openRunLogs: vi.fn(async () => ({
+        stdout: vi.fn(),
+        stderr: vi.fn(),
+        debugEvent: vi.fn(),
+        close,
+      })),
+      getRunLogs: vi.fn(),
+      getRunLogDownload: vi.fn(),
+      pruneExpiredLogs: vi.fn(),
+    } satisfies RunLogService;
+    const { root, config, persistence, workspace, workspaceCwd, service, runners, runNextTimer } = await setup({
+      daemonLogger,
+      runLogService,
+      configure: (config) => {
+        config.server.runLogCloseTimeoutMs = 25;
+      },
+    });
+    writeSkill(root);
+
+    await service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'generate',
+        prompt: 'Write the report.',
+        skillId: 'report-writer',
+      },
+    });
+    await runScheduledStart(runNextTimer);
+    await waitForRunnerCount(runners, 1);
+    writeFileSync(path.join(workspaceCwd, 'output', 'report.docx'), 'docx');
+
+    runners[0]!.complete({
+      status: 'succeeded',
+      exitCode: 0,
+      signal: null,
+      stdoutTail: '',
+      stderrTail: '',
+    });
+    await flushAsync();
+
+    expect(close).toHaveBeenCalledTimes(1);
+    expect((await persistence.getRunDetail({ runId: 'run_1', clientId: 'lqbot' }))?.run.status).toBe('running');
+
+    runNextTimer();
+    await vi.waitFor(async () => {
+      expect((await persistence.getRunDetail({ runId: 'run_1', clientId: 'lqbot' }))?.run.status).toBe('succeeded');
+    });
+
+    const detail = await persistence.getRunDetail({ runId: 'run_1', clientId: 'lqbot' });
+    const events = detail?.messages[1]?.events as Array<{ type: string; code?: string }>;
+    const eventTypes = events.map((event) => event.type);
+    expect(detail?.run.status).toBe('succeeded');
+    expect(eventTypes).toEqual(expect.arrayContaining(['artifact_finalized', 'warning', 'end']));
+    expect(eventTypes.indexOf('artifact_finalized')).toBeLessThan(eventTypes.indexOf('warning'));
+    expect(eventTypes.indexOf('warning')).toBeLessThan(eventTypes.indexOf('end'));
+    expect(events).toContainEqual(expect.objectContaining({ type: 'warning', code: 'RUN_LOG_WRITE_TIMEOUT' }));
+    expect(daemonLogger.warn).toHaveBeenCalledWith('run_log_write_timeout', {
+      runId: 'run_1',
+      timeoutMs: 25,
+    });
+  });
+
+  it('persists terminal end after successful run log close without a warning', async () => {
+    const close = vi.fn(async () => {});
+    const runLogService = {
+      dataDir: '',
+      openRunLogs: vi.fn(async () => ({
+        stdout: vi.fn(),
+        stderr: vi.fn(),
+        debugEvent: vi.fn(),
+        close,
+      })),
+      getRunLogs: vi.fn(),
+      getRunLogDownload: vi.fn(),
+      pruneExpiredLogs: vi.fn(),
+    } satisfies RunLogService;
+    const { config, persistence, workspace, service, runners, runNextTimer } = await setup({ runLogService });
+
+    await service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'revise',
+        prompt: 'Run.',
+        artifactRuleIds: [],
+      },
+    });
+    await runScheduledStart(runNextTimer);
+    await waitForRunnerCount(runners, 1);
+    runners[0]!.complete({ status: 'succeeded', exitCode: 0, signal: null, stdoutTail: '', stderrTail: '' });
+
+    await vi.waitFor(async () => {
+      expect((await persistence.getRunDetail({ runId: 'run_1', clientId: 'lqbot' }))?.run.status).toBe('succeeded');
+    });
+
+    const events = (await persistence.getRunDetail({ runId: 'run_1', clientId: 'lqbot' }))?.messages[1]
+      ?.events as Array<{ type: string }>;
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(events.map((event) => event.type)).toContain('end');
+    expect(events.map((event) => event.type)).not.toContain('warning');
+  });
+
+  it('ignores runner events emitted after terminal end is persisted', async () => {
+    const { config, persistence, workspace, service, runners, runNextTimer } = await setup();
+    await service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'revise',
+        prompt: 'Run.',
+        artifactRuleIds: [],
+      },
+    });
+    await runScheduledStart(runNextTimer);
+    await waitForRunnerCount(runners, 1);
+    runners[0]!.complete({ status: 'succeeded', exitCode: 0, signal: null, stdoutTail: '', stderrTail: '' });
+
+    await vi.waitFor(async () => {
+      expect((await persistence.getRunDetail({ runId: 'run_1', clientId: 'lqbot' }))?.run.status).toBe('succeeded');
+    });
+    runners[0]!.input.onEvent({ type: 'stderr', text: 'late output after terminal' });
+    await flushAsync();
+
+    const events = (await persistence.getRunDetail({ runId: 'run_1', clientId: 'lqbot' }))?.messages[1]
+      ?.events as Array<{ type: string; text?: string }>;
+    expect(events.at(-1)).toMatchObject({ type: 'end' });
+    expect(events).not.toContainEqual(expect.objectContaining({ type: 'stderr', text: 'late output after terminal' }));
+    await expect(service.replayRunEvents({ client: config.clients[0]!, runId: 'run_1' })).resolves.toEqual(
+      expect.not.arrayContaining([
+        expect.objectContaining({
+          event: { type: 'stderr', text: 'late output after terminal' },
+        }),
+      ]),
+    );
+  });
+
   it('rewrites successful runs to failed when required artifacts are missing', async () => {
     const { root, config, persistence, workspace, service, runners, runNextTimer } = await setup();
     writeSkill(root);
@@ -1811,6 +1963,61 @@ postgresDescribe('run service', () => {
     expect((await persistence.getRunDetail({ runId: 'run_1', clientId: 'lqbot' }))?.run.status).toBe('canceled');
   });
 
+  it('keeps canceled status when run log close times out', async () => {
+    const closeDeferred = createDeferred<void>();
+    const runLogService = {
+      dataDir: '',
+      openRunLogs: vi.fn(async () => ({
+        stdout: vi.fn(),
+        stderr: vi.fn(),
+        debugEvent: vi.fn(),
+        close: vi.fn(() => closeDeferred.promise),
+      })),
+      getRunLogs: vi.fn(),
+      getRunLogDownload: vi.fn(),
+      pruneExpiredLogs: vi.fn(),
+    } satisfies RunLogService;
+    const { config, persistence, workspace, service, runners, runNextTimer } = await setup({
+      runLogService,
+      configure: (config) => {
+        config.server.runLogCloseTimeoutMs = 25;
+      },
+    });
+    await service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'revise',
+        prompt: 'Run.',
+        artifactRuleIds: [],
+      },
+    });
+    await runScheduledStart(runNextTimer);
+    await waitForRunnerCount(runners, 1);
+
+    await service.cancelRun({ client: config.clients[0]!, runId: 'run_1' });
+    runners[0]!.complete({
+      status: 'canceled',
+      exitCode: null,
+      signal: 'SIGTERM',
+      stdoutTail: '',
+      stderrTail: '',
+    });
+    await flushAsync();
+    runNextTimer();
+
+    await vi.waitFor(async () => {
+      expect((await persistence.getRunDetail({ runId: 'run_1', clientId: 'lqbot' }))?.run.status).toBe('canceled');
+    });
+    const detail = await persistence.getRunDetail({ runId: 'run_1', clientId: 'lqbot' });
+    const events = detail?.messages[1]?.events as Array<{ type: string; code?: string; status?: string }>;
+    expect(detail?.run.status).toBe('canceled');
+    expect(detail?.messages[1]?.runStatus).toBe('canceled');
+    expect(events).toContainEqual(expect.objectContaining({ type: 'warning', code: 'RUN_LOG_WRITE_TIMEOUT' }));
+    expect(events.at(-1)).toMatchObject({ type: 'end', status: 'canceled' });
+  });
+
   it('clears the run timeout when canceling a running run', async () => {
     const { config, workspace, service, runners, runNextTimer, pendingTimers } = await setup({
       configure: (config) => {
@@ -1872,6 +2079,57 @@ postgresDescribe('run service', () => {
         }),
       ]),
     );
+  });
+
+  it('keeps RUN_TIMEOUT failure details when run log close times out', async () => {
+    const closeDeferred = createDeferred<void>();
+    const runLogService = {
+      dataDir: '',
+      openRunLogs: vi.fn(async () => ({
+        stdout: vi.fn(),
+        stderr: vi.fn(),
+        debugEvent: vi.fn(),
+        close: vi.fn(() => closeDeferred.promise),
+      })),
+      getRunLogs: vi.fn(),
+      getRunLogDownload: vi.fn(),
+      pruneExpiredLogs: vi.fn(),
+    } satisfies RunLogService;
+    const { config, persistence, workspace, service, runners, runNextTimer } = await setup({
+      runLogService,
+      configure: (config) => {
+        config.profiles[0]!.runTimeoutMs = 50;
+        config.server.runLogCloseTimeoutMs = 25;
+      },
+    });
+    await service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'revise',
+        prompt: 'Run.',
+        artifactRuleIds: [],
+      },
+    });
+    await runScheduledStart(runNextTimer);
+    await waitForRunnerCount(runners, 1);
+
+    runNextTimer();
+    await flushAsync();
+    runNextTimer();
+
+    await vi.waitFor(async () => {
+      expect((await persistence.getRunDetail({ runId: 'run_1', clientId: 'lqbot' }))?.run.status).toBe('failed');
+    });
+    const detail = await persistence.getRunDetail({ runId: 'run_1', clientId: 'lqbot' });
+    const events = detail?.messages[1]?.events as Array<{ type: string; code?: string; status?: string }>;
+    expect(detail?.run).toMatchObject({ status: 'failed', errorCode: 'RUN_TIMEOUT' });
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'error', code: 'RUN_TIMEOUT' }),
+    );
+    expect(events).toContainEqual(expect.objectContaining({ type: 'warning', code: 'RUN_LOG_WRITE_TIMEOUT' }));
+    expect(events.at(-1)).toMatchObject({ type: 'end', status: 'failed' });
   });
 
   it('shutdownActive interrupts queued runs without spawning them', async () => {
@@ -2027,5 +2285,53 @@ postgresDescribe('run service', () => {
       errorCode: 'RUN_INTERRUPTED_BY_DAEMON_RESTART',
       errorMessage: 'Run interrupted by daemon shutdown',
     });
+  });
+
+  it('keeps interrupted shutdown details when run log close times out', async () => {
+    const closeDeferred = createDeferred<void>();
+    const runLogService = {
+      dataDir: '',
+      openRunLogs: vi.fn(async () => ({
+        stdout: vi.fn(),
+        stderr: vi.fn(),
+        debugEvent: vi.fn(),
+        close: vi.fn(() => closeDeferred.promise),
+      })),
+      getRunLogs: vi.fn(),
+      getRunLogDownload: vi.fn(),
+      pruneExpiredLogs: vi.fn(),
+    } satisfies RunLogService;
+    const { config, persistence, workspace, service, runners, runNextTimer } = await setup({
+      runLogService,
+      configure: (config) => {
+        config.server.runLogCloseTimeoutMs = 25;
+      },
+    });
+    await service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'revise',
+        prompt: 'Run.',
+        artifactRuleIds: [],
+      },
+    });
+    await runScheduledStart(runNextTimer);
+    await waitForRunnerCount(runners, 1);
+
+    const shutdown = service.shutdownActive({ graceMs: 0 });
+    await flushAsync();
+    runNextTimer();
+
+    await expect(shutdown).resolves.toEqual({ interrupted: 1 });
+    const detail = await persistence.getRunDetail({ runId: 'run_1', clientId: 'lqbot' });
+    const events = detail?.messages[1]?.events as Array<{ type: string; code?: string; status?: string }>;
+    expect(detail?.run).toMatchObject({
+      status: 'interrupted',
+      errorCode: 'RUN_INTERRUPTED_BY_DAEMON_RESTART',
+    });
+    expect(events).toContainEqual(expect.objectContaining({ type: 'warning', code: 'RUN_LOG_WRITE_TIMEOUT' }));
+    expect(events.at(-1)).toMatchObject({ type: 'end', status: 'interrupted' });
   });
 });

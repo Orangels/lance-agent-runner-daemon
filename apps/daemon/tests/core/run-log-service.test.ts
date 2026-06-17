@@ -55,6 +55,7 @@ async function setup(input: { maxLogBytesPerRun?: number; logRetentionMs?: numbe
         maxQueueSize: 100,
         logRetentionMs: input.logRetentionMs ?? 60_000,
         maxLogBytesPerRun: input.maxLogBytesPerRun ?? 4 * 1024 * 1024,
+        runLogCloseTimeoutMs: 5000,
         maxReviewBundleBytes: 16 * 1024 * 1024,
         maxUploadBytesPerFile: 50 * 1024 * 1024,
         uploadTempRetentionMs: 24 * 60 * 60 * 1000,

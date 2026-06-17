@@ -420,7 +420,7 @@ GET /api/runs/:runId/artifacts/:artifactId/download
   -> 下载报告
 ```
 
-建议兜底查询间隔为 10-30 秒，`queued` 可适当拉长。daemon 会在 terminal 状态写入前尽量 flush 本次 run logs，因此 Claude 子进程实际结束到 `/status` 返回 `terminal=true` 之间可能有很短尾延迟。
+建议兜底查询间隔为 10-30 秒，`queued` 可适当拉长。daemon 会在 terminal 状态写入前于 `server.runLogCloseTimeoutMs` 内尽量 flush 本次 run logs，因此 Claude 子进程实际结束到 `/status` 返回 `terminal=true` 之间可能有很短尾延迟。若日志 close 超时，daemon 会继续写入 terminal 状态并通过 `warning` RunEvent 暴露降级信息。
 
 ### 6. 订阅 SSE
 
@@ -449,7 +449,7 @@ data: {"type":"artifact_finalized","artifact":{"id":"artifact_xxx","runId":"run_
 
 id: 5
 event: agent
-data: {"type":"warning","code":"RUN_LOG_WRITE_FAILED","message":"Run log write failed."}
+data: {"type":"warning","code":"RUN_LOG_WRITE_TIMEOUT","message":"Run log write timed out.","details":{"timeoutMs":5000}}
 
 id: 6
 event: agent
@@ -760,7 +760,7 @@ canceled     用户取消
 interrupted  daemon 重启或关闭中断，建议允许用户重新发起 run
 ```
 
-`warning` RunEvent 不属于状态机，不会把 run status 改为 `failed`。失败判断以 `run.status`、`run.errorCode` 和 `run.errorMessage` 为准。
+`warning` RunEvent 不属于状态机，不会把 run status 改为 `failed`。例如 `RUN_LOG_WRITE_FAILED` / `RUN_LOG_WRITE_TIMEOUT` 只表示日志诊断材料写入或 close 降级。失败判断以 `run.status`、`run.errorCode` 和 `run.errorMessage` 为准。
 
 ## Queue 与并发
 

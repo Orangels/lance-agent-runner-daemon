@@ -81,6 +81,7 @@ describe('daemon config parsing', () => {
     });
     expect(config.server.logRetentionMs).toBe(7 * 24 * 60 * 60 * 1000);
     expect(config.server.maxLogBytesPerRun).toBe(4 * 1024 * 1024);
+    expect(config.server.runLogCloseTimeoutMs).toBe(5000);
     expect(config.server.maxReviewBundleBytes).toBe(16 * 1024 * 1024);
     expect(config.server.maxUploadBytesPerFile).toBe(50 * 1024 * 1024);
     expect(config.server.uploadTempRetentionMs).toBe(24 * 60 * 60 * 1000);
@@ -196,6 +197,7 @@ describe('daemon config parsing', () => {
           ...validConfig.server,
           logRetentionMs: 3_600_000,
           maxLogBytesPerRun: 1024,
+          runLogCloseTimeoutMs: 250,
         },
       },
       { env: configEnv() },
@@ -203,6 +205,7 @@ describe('daemon config parsing', () => {
 
     expect(config.server.logRetentionMs).toBe(3_600_000);
     expect(config.server.maxLogBytesPerRun).toBe(1024);
+    expect(config.server.runLogCloseTimeoutMs).toBe(250);
   });
 
   it('accepts explicit review bundle byte caps', () => {

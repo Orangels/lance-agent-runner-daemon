@@ -178,6 +178,17 @@ interface RunStateWebhook {
   metadata: unknown;
 }
 
+class RunLogCloseTimeoutError extends Error {
+  constructor(readonly timeoutMs: number) {
+    super('Run log close timed out.');
+    this.name = 'RunLogCloseTimeoutError';
+  }
+}
+
+function isRunLogCloseTimeoutError(error: unknown): error is RunLogCloseTimeoutError {
+  return error instanceof RunLogCloseTimeoutError;
+}
+
 interface NormalizedWebhookRequest {
   url: string;
   secret: string | null;
@@ -242,7 +253,11 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     return loaded;
   }
 
-  function emitRunEvent(state: RunState, event: RunEvent): BufferedRunEvent {
+  function emitRunEvent(state: RunState, event: RunEvent): BufferedRunEvent | null {
+    if (state.terminal) {
+      return null;
+    }
+
     const record = { id: formatRunEventId(state.nextEventId++), event };
     state.events.push(record);
     if (state.events.length > maxBufferedEvents) {
@@ -256,6 +271,67 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     }
 
     return record;
+  }
+
+  async function closeRunLogHandle(state: RunState): Promise<void> {
+    if (!state.logHandle) {
+      return;
+    }
+
+    const timeoutMs = input.config.server.runLogCloseTimeoutMs;
+    try {
+      await withRunServiceTimeout(
+        state.logHandle.close(),
+        timeoutMs,
+        () => new RunLogCloseTimeoutError(timeoutMs),
+      );
+    } catch (error) {
+      if (isRunLogCloseTimeoutError(error)) {
+        daemonLogger.warn('run_log_write_timeout', {
+          runId: state.runId,
+          timeoutMs: error.timeoutMs,
+        });
+        emitRunEvent(state, {
+          type: 'warning',
+          code: 'RUN_LOG_WRITE_TIMEOUT',
+          message: 'Run log write timed out.',
+          details: { timeoutMs: error.timeoutMs },
+        });
+      } else {
+        daemonLogger.warn('run_log_write_failed', {
+          error,
+          runId: state.runId,
+        });
+        emitRunEvent(state, {
+          type: 'warning',
+          code: 'RUN_LOG_WRITE_FAILED',
+          message: 'Run log write failed.',
+        });
+      }
+    } finally {
+      state.logHandle = null;
+    }
+  }
+
+  function withRunServiceTimeout<T>(
+    promise: Promise<T>,
+    timeoutMs: number,
+    createError: () => Error,
+  ): Promise<T> {
+    let timeoutId: unknown = null;
+    const timeout = new Promise<never>((_, reject) => {
+      timeoutId = timer.setTimeout(() => {
+        timeoutId = null;
+        reject(createError());
+      }, timeoutMs);
+    });
+
+    return Promise.race([promise, timeout]).finally(() => {
+      if (timeoutId !== null) {
+        timer.clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+    });
   }
 
   function scheduleDispatch(): void {
@@ -610,23 +686,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       }
     }
 
-    if (state.logHandle) {
-      try {
-        await state.logHandle.close();
-      } catch (error) {
-        daemonLogger.warn('run_log_write_failed', {
-          error,
-          runId: state.runId,
-        });
-        emitRunEvent(state, {
-          type: 'warning',
-          code: 'RUN_LOG_WRITE_FAILED',
-          message: 'Run log write failed.',
-        });
-      } finally {
-        state.logHandle = null;
-      }
-    }
+    await closeRunLogHandle(state);
 
     emitRunEvent(state, { type: 'end', status: finalStatus });
     const finishedAt = now();

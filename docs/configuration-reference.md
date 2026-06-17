@@ -127,6 +127,12 @@ Per-run logs are separate from service logs and live under:
 .claude-runner/data/logs/runs/<runId>/
 ```
 
+### `server.runLogCloseTimeoutMs`
+
+Maximum milliseconds the daemon waits for per-run stdout, stderr, and debug event log writers to flush during terminal run finalization.
+
+If the timeout is reached, the daemon emits a durable `warning` run event with `code: "RUN_LOG_WRITE_TIMEOUT"` and continues terminal status persistence, SSE `end`, and terminal webhook delivery creation. The terminal run status is not changed. Set to `0` to avoid waiting for log close at terminal.
+
 ### `server.maxReviewBundleBytes`
 
 Maximum total byte count for the generic run review bundle before ZIP creation.
