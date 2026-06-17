@@ -139,10 +139,12 @@ function createTimerHarness() {
 
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((innerResolve) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((innerResolve, innerReject) => {
     resolve = innerResolve;
+    reject = innerReject;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 type TestRunner = {
@@ -1748,6 +1750,76 @@ postgresDescribe('run service', () => {
     expect(eventTypes.indexOf('artifact_finalized')).toBeLessThan(eventTypes.indexOf('warning'));
     expect(eventTypes.indexOf('warning')).toBeLessThan(eventTypes.indexOf('end'));
     expect(events).toContainEqual(expect.objectContaining({ type: 'warning', code: 'RUN_LOG_WRITE_TIMEOUT' }));
+    expect(daemonLogger.warn).toHaveBeenCalledWith('run_log_write_timeout', {
+      runId: 'run_1',
+      timeoutMs: 25,
+    });
+  });
+
+  it('ignores a close rejection that arrives after the close timeout already finalized the run', async () => {
+    const daemonLogger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      flush: vi.fn(async () => {}),
+    };
+    const closeDeferred = createDeferred<void>();
+    const close = vi.fn(() => closeDeferred.promise);
+    const runLogService = {
+      dataDir: '',
+      openRunLogs: vi.fn(async () => ({
+        stdout: vi.fn(),
+        stderr: vi.fn(),
+        debugEvent: vi.fn(),
+        close,
+      })),
+      getRunLogs: vi.fn(),
+      getRunLogDownload: vi.fn(),
+      pruneExpiredLogs: vi.fn(),
+    } satisfies RunLogService;
+    const { config, persistence, workspace, service, runners, runNextTimer } = await setup({
+      daemonLogger,
+      runLogService,
+      configure: (config) => {
+        config.server.runLogCloseTimeoutMs = 25;
+      },
+    });
+
+    await service.createRun({
+      client: config.clients[0]!,
+      request: {
+        profileId: 'report-docx',
+        workspaceId: workspace.id,
+        kind: 'revise',
+        prompt: 'Run.',
+        artifactRuleIds: [],
+      },
+    });
+    await runScheduledStart(runNextTimer);
+    await waitForRunnerCount(runners, 1);
+    runners[0]!.complete({
+      status: 'succeeded',
+      exitCode: 0,
+      signal: null,
+      stdoutTail: '',
+      stderrTail: '',
+    });
+    await flushAsync();
+    runNextTimer();
+
+    await vi.waitFor(async () => {
+      expect((await persistence.getRunDetail({ runId: 'run_1', clientId: 'lqbot' }))?.run.status).toBe('succeeded');
+    });
+    closeDeferred.reject(new Error('late close failure'));
+    await flushAsync();
+
+    const detail = await persistence.getRunDetail({ runId: 'run_1', clientId: 'lqbot' });
+    const events = detail?.messages[1]?.events as Array<{ type: string; code?: string }>;
+    expect(detail?.run.status).toBe('succeeded');
+    expect(events.filter((event) => event.code === 'RUN_LOG_WRITE_TIMEOUT')).toHaveLength(1);
+    expect(events).not.toContainEqual(expect.objectContaining({ code: 'RUN_LOG_WRITE_FAILED' }));
+    expect(daemonLogger.warn).toHaveBeenCalledTimes(1);
     expect(daemonLogger.warn).toHaveBeenCalledWith('run_log_write_timeout', {
       runId: 'run_1',
       timeoutMs: 25,

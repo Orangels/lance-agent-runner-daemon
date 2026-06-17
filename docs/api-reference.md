@@ -62,7 +62,7 @@ Content-Type: text/event-stream
 
 daemon 的请求服务路径使用异步数据库和文件 IO。对调用方可见的主要影响是：
 
-- run 进入 terminal 状态前会在 `server.runLogCloseTimeoutMs` 内尽量 flush run logs，因此 `GET /api/runs/:runId/status` 看到 terminal 的时间可能比 Claude 子进程退出略晚。
+- run 进入 terminal 状态前会在 `server.runLogCloseTimeoutMs` 内尽量 flush run logs，因此 `GET /api/runs/:runId/status` 看到 terminal 的时间可能比 Claude 子进程退出略晚；该尾延迟上限由 `server.runLogCloseTimeoutMs` 控制，默认最多约 5 秒。
 - run log 写入失败或 close 超时不会改变 run 的 terminal status；daemon 会通过 `warning` RunEvent 暴露该降级事件。
 
 ### 错误响应
@@ -826,7 +826,7 @@ Authorization: Bearer <api-key>
 
 `terminal` 在 `status` 为 `succeeded`、`failed`、`canceled`、`interrupted` 时为 `true`。报告生成场景推荐先轮询该接口，`terminal: true` 后再调用 artifacts API。
 
-terminal 状态表示 daemon 已完成 durable run 状态更新。由于 daemon 会在 terminal 前 flush 本次 run logs，慢盘或日志写入异常可能让 terminal 可见时间略晚；业务端应继续按轮询间隔等待，不需要改变调用方式。
+terminal 状态表示 daemon 已完成 durable run 状态更新。由于 daemon 会在 terminal 前 flush 本次 run logs，慢盘或日志写入异常可能让 terminal 可见时间略晚；尾延迟上限由 `server.runLogCloseTimeoutMs` 控制，默认最多约 5 秒。业务端应继续按轮询间隔等待，不需要改变调用方式。
 
 ### Common Errors
 

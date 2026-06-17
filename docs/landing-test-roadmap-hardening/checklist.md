@@ -81,7 +81,7 @@ Use this branch to close the first-version landing-test loop after the PostgreSQ
   - [x] `interrupted` on daemon shutdown/restart.
 - [x] Add a bounded timeout around run-log close/finalization so terminal status persistence and SSE `end` cannot wait indefinitely.
 - [x] Ensure close timeout emits a durable warning event without changing the terminal run status.
-- [x] Ensure post-cancel child-process tail output behavior is explicit and tested.
+- [x] Ensure post-cancel child-process tail output behavior is explicit and tested for terminal event/replay safety; late log writes are best-effort diagnostics and must not block terminal persistence.
 - [x] Add regression tests for:
   - [x] close success.
   - [x] close failure.
@@ -89,6 +89,7 @@ Use this branch to close the first-version landing-test loop after the PostgreSQ
   - [x] canceled run terminal behavior.
   - [x] interrupted run startup recovery.
 - [x] Update API/config/operations docs if any externally visible warning or timing behavior changes.
+- [ ] Follow-up after landing-test smoke: decide whether `shutdownActive()` should finalize active runs in parallel. Current shutdown finalization is serial, so a worst-case slow log close can add up to `activeRunCount * server.runLogCloseTimeoutMs`. This was not changed in the current patch because parallelizing shutdown changes multi-run termination ordering and should be designed and stress-tested separately.
 
 ## Suggested Commit Order
 

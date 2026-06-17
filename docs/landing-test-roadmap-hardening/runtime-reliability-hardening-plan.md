@@ -521,3 +521,9 @@ pnpm build
 git add .claude-runner/config.local.json apps/daemon/src/config/profiles.ts apps/daemon/src/core/run-service.ts apps/daemon/tests/config/profiles.test.ts apps/daemon/tests/core/run-service.test.ts docs/api-reference.md docs/business-agent-adapter-handoff.md docs/business-run-chat-integration-guide.md docs/configuration-reference.md docs/landing-test-roadmap-hardening/checklist.md docs/landing-test-roadmap-hardening/runtime-reliability-hardening-plan.md
 git commit -m "fix: bound terminal run log close"
 ```
+
+## Deferred Follow-Up: Shutdown Parallelization
+
+`shutdownActive()` currently finalizes non-terminal runs serially. With `server.runLogCloseTimeoutMs = 5000`, worst-case shutdown time can include up to `activeRunCount * runLogCloseTimeoutMs` before the separate runner `graceMs` wait completes.
+
+This plan intentionally does not change that behavior because parallel finalization affects multi-run shutdown ordering, shared persistence pressure, and webhook delivery creation timing. Revisit after landing-test smoke and, if needed, create a dedicated plan that includes concurrent shutdown finalization tests, high-concurrency stress coverage, and operator-facing shutdown timeout guidance.

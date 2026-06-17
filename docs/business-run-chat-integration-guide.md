@@ -420,7 +420,7 @@ GET /api/runs/:runId/artifacts/:artifactId/download
   -> 下载报告
 ```
 
-建议兜底查询间隔为 10-30 秒，`queued` 可适当拉长。daemon 会在 terminal 状态写入前于 `server.runLogCloseTimeoutMs` 内尽量 flush 本次 run logs，因此 Claude 子进程实际结束到 `/status` 返回 `terminal=true` 之间可能有很短尾延迟。若日志 close 超时，daemon 会继续写入 terminal 状态并通过 `warning` RunEvent 暴露降级信息。
+建议兜底查询间隔为 10-30 秒，`queued` 可适当拉长。daemon 会在 terminal 状态写入前于 `server.runLogCloseTimeoutMs` 内尽量 flush 本次 run logs，因此 Claude 子进程实际结束到 `/status` 返回 `terminal=true` 之间可能有很短尾延迟；该尾延迟上限由 `server.runLogCloseTimeoutMs` 控制，默认最多约 5 秒。若日志 close 超时，daemon 会继续写入 terminal 状态并通过 `warning` RunEvent 暴露降级信息。
 
 ### 6. 订阅 SSE
 

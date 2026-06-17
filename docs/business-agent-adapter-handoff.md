@@ -377,7 +377,7 @@ Status Poll 只用于以下场景：
 - `queued` 可适当拉长。
 - `terminal=true` 后立即停止轮询。
 
-daemon 会在 terminal 状态写入前于 `server.runLogCloseTimeoutMs` 内尽量 flush 本次 run logs。极端慢盘或日志写入异常时，Claude 子进程结束到 `/status` 返回 `terminal=true` 之间可能有短暂尾延迟；如果日志 close 超时，daemon 会继续写入 terminal 状态并通过 `warning` RunEvent 暴露降级信息。业务端不需要改流程，只要继续轮询到 `terminal=true`。
+daemon 会在 terminal 状态写入前于 `server.runLogCloseTimeoutMs` 内尽量 flush 本次 run logs。极端慢盘或日志写入异常时，Claude 子进程结束到 `/status` 返回 `terminal=true` 之间可能有短暂尾延迟；该尾延迟上限由 `server.runLogCloseTimeoutMs` 控制，默认最多约 5 秒。如果日志 close 超时，daemon 会继续写入 terminal 状态并通过 `warning` RunEvent 暴露降级信息。业务端不需要改流程，只要继续轮询到 `terminal=true`。
 
 如果 webhook payload 中没有期望的 primary artifact，或业务端需要对账，可以 list artifacts：
 
