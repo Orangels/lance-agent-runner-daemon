@@ -557,7 +557,7 @@ git commit -m "test: migrate route tests to postgres"
 - Modify: `apps/daemon/tests/helpers/postgres-domain-fixtures.ts`
 - Modify: `apps/daemon/src/db/postgres/repositories.ts` only if a missing production persistence method is discovered.
 
-- [ ] **Step 1: Replace the SQLite-backed setup with the PG harness and keep webhook spy wiring accurate**
+- [x] **Step 1: Replace the SQLite-backed setup with the PG harness and keep webhook spy wiring accurate**
 
 The existing setup currently creates an in-memory SQLite DB and calls direct SQLite helpers. Preserve the real `withWebhookSpy?: boolean` option and the existing single-argument `createWebhookSpyPersistence(base)` helper shape:
 
@@ -586,7 +586,7 @@ For this file, do not perform one full `DROP SCHEMA + migrate` setup per `it` wi
 - Prefer `beforeAll` creating `createPostgresFilePersistenceHarness()`, `afterEach` truncating data with `resetData()`, and `afterAll` awaiting `cleanup()`.
 - If a specific subset needs full schema rebuild per case, document why that test cannot use file-level truncate reset.
 
-- [ ] **Step 2: Remove direct SQLite repository calls from the test**
+- [x] **Step 2: Remove direct SQLite repository calls from the test**
 
 Replace direct imports such as `upsertWorkspace`, `getRunDetail`, and snapshot helpers from `apps/daemon/src/db/repositories.ts`.
 
@@ -617,7 +617,7 @@ Apply the same async conversion for:
 
 Add a small PG test helper in `apps/daemon/tests/helpers/postgres-domain-fixtures.ts` only for repeated setup-only seeding. Add or expose a production persistence method only when the behavior is a real runtime capability, not a test convenience.
 
-- [ ] **Step 3: Preserve current run-service assertions**
+- [x] **Step 3: Preserve current run-service assertions**
 
 Do not weaken assertions for:
 
@@ -629,7 +629,7 @@ Do not weaken assertions for:
 - queue capacity behavior.
 - run status transitions.
 
-- [ ] **Step 4: Run the focused run-service suite**
+- [x] **Step 4: Run the focused run-service suite**
 
 Run:
 
@@ -639,7 +639,7 @@ CLAUDE_RUNNER_TEST_PG_URL="$CLAUDE_RUNNER_TEST_PG_URL" pnpm --filter @lance-agen
 
 Expected: pass on PostgreSQL.
 
-- [ ] **Step 5: Commit the run-service migration slice**
+- [x] **Step 5: Commit the run-service migration slice**
 
 ```bash
 git add apps/daemon/tests/core/run-service.test.ts apps/daemon/tests/helpers
