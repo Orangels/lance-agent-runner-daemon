@@ -841,7 +841,7 @@ git commit -m "docs: finalize sqlite test cleanup status"
 
 **Files:** no planned source edits.
 
-- [ ] **Step 1: Run static SQLite residual gate**
+- [x] **Step 1: Run static SQLite residual gate**
 
 Run:
 
@@ -851,7 +851,7 @@ rg -n "createSqliteRunnerPersistence|openInMemoryDatabase|src/db/(connection|sch
 
 Expected: no matches.
 
-- [ ] **Step 2: Run migration-source SQLite gate**
+- [x] **Step 2: Run migration-source SQLite gate**
 
 Run:
 
@@ -861,7 +861,7 @@ rg -n "better-sqlite3|SQLite|sqlite" apps/daemon/src apps/daemon/tests
 
 Expected: matches only in the static guard allowlist: migration tooling, migration tests, `sqlite-source-fixtures.ts`, package dependency names, or explanatory docs.
 
-- [ ] **Step 3: Run full typecheck and build**
+- [x] **Step 3: Run full typecheck and build**
 
 Run:
 
@@ -872,7 +872,7 @@ pnpm build
 
 Expected: both pass.
 
-- [ ] **Step 4: Run daemon tests with PostgreSQL configured**
+- [x] **Step 4: Run daemon tests with PostgreSQL configured**
 
 Run:
 
@@ -882,7 +882,7 @@ CLAUDE_RUNNER_TEST_PG_URL="$CLAUDE_RUNNER_TEST_PG_URL" pnpm test:daemon:pg
 
 Expected: daemon tests pass under `CI=true`. This must fail fast if `CLAUDE_RUNNER_TEST_PG_URL` is missing.
 
-- [ ] **Step 5: Prove PostgreSQL-gated tests did not silently skip**
+- [x] **Step 5: Prove PostgreSQL-gated tests did not silently skip**
 
 Run at least one PG-only representative test with the test database URL set:
 
@@ -894,7 +894,7 @@ Expected: output shows these suites executed, not skipped.
 
 If a GitHub Actions workflow is added in this task, it must start/provide PostgreSQL and inject `CLAUDE_RUNNER_TEST_PG_URL`; the `test:daemon:pg` script already sets `CI=true`. If no workflow is added, include manual `pnpm test:daemon:pg` output in the PR notes before merge.
 
-- [ ] **Step 6: Final commit if any verification-only docs changed**
+- [x] **Step 6: Final commit if any verification-only docs changed**
 
 ```bash
 git status --short

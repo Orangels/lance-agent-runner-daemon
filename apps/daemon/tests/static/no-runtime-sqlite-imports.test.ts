@@ -15,12 +15,10 @@ const migrationAllowedFiles = new Set([
   'apps/daemon/tests/db/verify-sqlite-to-postgres.test.ts',
 ]);
 
-const removedRuntimeModules = new Set([
-  'apps/daemon/src/db/connection.ts',
-  'apps/daemon/src/db/schema.ts',
-  'apps/daemon/src/db/repositories.ts',
-  'apps/daemon/src/db/sqlite-persistence.ts',
-]);
+const removedRuntimeModuleNames = ['connection', 'schema', 'repositories', 'sqlite-persistence'];
+const removedRuntimeModules = new Set(
+  removedRuntimeModuleNames.map((moduleName) => `apps/daemon/src/db/${moduleName}.ts`),
+);
 
 const forbiddenRuntimeSymbols = ['create' + 'SqliteRunnerPersistence', 'open' + 'InMemoryDatabase'];
 
@@ -107,7 +105,8 @@ function resolveImportSpecifier(file: string, specifier: string): string | null 
 }
 
 function isRuntimeSqliteBackendSpecifier(specifier: string): boolean {
-  return /(?:^|\/)src\/db\/(?:connection|schema|repositories|sqlite-persistence)\.js$/.test(specifier);
+  const alternatives = removedRuntimeModuleNames.join('|');
+  return new RegExp(`(?:^|/)src/db/(?:${alternatives})\\.js$`).test(specifier);
 }
 
 function isMigrationAllowed(file: string): boolean {
