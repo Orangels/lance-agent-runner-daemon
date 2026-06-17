@@ -168,6 +168,7 @@ interface RunState {
   sequence: number;
   runTimeoutTimer: unknown;
   finishing: boolean;
+  finishPromise: Promise<void> | null;
   terminal: boolean;
   cleanupTimer: unknown;
 }
@@ -176,6 +177,17 @@ interface RunStateWebhook {
   id: string;
   statuses: RunStatus[];
   metadata: unknown;
+}
+
+class RunLogCloseTimeoutError extends Error {
+  constructor(readonly timeoutMs: number) {
+    super('Run log close timed out.');
+    this.name = 'RunLogCloseTimeoutError';
+  }
+}
+
+function isRunLogCloseTimeoutError(error: unknown): error is RunLogCloseTimeoutError {
+  return error instanceof RunLogCloseTimeoutError;
 }
 
 interface NormalizedWebhookRequest {
@@ -242,7 +254,11 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     return loaded;
   }
 
-  function emitRunEvent(state: RunState, event: RunEvent): BufferedRunEvent {
+  function emitRunEvent(state: RunState, event: RunEvent): BufferedRunEvent | null {
+    if (state.terminal) {
+      return null;
+    }
+
     const record = { id: formatRunEventId(state.nextEventId++), event };
     state.events.push(record);
     if (state.events.length > maxBufferedEvents) {
@@ -256,6 +272,67 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     }
 
     return record;
+  }
+
+  async function closeRunLogHandle(state: RunState): Promise<void> {
+    if (!state.logHandle) {
+      return;
+    }
+
+    const timeoutMs = input.config.server.runLogCloseTimeoutMs;
+    try {
+      await withRunServiceTimeout(
+        state.logHandle.close(),
+        timeoutMs,
+        () => new RunLogCloseTimeoutError(timeoutMs),
+      );
+    } catch (error) {
+      if (isRunLogCloseTimeoutError(error)) {
+        daemonLogger.warn('run_log_write_timeout', {
+          runId: state.runId,
+          timeoutMs: error.timeoutMs,
+        });
+        emitRunEvent(state, {
+          type: 'warning',
+          code: 'RUN_LOG_WRITE_TIMEOUT',
+          message: 'Run log write timed out.',
+          details: { timeoutMs: error.timeoutMs },
+        });
+      } else {
+        daemonLogger.warn('run_log_write_failed', {
+          error,
+          runId: state.runId,
+        });
+        emitRunEvent(state, {
+          type: 'warning',
+          code: 'RUN_LOG_WRITE_FAILED',
+          message: 'Run log write failed.',
+        });
+      }
+    } finally {
+      state.logHandle = null;
+    }
+  }
+
+  function withRunServiceTimeout<T>(
+    promise: Promise<T>,
+    timeoutMs: number,
+    createError: () => Error,
+  ): Promise<T> {
+    let timeoutId: unknown = null;
+    const timeout = new Promise<never>((_, reject) => {
+      timeoutId = timer.setTimeout(() => {
+        timeoutId = null;
+        reject(createError());
+      }, timeoutMs);
+    });
+
+    return Promise.race([promise, timeout]).finally(() => {
+      if (timeoutId !== null) {
+        timer.clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+    });
   }
 
   function scheduleDispatch(): void {
@@ -485,10 +562,12 @@ export function createRunService(input: CreateRunServiceInput): RunService {
 
     state.runner.completed.then(
       (result) => {
-        void finishRun(state, result, { finalizeArtifacts: result.status !== 'canceled' });
+        if (shuttingDown) return;
+        finishRunInBackground(state, result, { finalizeArtifacts: result.status !== 'canceled' });
       },
-      () =>
-        void finishRun(
+      () => {
+        if (shuttingDown) return;
+        finishRunInBackground(
           state,
           {
             status: 'failed',
@@ -500,8 +579,22 @@ export function createRunService(input: CreateRunServiceInput): RunService {
             stderrTail: '',
           },
           { finalizeArtifacts: false },
-        ),
+        );
+      },
     );
+  }
+
+  function finishRunInBackground(
+    state: RunState,
+    result: ClaudeCliRunResult,
+    options: { finalizeArtifacts?: boolean } = {},
+  ): void {
+    void finishRun(state, result, options).catch((error) => {
+      daemonLogger.error('run_finish_failed', {
+        error,
+        runId: state.runId,
+      });
+    });
   }
 
   async function resolveRunSkill(state: RunState) {
@@ -547,137 +640,144 @@ export function createRunService(input: CreateRunServiceInput): RunService {
     result: ClaudeCliRunResult,
     options: { finalizeArtifacts?: boolean } = {},
   ): Promise<void> {
-    if (state.terminal || state.finishing) {
+    if (state.terminal) {
       return;
     }
+    if (state.finishing) {
+      await (state.finishPromise ?? Promise.resolve());
+      return;
+    }
+
+    let resolveFinish!: () => void;
+    let rejectFinish!: (error: unknown) => void;
+    const finishPromise = new Promise<void>((resolve, reject) => {
+      resolveFinish = resolve;
+      rejectFinish = reject;
+    });
+    state.finishPromise = finishPromise;
     state.finishing = true;
     state.queueStatus = 'finishing';
-    clearRunTimeout(state);
 
-    let finalStatus = result.status;
-    let finalErrorCode = result.errorCode ?? null;
-    let finalErrorMessage = result.errorMessage ?? null;
-    let finalizedArtifacts: WebhookArtifactSummary[] = [];
+    try {
+      clearRunTimeout(state);
 
-    if (options.finalizeArtifacts !== false) {
-      try {
-        const finalized = await artifactService.finalizeRunArtifacts({
-          profile: state.profile,
-          workspace: state.workspace,
-          runId: state.runId,
-          artifactRuleIds: state.artifactRuleIds,
-        });
-        finalizedArtifacts = finalized.artifacts;
+      let finalStatus = result.status;
+      let finalErrorCode = result.errorCode ?? null;
+      let finalErrorMessage = result.errorMessage ?? null;
+      let finalizedArtifacts: WebhookArtifactSummary[] = [];
 
-        for (const artifact of finalized.artifacts) {
-          emitRunEvent(state, {
-            type: 'artifact_finalized',
-            artifact: {
-              id: artifact.id,
-              runId: artifact.runId,
-              ruleId: artifact.ruleId,
-              role: artifact.role,
-              relativePath: artifact.relativePath,
-              fileName: artifact.fileName,
-              mimeType: artifact.mimeType,
-              size: artifact.size,
-              mtime: artifact.mtime,
-              sha256: artifact.sha256,
-            },
+      if (options.finalizeArtifacts !== false) {
+        try {
+          const finalized = await artifactService.finalizeRunArtifacts({
+            profile: state.profile,
+            workspace: state.workspace,
+            runId: state.runId,
+            artifactRuleIds: state.artifactRuleIds,
           });
-        }
+          finalizedArtifacts = finalized.artifacts;
 
-        if (result.status === 'succeeded' && finalized.missingRequiredRuleIds.length > 0) {
+          for (const artifact of finalized.artifacts) {
+            emitRunEvent(state, {
+              type: 'artifact_finalized',
+              artifact: {
+                id: artifact.id,
+                runId: artifact.runId,
+                ruleId: artifact.ruleId,
+                role: artifact.role,
+                relativePath: artifact.relativePath,
+                fileName: artifact.fileName,
+                mimeType: artifact.mimeType,
+                size: artifact.size,
+                mtime: artifact.mtime,
+                sha256: artifact.sha256,
+              },
+            });
+          }
+
+          if (result.status === 'succeeded' && finalized.missingRequiredRuleIds.length > 0) {
+            finalStatus = 'failed';
+            finalErrorCode = 'ARTIFACT_REQUIRED_MISSING';
+            finalErrorMessage = 'Required artifact was not produced.';
+            emitRunEvent(state, {
+              type: 'error',
+              code: finalErrorCode,
+              message: finalErrorMessage,
+              details: { missingRuleIds: finalized.missingRequiredRuleIds },
+            });
+          }
+        } catch {
           finalStatus = 'failed';
-          finalErrorCode = 'ARTIFACT_REQUIRED_MISSING';
-          finalErrorMessage = 'Required artifact was not produced.';
+          finalErrorCode = 'ARTIFACT_SCAN_FAILED';
+          finalErrorMessage = 'Artifact scan failed.';
           emitRunEvent(state, {
             type: 'error',
             code: finalErrorCode,
             message: finalErrorMessage,
-            details: { missingRuleIds: finalized.missingRequiredRuleIds },
           });
         }
-      } catch {
-        finalStatus = 'failed';
-        finalErrorCode = 'ARTIFACT_SCAN_FAILED';
-        finalErrorMessage = 'Artifact scan failed.';
-        emitRunEvent(state, {
-          type: 'error',
-          code: finalErrorCode,
-          message: finalErrorMessage,
+      }
+
+      await closeRunLogHandle(state);
+
+      emitRunEvent(state, { type: 'end', status: finalStatus });
+      const finishedAt = now();
+      if (state.accumulator) {
+        await state.accumulator.flushTerminal({
+          runStatus: finalStatus,
+          endedAt: finishedAt,
+        });
+      } else {
+        await persistence.updateAssistantMessageTerminal({
+          messageId: state.assistantMessageId,
+          runStatus: finalStatus,
+          lastRunEventId: state.events.at(-1)?.id ?? null,
+          endedAt: finishedAt,
+          now: finishedAt,
         });
       }
-    }
 
-    if (state.logHandle) {
-      try {
-        await state.logHandle.close();
-      } catch (error) {
-        daemonLogger.warn('run_log_write_failed', {
-          error,
+      await persistence.transaction(async (tx) => {
+        const terminalRun = await tx.updateRunTerminal({
           runId: state.runId,
+          status: finalStatus,
+          finishedAt,
+          exitCode: result.exitCode,
+          signal: result.signal,
+          errorCode: finalErrorCode,
+          errorMessage: finalErrorMessage,
+          usage: state.accumulator?.getUsage() ?? null,
+          lastRunEventId: state.events.at(-1)?.id ?? null,
+          now: finishedAt,
         });
-        emitRunEvent(state, {
-          type: 'warning',
-          code: 'RUN_LOG_WRITE_FAILED',
-          message: 'Run log write failed.',
+        await maybeCreateWebhookDelivery(tx, {
+          webhook: state.webhook,
+          run: terminalRun,
+          status: finalStatus,
+          createdAt: finishedAt,
+          artifacts: finalizedArtifacts,
         });
-      } finally {
-        state.logHandle = null;
+      });
+
+      state.terminal = true;
+      state.queueStatus = 'terminal';
+      state.finishing = false;
+
+      if (eventBufferTtlMs >= 0 && !shuttingDown) {
+        state.cleanupTimer = timer.setTimeout(() => {
+          state.accumulator?.dispose();
+          states.delete(state.runId);
+        }, eventBufferTtlMs);
+      }
+      scheduleDispatch();
+      resolveFinish();
+    } catch (error) {
+      rejectFinish(error);
+      throw error;
+    } finally {
+      if (state.finishPromise === finishPromise) {
+        state.finishPromise = null;
       }
     }
-
-    emitRunEvent(state, { type: 'end', status: finalStatus });
-    const finishedAt = now();
-    if (state.accumulator) {
-      await state.accumulator.flushTerminal({
-        runStatus: finalStatus,
-        endedAt: finishedAt,
-      });
-    } else {
-      await persistence.updateAssistantMessageTerminal({
-        messageId: state.assistantMessageId,
-        runStatus: finalStatus,
-        lastRunEventId: state.events.at(-1)?.id ?? null,
-        endedAt: finishedAt,
-        now: finishedAt,
-      });
-    }
-
-    await persistence.transaction(async (tx) => {
-      const terminalRun = await tx.updateRunTerminal({
-        runId: state.runId,
-        status: finalStatus,
-        finishedAt,
-        exitCode: result.exitCode,
-        signal: result.signal,
-        errorCode: finalErrorCode,
-        errorMessage: finalErrorMessage,
-        usage: state.accumulator?.getUsage() ?? null,
-        lastRunEventId: state.events.at(-1)?.id ?? null,
-        now: finishedAt,
-      });
-      await maybeCreateWebhookDelivery(tx, {
-        webhook: state.webhook,
-        run: terminalRun,
-        status: finalStatus,
-        createdAt: finishedAt,
-        artifacts: finalizedArtifacts,
-      });
-    });
-
-    state.terminal = true;
-    state.queueStatus = 'terminal';
-    state.finishing = false;
-
-    if (eventBufferTtlMs >= 0 && !shuttingDown) {
-      state.cleanupTimer = timer.setTimeout(() => {
-        state.accumulator?.dispose();
-        states.delete(state.runId);
-      }, eventBufferTtlMs);
-    }
-    scheduleDispatch();
   }
 
   function scheduleRunTimeout(state: RunState): void {
@@ -1056,6 +1156,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
         sequence,
         runTimeoutTimer: null,
         finishing: false,
+        finishPromise: null,
         terminal: false,
         cleanupTimer: null,
       };
@@ -1144,7 +1245,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       }
 
       if (!state.runner) {
-        void finishRun(
+        finishRunInBackground(
           state,
           {
             status: 'canceled',
@@ -1172,14 +1273,33 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       }
 
       let interrupted = 0;
-      const waits: Array<Promise<void>> = [];
+      const pending: Array<{ state: RunState; runner: ClaudeCliRunHandle | null; interrupt: boolean }> = [];
       for (const state of Array.from(states.values())) {
         if (state.terminal) {
           continue;
         }
+        if (state.finishing) {
+          pending.push({ state, runner: null, interrupt: false });
+          continue;
+        }
         interrupted += 1;
         const runner = state.runner;
+        clearRunTimeout(state);
         runner?.cancel();
+        pending.push({ state, runner, interrupt: true });
+      }
+
+      await Promise.all(
+        pending.map(({ runner, interrupt }) =>
+          interrupt && runner ? waitForRunnerCompletion(runner, graceMs) : Promise.resolve(),
+        ),
+      );
+
+      for (const { state, interrupt } of pending) {
+        if (!interrupt) {
+          await (state.finishPromise ?? Promise.resolve());
+          continue;
+        }
         await finishRun(
           state,
           {
@@ -1193,11 +1313,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
           },
           { finalizeArtifacts: false },
         );
-        if (runner) {
-          waits.push(waitForRunnerCompletion(runner, graceMs));
-        }
       }
-      await Promise.all(waits);
 
       return { interrupted };
     },

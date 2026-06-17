@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
@@ -6,22 +6,28 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { parseDaemonConfig, type DaemonConfig } from '../../src/config/profiles.js';
 import type { RunService } from '../../src/core/run-service.js';
 import { createWorkspaceService } from '../../src/core/workspace-service.js';
-import { openInMemoryDatabase } from '../../src/db/connection.js';
-import { applySchema } from '../../src/db/schema.js';
-import { createSqliteRunnerPersistence } from '../../src/db/sqlite-persistence.js';
+import type { RunnerPersistence } from '../../src/db/types.js';
 import { createApp } from '../../src/http/app.js';
 
 const servers: Array<{ close: (callback: () => void) => void }> = [];
+const tempDirs: string[] = [];
+const persistence = {} as RunnerPersistence;
 
 afterEach(async () => {
-  await Promise.all(
-    servers.splice(0).map(
-      (server) =>
-        new Promise<void>((resolve) => {
-          server.close(resolve);
-        }),
-    ),
-  );
+  try {
+    await Promise.all(
+      servers.splice(0).map(
+        (server) =>
+          new Promise<void>((resolve) => {
+            server.close(resolve);
+          }),
+      ),
+    );
+  } finally {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
 });
 
 function makeConfig(root: string): DaemonConfig {
@@ -84,10 +90,8 @@ async function withApp(
   callback: (context: { baseUrl: string; records: ReturnType<typeof memoryLogger>['records'] }) => Promise<void>,
 ): Promise<void> {
   const root = mkdtempSync(path.join(tmpdir(), 'app-logging-test-'));
+  tempDirs.push(root);
   const config = makeConfig(root);
-  const db = openInMemoryDatabase();
-  applySchema(db);
-  const persistence = createSqliteRunnerPersistence(db);
   const { logger, records } = memoryLogger();
   const app = createApp({
     config,

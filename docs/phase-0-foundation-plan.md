@@ -1,5 +1,7 @@
 # Phase 0 Foundation Implementation Plan
 
+> Historical plan note: this phase plan records the original SQLite-based implementation path. The current daemon runtime is PostgreSQL-only; SQLite remains only as a read-only migration source and historical backup format.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build the trusted-deployment foundation for the standalone Claude Code runner daemon: config/profile loading, API-key auth, safe workspace create/prepare, SQLite schema/repositories, and startup interruption handling.

@@ -377,7 +377,7 @@ Status Poll 只用于以下场景：
 - `queued` 可适当拉长。
 - `terminal=true` 后立即停止轮询。
 
-daemon 会在 terminal 状态写入前尽量 flush 本次 run logs。极端慢盘或日志写入异常时，Claude 子进程结束到 `/status` 返回 `terminal=true` 之间可能有短暂尾延迟。业务端不需要改流程，只要继续轮询到 `terminal=true`。
+daemon 会在 terminal 状态写入前于 `server.runLogCloseTimeoutMs` 内尽量 flush 本次 run logs。极端慢盘或日志写入异常时，Claude 子进程结束到 `/status` 返回 `terminal=true` 之间可能有短暂尾延迟；该尾延迟上限由 `server.runLogCloseTimeoutMs` 控制，默认最多约 5 秒。如果日志 close 超时，daemon 会继续写入 terminal 状态并通过 `warning` RunEvent 暴露降级信息。业务端不需要改流程，只要继续轮询到 `terminal=true`。
 
 如果 webhook payload 中没有期望的 primary artifact，或业务端需要对账，可以 list artifacts：
 
@@ -433,7 +433,7 @@ thinking_delta          thinking 增量，normal 可见
 tool_use                工具调用，normal 可见
 artifact_finalized      artifact 已扫描落库
 error                   run 错误
-warning                 非终态降级事件，例如 RUN_LOG_WRITE_FAILED
+warning                 非终态降级事件，例如 RUN_LOG_WRITE_FAILED / RUN_LOG_WRITE_TIMEOUT
 end                     run 终态
 ```
 
@@ -646,7 +646,7 @@ GET /api/runs/:runId/logs
 
 该接口仅 `client.canReadLogs=true` 时可用，不建议暴露给普通用户。
 
-`RUN_LOG_WRITE_FAILED` 这类 warning 只表示日志诊断材料写入降级，不代表报告生成本身失败。业务端判断任务成功/失败仍以 run status、errorCode/errorMessage 和 artifacts 为准。
+`RUN_LOG_WRITE_FAILED` / `RUN_LOG_WRITE_TIMEOUT` 这类 warning 只表示日志诊断材料写入或 close 降级，不代表报告生成本身失败。业务端判断任务成功/失败仍以 run status、errorCode/errorMessage 和 artifacts 为准。
 
 ## Web Test Console 对照
 

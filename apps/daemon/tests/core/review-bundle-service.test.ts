@@ -1,30 +1,36 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { parseDaemonConfig } from '../../src/config/profiles.js';
 import { createReviewBundleService, type ReviewBundleClient } from '../../src/core/review-bundle-service.js';
 import { createRunLogService } from '../../src/core/run-log-service.js';
-import { openInMemoryDatabase } from '../../src/db/connection.js';
-import {
-  createRunQueuedWithMessagesAndSnapshot,
-  insertRunFeedback,
-  replaceArtifactsForRun,
-  updateRunMessage,
-  upsertRunContextSnapshot,
-  upsertRunPromptSnapshot,
-  upsertRunSkillSnapshot,
-  upsertWorkspace,
-} from '../../src/db/repositories.js';
-import { applySchema } from '../../src/db/schema.js';
-import { createSqliteRunnerPersistence } from '../../src/db/sqlite-persistence.js';
+import { createPostgresFilePersistenceHarness } from '../helpers/postgres-persistence-harness.js';
+import { postgresTestHookTimeoutMs, requirePostgresTestUrl } from '../helpers/postgres.js';
+
+const postgresDescribe = requirePostgresTestUrl() === null ? describe.skip : describe;
 
 const tempDirs: string[] = [];
+let harness: Awaited<ReturnType<typeof createPostgresFilePersistenceHarness>> | null = null;
 
-afterEach(() => {
-  for (const dir of tempDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
+beforeAll(async () => {
+  harness = await createPostgresFilePersistenceHarness();
+  expect(harness).not.toBeNull();
+}, postgresTestHookTimeoutMs);
+
+afterEach(async () => {
+  try {
+    await harness?.resetData();
+  } finally {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }
+});
+
+afterAll(async () => {
+  await harness?.cleanup();
+  harness = null;
 });
 
 async function setup(input: { canReadDebugEvents?: boolean; maxReviewBundleBytes?: number } = {}) {
@@ -69,10 +75,9 @@ async function setup(input: { canReadDebugEvents?: boolean; maxReviewBundleBytes
     },
     { env: {} },
   );
-  const db = openInMemoryDatabase();
-  applySchema(db);
-  const persistence = createSqliteRunnerPersistence(db);
-  const workspace = upsertWorkspace(db, {
+  expect(harness).not.toBeNull();
+  const persistence = harness!.persistence;
+  const workspace = await persistence.upsertWorkspace({
     id: 'ws_1',
     clientId: 'lqbot',
     profileId: 'report-docx',
@@ -81,7 +86,7 @@ async function setup(input: { canReadDebugEvents?: boolean; maxReviewBundleBytes
     projectId: 'project_1',
     now: 1000,
   });
-  createRunQueuedWithMessagesAndSnapshot(db, {
+  await persistence.createRunQueuedWithMessagesAndSnapshot({
     runId: 'run_1',
     conversationId: 'conv_1',
     userMessageId: 'msg_user',
@@ -95,14 +100,14 @@ async function setup(input: { canReadDebugEvents?: boolean; maxReviewBundleBytes
     collectionMode: 'diagnostic',
     now: 2000,
   });
-  updateRunMessage(db, {
+  await persistence.updateRunMessage({
     messageId: 'msg_assistant',
     content: 'Done',
     thinkingContent: 'private chain of thought',
     events: [{ type: 'tool_result', content: 'authorization: Bearer secret-token' }],
     now: 2100,
   });
-  upsertRunPromptSnapshot(db, {
+  await persistence.upsertRunPromptSnapshot({
     runId: 'run_1',
     promptSnapshot: null,
     promptSnapshotHash: 'sha256:prompt',
@@ -111,7 +116,7 @@ async function setup(input: { canReadDebugEvents?: boolean; maxReviewBundleBytes
     persisted: false,
     now: 2200,
   });
-  upsertRunSkillSnapshot(db, {
+  await persistence.upsertRunSkillSnapshot({
     runId: 'run_1',
     skillId: 'report-writer',
     skillName: 'Report Writer',
@@ -122,14 +127,14 @@ async function setup(input: { canReadDebugEvents?: boolean; maxReviewBundleBytes
     persisted: false,
     now: 2300,
   });
-  upsertRunContextSnapshot(db, {
+  await persistence.upsertRunContextSnapshot({
     runId: 'run_1',
     businessContext: { localPath: config.profiles[0]!.sandboxRoot, artifactPath: 'output/report.docx' },
     businessContextHash: 'sha256:context',
     persisted: true,
     now: 2400,
   });
-  replaceArtifactsForRun(db, {
+  await persistence.replaceArtifactsForRun({
     runId: 'run_1',
     workspaceId: workspace.id,
     artifacts: [
@@ -147,7 +152,7 @@ async function setup(input: { canReadDebugEvents?: boolean; maxReviewBundleBytes
     ],
     now: 2500,
   });
-  insertRunFeedback(db, {
+  await persistence.insertRunFeedback({
     id: 'feedback_1',
     runId: 'run_1',
     clientId: 'lqbot',
@@ -174,7 +179,7 @@ async function setup(input: { canReadDebugEvents?: boolean; maxReviewBundleBytes
   };
 }
 
-describe('review bundle service', () => {
+postgresDescribe('review bundle service', () => {
   it('exports a sanitized generic bundle for authorized clients', async () => {
     const { service, client, config } = await setup();
 

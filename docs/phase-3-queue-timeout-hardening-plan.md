@@ -1,5 +1,7 @@
 # Phase 3 Queue Timeout Hardening Implementation Plan
 
+> Historical plan note: this phase plan records the original SQLite-based implementation path. The current daemon runtime is PostgreSQL-only; SQLite remains only as a read-only migration source and historical backup format.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add first-version queue scheduling, global/profile/workspace concurrency, total run timeout, authorized run logs, log retention, and graceful shutdown hardening without changing the daemon security boundary.

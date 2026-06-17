@@ -1,29 +1,37 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { openInMemoryDatabase, type RunnerDatabase } from '../../src/db/connection.js';
-import {
-  createRunQueuedWithMessagesAndSnapshot,
-  getRunDetail,
-  getRunLogForRunForClient,
-  updateRunMessage,
-  updateRunTerminal,
-  upsertWorkspace,
-} from '../../src/db/repositories.js';
-import { applySchema } from '../../src/db/schema.js';
-import { createSqliteRunnerPersistence } from '../../src/db/sqlite-persistence.js';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
   createRunLogService,
   type RunLogClient,
 } from '../../src/core/run-log-service.js';
+import { createPostgresFilePersistenceHarness } from '../helpers/postgres-persistence-harness.js';
+import { postgresTestHookTimeoutMs, requirePostgresTestUrl } from '../helpers/postgres.js';
+
+const postgresDescribe = requirePostgresTestUrl() === null ? describe.skip : describe;
 
 const tempDirs: string[] = [];
+let harness: Awaited<ReturnType<typeof createPostgresFilePersistenceHarness>> | null = null;
 
-afterEach(() => {
-  for (const dir of tempDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
+beforeAll(async () => {
+  harness = await createPostgresFilePersistenceHarness();
+  expect(harness).not.toBeNull();
+}, postgresTestHookTimeoutMs);
+
+afterEach(async () => {
+  try {
+    await harness?.resetData();
+  } finally {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }
+});
+
+afterAll(async () => {
+  await harness?.cleanup();
+  harness = null;
 });
 
 function makeDataDir(): string {
@@ -32,10 +40,9 @@ function makeDataDir(): string {
   return dir;
 }
 
-function setup(input: { maxLogBytesPerRun?: number; logRetentionMs?: number } = {}) {
-  const db = openInMemoryDatabase();
-  applySchema(db);
-  const persistence = createSqliteRunnerPersistence(db);
+async function setup(input: { maxLogBytesPerRun?: number; logRetentionMs?: number } = {}) {
+  expect(harness).not.toBeNull();
+  const persistence = harness!.persistence;
   const dataDir = makeDataDir();
   const service = createRunLogService({
     persistence,
@@ -48,6 +55,7 @@ function setup(input: { maxLogBytesPerRun?: number; logRetentionMs?: number } = 
         maxQueueSize: 100,
         logRetentionMs: input.logRetentionMs ?? 60_000,
         maxLogBytesPerRun: input.maxLogBytesPerRun ?? 4 * 1024 * 1024,
+        runLogCloseTimeoutMs: 5000,
         maxReviewBundleBytes: 16 * 1024 * 1024,
         maxUploadBytesPerFile: 50 * 1024 * 1024,
         uploadTempRetentionMs: 24 * 60 * 60 * 1000,
@@ -77,7 +85,7 @@ function setup(input: { maxLogBytesPerRun?: number; logRetentionMs?: number } = 
       },
     },
   });
-  const workspace = upsertWorkspace(db, {
+  const workspace = await persistence.upsertWorkspace({
     id: 'ws_1',
     clientId: 'lqbot',
     profileId: 'report-docx',
@@ -86,7 +94,7 @@ function setup(input: { maxLogBytesPerRun?: number; logRetentionMs?: number } = 
     projectId: 'project_1',
     now: 1000,
   });
-  createRunQueuedWithMessagesAndSnapshot(db, {
+  await persistence.createRunQueuedWithMessagesAndSnapshot({
     runId: 'run_1',
     conversationId: 'conv_1',
     userMessageId: 'msg_user',
@@ -99,7 +107,7 @@ function setup(input: { maxLogBytesPerRun?: number; logRetentionMs?: number } = 
     profileSnapshot: { profileId: workspace.profileId },
     now: 2000,
   });
-  return { db, dataDir, service };
+  return { dataDir, persistence, service };
 }
 
 const logClient = (input: Partial<RunLogClient> = {}): RunLogClient => ({
@@ -109,9 +117,9 @@ const logClient = (input: Partial<RunLogClient> = {}): RunLogClient => ({
   canReadDebugEvents: input.canReadDebugEvents ?? false,
 });
 
-describe('run log service', () => {
+postgresDescribe('run log service', () => {
   it('creates log files and a relative run_logs row', async () => {
-    const { db, dataDir, service } = setup();
+    const { dataDir, persistence, service } = await setup();
 
     const logs = await service.openRunLogs({ runId: 'run_1' });
     logs.stdout('hello stdout\n');
@@ -119,7 +127,7 @@ describe('run log service', () => {
     logs.debugEvent({ type: 'stderr', text: 'debug line' });
     await logs.close();
 
-    const row = getRunLogForRunForClient(db, { runId: 'run_1', clientId: 'lqbot' });
+    const row = await persistence.getRunLogForRunForClient({ runId: 'run_1', clientId: 'lqbot' });
     expect(row).toEqual({
       runId: 'run_1',
       stdoutLogPath: 'logs/runs/run_1/stdout.log',
@@ -133,7 +141,7 @@ describe('run log service', () => {
   });
 
   it('sanitizes secrets and absolute paths before writing', async () => {
-    const { dataDir, service } = setup();
+    const { dataDir, service } = await setup();
 
     const logs = await service.openRunLogs({ runId: 'run_1' });
     logs.stdout('authorization: Bearer secret /home/orangels/private.txt output/report.docx');
@@ -150,7 +158,7 @@ describe('run log service', () => {
   });
 
   it('caps log size and appends one truncation marker', async () => {
-    const { dataDir, service } = setup({ maxLogBytesPerRun: 12 });
+    const { dataDir, service } = await setup({ maxLogBytesPerRun: 12 });
 
     const logs = await service.openRunLogs({ runId: 'run_1' });
     logs.stdout('1234567890');
@@ -166,7 +174,7 @@ describe('run log service', () => {
   });
 
   it('returns public tails only for clients allowed to read logs', async () => {
-    const { service } = setup();
+    const { service } = await setup();
     const logs = await service.openRunLogs({ runId: 'run_1' });
     logs.stdout('safe tail');
     await logs.close();
@@ -185,7 +193,7 @@ describe('run log service', () => {
   });
 
   it('returns not found for another client unless admin', async () => {
-    const { service } = setup();
+    const { service } = await setup();
     await (await service.openRunLogs({ runId: 'run_1' })).close();
 
     await expect(service.getRunLogs({ runId: 'run_1', client: logClient({ id: 'other' }) })).rejects.toThrow(
@@ -197,7 +205,7 @@ describe('run log service', () => {
   });
 
   it('marks missing log files unavailable instead of throwing', async () => {
-    const { service } = setup();
+    const { service } = await setup();
     const logs = await service.openRunLogs({ runId: 'run_1' });
     logs.stdout('gone');
     await logs.close();
@@ -211,7 +219,7 @@ describe('run log service', () => {
   });
 
   it('returns complete stdout and stderr download handles for authorized clients', async () => {
-    const { dataDir, service } = setup();
+    const { dataDir, service } = await setup();
     const logs = await service.openRunLogs({ runId: 'run_1' });
     logs.stdout('full stdout');
     logs.stderr('full stderr');
@@ -229,7 +237,7 @@ describe('run log service', () => {
   });
 
   it('requires debug-event permission for complete debug event downloads', async () => {
-    const { service } = setup();
+    const { service } = await setup();
     const logs = await service.openRunLogs({ runId: 'run_1' });
     logs.debugEvent({ type: 'stderr', text: 'debug line' });
     await logs.close();
@@ -247,7 +255,7 @@ describe('run log service', () => {
   });
 
   it('returns not found when a complete log file is missing or belongs to another client', async () => {
-    const { service } = setup();
+    const { service } = await setup();
     const logs = await service.openRunLogs({ runId: 'run_1' });
     logs.stdout('gone');
     await logs.close();
@@ -262,17 +270,17 @@ describe('run log service', () => {
   });
 
   it('prunes expired log files without deleting durable run data', async () => {
-    const { db, dataDir, service } = setup({ logRetentionMs: 1000 });
+    const { dataDir, persistence, service } = await setup({ logRetentionMs: 1000 });
     const logs = await service.openRunLogs({ runId: 'run_1' });
     logs.stdout('old');
     await logs.close();
-    updateRunTerminal(db, {
+    await persistence.updateRunTerminal({
       runId: 'run_1',
       status: 'succeeded',
       finishedAt: 5000,
       now: 5000,
     });
-    updateRunMessage(db, {
+    await persistence.updateRunMessage({
       messageId: 'msg_assistant',
       runStatus: 'succeeded',
       endedAt: 5000,
@@ -283,8 +291,9 @@ describe('run log service', () => {
     writeFileSync(path.join(logDir, 'extra.txt'), 'also removed');
     await expect(service.pruneExpiredLogs({ now: 7001 })).resolves.toEqual({ pruned: 1 });
 
-    expect(getRunLogForRunForClient(db, { runId: 'run_1', clientId: 'lqbot' })).toBeNull();
-    expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.run.status).toBe('succeeded');
-    expect(getRunDetail(db, { runId: 'run_1', clientId: 'lqbot' })?.messages).toHaveLength(2);
+    await expect(persistence.getRunLogForRunForClient({ runId: 'run_1', clientId: 'lqbot' })).resolves.toBeNull();
+    const runDetail = await persistence.getRunDetail({ runId: 'run_1', clientId: 'lqbot' });
+    expect(runDetail?.run.status).toBe('succeeded');
+    expect(runDetail?.messages).toHaveLength(2);
   });
 });

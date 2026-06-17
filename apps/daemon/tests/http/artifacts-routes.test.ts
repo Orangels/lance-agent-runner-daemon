@@ -1,28 +1,46 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { parseDaemonConfig, type DaemonConfig } from '../../src/config/profiles.js';
 import { createArtifactService } from '../../src/core/artifact-service.js';
 import { createWorkspaceService, getWorkspaceCwd } from '../../src/core/workspace-service.js';
-import { openInMemoryDatabase } from '../../src/db/connection.js';
-import { insertRunQueued, replaceArtifactsForRun, upsertWorkspace } from '../../src/db/repositories.js';
-import { applySchema } from '../../src/db/schema.js';
-import { createSqliteRunnerPersistence } from '../../src/db/sqlite-persistence.js';
 import { createApp } from '../../src/http/app.js';
+import { createPostgresFilePersistenceHarness } from '../helpers/postgres-persistence-harness.js';
+import { postgresTestHookTimeoutMs, requirePostgresTestUrl } from '../helpers/postgres.js';
 
+const postgresDescribe = requirePostgresTestUrl() === null ? describe.skip : describe;
 const servers: Array<{ close: (callback: () => void) => void }> = [];
+const tempDirs: string[] = [];
+let harness: Awaited<ReturnType<typeof createPostgresFilePersistenceHarness>> | null = null;
+
+beforeAll(async () => {
+  harness = await createPostgresFilePersistenceHarness();
+  expect(harness).not.toBeNull();
+}, postgresTestHookTimeoutMs);
 
 afterEach(async () => {
-  await Promise.all(
-    servers.splice(0).map(
-      (server) =>
-        new Promise<void>((resolve) => {
-          server.close(resolve);
-        }),
-    ),
-  );
+  try {
+    await Promise.all(
+      servers.splice(0).map(
+        (server) =>
+          new Promise<void>((resolve) => {
+            server.close(resolve);
+          }),
+      ),
+    );
+    await harness?.resetData();
+  } finally {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
+afterAll(async () => {
+  await harness?.cleanup();
+  harness = null;
 });
 
 function makeConfig(root: string): DaemonConfig {
@@ -75,11 +93,11 @@ async function withApp(
   callback: (context: { baseUrl: string; config: DaemonConfig }) => Promise<void>,
 ): Promise<void> {
   const root = mkdtempSync(path.join(tmpdir(), 'artifact-routes-test-'));
+  tempDirs.push(root);
   const config = makeConfig(root);
-  const db = openInMemoryDatabase();
-  applySchema(db);
-  const persistence = createSqliteRunnerPersistence(db);
-  const workspace = upsertWorkspace(db, {
+  expect(harness).not.toBeNull();
+  const persistence = harness!.persistence;
+  const workspace = await persistence.upsertWorkspace({
     id: 'ws_1',
     clientId: 'lqbot',
     profileId: 'report-docx',
@@ -88,7 +106,7 @@ async function withApp(
     projectId: 'project_123',
     now: 1000,
   });
-  insertRunQueued(db, {
+  await persistence.insertRunQueued({
     id: 'run_1',
     workspaceId: workspace.id,
     clientId: 'lqbot',
@@ -102,7 +120,7 @@ async function withApp(
   mkdirSync(path.join(workspaceCwd, 'output'), { recursive: true });
   writeFileSync(path.join(workspaceCwd, 'output', 'report.docx'), 'docx');
   writeFileSync(path.join(workspaceCwd, 'output', 'output_2025年8月_临高县公安局报告.docx'), 'docx-zh');
-  replaceArtifactsForRun(db, {
+  await persistence.replaceArtifactsForRun({
     runId: 'run_1',
     workspaceId: workspace.id,
     artifacts: [
@@ -144,7 +162,7 @@ async function withApp(
   await callback({ baseUrl: `http://127.0.0.1:${port}`, config });
 }
 
-describe('artifact routes', () => {
+postgresDescribe('artifact routes', () => {
   it('requires auth for listing artifacts', async () => {
     await withApp(async ({ baseUrl }) => {
       const response = await fetch(`${baseUrl}/api/runs/run_1/artifacts`);

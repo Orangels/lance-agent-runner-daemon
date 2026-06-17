@@ -96,7 +96,7 @@ skills.ts: withSkillRootPreamble around line 388
 cwd-aliases.ts: SKILLS_CWD_ALIAS='.lancedesign-skills', stageActiveSkill
 ```
 
-SQLite and message persistence semantics:
+Historical SQLite and message persistence semantics from the reference app:
 
 ```text
 /home/orangels/ls_dev/lanceDesign/apps/daemon/src/db.ts
@@ -133,7 +133,7 @@ The original first-version phases are complete through queue/timeout/hardening:
 
 ```text
 Phase 0a: API contract
-Phase 0: profile/auth/workspace/SQLite
+Phase 0: profile/auth/workspace/initial persistence
 Phase 1: minimal Claude Code run + daemon-side message persistence
 Phase 2: skill + artifact
 Phase 3: queue + timeout + hardening
@@ -188,7 +188,7 @@ runs.ts
 Notes:
 
 ```text
-runs.ts still needs generic metadata, SQLite repository writes, queue integration, and daemon-side accumulator hooks.
+Historical note: `runs.ts` originally needed generic metadata, durable repository writes, queue integration, and daemon-side accumulator hooks. The current daemon runtime now uses PostgreSQL for those durable writes.
 runtimes/defs/claude.ts still needs profile-controlled permissionMode, defaultModel, and allowedModels handling.
 cwd-aliases.ts should rename .lancedesign-skills to .claude-runner-skills and update log prefixes.
 ```
@@ -208,7 +208,7 @@ Must build new, no direct lanceDesign equivalent:
 profile config
 API-key auth and client isolation
 workspace-service
-SQLite persistence for workspaces / runs / run_messages
+durable persistence for workspaces / runs / run_messages (current runtime: PostgreSQL; SQLite is migration-source tooling only)
 queue and concurrency
 per-workspace serial execution
 artifact rules and artifact scan

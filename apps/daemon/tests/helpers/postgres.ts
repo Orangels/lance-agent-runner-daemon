@@ -3,6 +3,9 @@ import { createPostgresPool } from '../../src/db/postgres/connection.js';
 
 const testLockKey = 4_210_614;
 
+// File-level PG harnesses share one advisory lock and each holder resets+migrates the schema.
+export const postgresTestHookTimeoutMs = 60_000;
+
 export function requirePostgresTestUrl(): string | null {
   const databaseUrl = process.env.CLAUDE_RUNNER_TEST_PG_URL ?? null;
   if (process.env.CI === 'true' && databaseUrl === null) {
@@ -16,6 +19,29 @@ export async function resetPostgresSchema(databaseUrl: string): Promise<void> {
   try {
     await pool.query('DROP SCHEMA public CASCADE');
     await pool.query('CREATE SCHEMA public');
+  } finally {
+    await pool.end();
+  }
+}
+
+export async function truncatePostgresData(databaseUrl: string): Promise<void> {
+  const pool = createPostgresPool({ databaseUrl });
+  try {
+    const result = await pool.query<{ table_identifier: string }>(
+      `
+      SELECT format('%I.%I', table_schema, table_name) AS table_identifier
+      FROM information_schema.tables
+      WHERE table_schema = 'public'
+        AND table_type = 'BASE TABLE'
+        AND table_name <> 'pgmigrations'
+      ORDER BY table_name
+      `,
+    );
+    const tableIdentifiers = result.rows.map((row) => row.table_identifier);
+    if (tableIdentifiers.length === 0) {
+      return;
+    }
+    await pool.query(`TRUNCATE TABLE ${tableIdentifiers.join(', ')} RESTART IDENTITY CASCADE`);
   } finally {
     await pool.end();
   }

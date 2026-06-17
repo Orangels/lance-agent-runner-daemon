@@ -46,7 +46,7 @@ Do not put database URLs in tracked config. Use `env:CLAUDE_RUNNER_DATABASE_URL`
 
 ## Test Coverage Policy
 
-PostgreSQL-specific schema, repository, migration, and API-flow tests require `CLAUDE_RUNNER_TEST_PG_URL`. Local runs without that variable skip PG-gated tests for convenience. CI must provide `CLAUDE_RUNNER_TEST_PG_URL`; otherwise those tests fail fast so a green CI run cannot rely only on SQLite compatibility fixtures.
+PostgreSQL-specific schema, repository, migration, and API-flow tests require `CLAUDE_RUNNER_TEST_PG_URL`. Local runs without that variable skip PG-gated tests for convenience. CI must provide `CLAUDE_RUNNER_TEST_PG_URL`; otherwise those tests fail fast so a green CI run cannot silently skip PostgreSQL persistence coverage.
 
 ## Runtime I/O Note
 

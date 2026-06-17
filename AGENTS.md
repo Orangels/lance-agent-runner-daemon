@@ -103,13 +103,14 @@ This means:
 - Prefer small modules with explicit boundaries:
   - `apps/daemon/src/http/*` handles Express routing only.
   - `apps/daemon/src/core/*` contains runner/domain logic and must not depend on Express.
-  - `apps/daemon/src/db/*` owns SQLite schema and repositories.
+  - `apps/daemon/src/db/*` owns PostgreSQL runtime persistence and SQLite-to-PostgreSQL migration tooling.
   - `apps/daemon/src/config/*` owns config, profile, auth, and env validation.
 - Do not add product-specific lqBot or lanceDesign business logic to core modules.
 - Do not expose sandbox absolute paths through API responses.
 - Do not let requests override `claudeConfigDir`, `claudeBin`, `skillRoots`, `allowedInputRoots`, or `permissionMode`.
 - Validate all path segments and all workspace-relative paths.
-- Store durable run state in SQLite. `runs` must be inserted as `queued` at run create time.
+- Store durable run state in PostgreSQL. `runs` must be inserted as `queued` at run create time before execution starts.
+- Do not add a runtime SQLite fallback. SQLite is retained only as a read-only migration source and historical backup format.
 - Do not add a `run_events` table in the first version. Use in-memory SSE buffer for live/short reconnect replay and `run_messages.events_json` for durable history.
 
 ## Style

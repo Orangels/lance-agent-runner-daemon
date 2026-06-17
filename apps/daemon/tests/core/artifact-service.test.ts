@@ -1,27 +1,38 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { parseDaemonConfig, type DaemonConfig } from '../../src/config/profiles.js';
-import { openInMemoryDatabase } from '../../src/db/connection.js';
-import {
-  getArtifactForRunForClient,
-  insertRunQueued,
-  upsertWorkspace,
-  type WorkspaceRecord,
-} from '../../src/db/repositories.js';
-import { applySchema } from '../../src/db/schema.js';
-import { createSqliteRunnerPersistence } from '../../src/db/sqlite-persistence.js';
 import { DaemonError } from '../../src/core/errors.js';
 import { createArtifactService } from '../../src/core/artifact-service.js';
 import { getWorkspaceCwd } from '../../src/core/workspace-service.js';
+import type { WorkspaceRecord } from '../../src/db/types.js';
+import { createPostgresFilePersistenceHarness } from '../helpers/postgres-persistence-harness.js';
+import { postgresTestHookTimeoutMs, requirePostgresTestUrl } from '../helpers/postgres.js';
+
+const postgresDescribe = requirePostgresTestUrl() === null ? describe.skip : describe;
 
 const tempRoots: string[] = [];
+let harness: Awaited<ReturnType<typeof createPostgresFilePersistenceHarness>> | null = null;
 
-afterEach(() => {
-  for (const root of tempRoots.splice(0)) {
-    rmSync(root, { recursive: true, force: true });
+beforeAll(async () => {
+  harness = await createPostgresFilePersistenceHarness();
+  expect(harness).not.toBeNull();
+}, postgresTestHookTimeoutMs);
+
+afterEach(async () => {
+  try {
+    await harness?.resetData();
+  } finally {
+    for (const root of tempRoots.splice(0)) {
+      rmSync(root, { recursive: true, force: true });
+    }
   }
+});
+
+afterAll(async () => {
+  await harness?.cleanup();
+  harness = null;
 });
 
 function makeRoot(): string {
@@ -78,13 +89,12 @@ function makeConfig(root: string): DaemonConfig {
   );
 }
 
-function setup() {
+async function setup() {
   const root = makeRoot();
   const config = makeConfig(root);
-  const db = openInMemoryDatabase();
-  applySchema(db);
-  const persistence = createSqliteRunnerPersistence(db);
-  const workspace = upsertWorkspace(db, {
+  expect(harness).not.toBeNull();
+  const persistence = harness!.persistence;
+  const workspace = await persistence.upsertWorkspace({
     id: 'ws_1',
     clientId: 'lqbot',
     profileId: 'report-docx',
@@ -93,7 +103,7 @@ function setup() {
     projectId: 'project_123',
     now: 1000,
   });
-  const otherWorkspace = upsertWorkspace(db, {
+  const otherWorkspace = await persistence.upsertWorkspace({
     id: 'ws_2',
     clientId: 'other',
     profileId: 'report-docx',
@@ -102,7 +112,7 @@ function setup() {
     projectId: 'project_123',
     now: 1000,
   });
-  insertRunQueued(db, {
+  await persistence.insertRunQueued({
     id: 'run_1',
     workspaceId: workspace.id,
     clientId: 'lqbot',
@@ -112,7 +122,7 @@ function setup() {
     prompt: 'Generate.',
     now: 1000,
   });
-  insertRunQueued(db, {
+  await persistence.insertRunQueued({
     id: 'run_2',
     workspaceId: otherWorkspace.id,
     clientId: 'other',
@@ -131,7 +141,6 @@ function setup() {
   return {
     root,
     config,
-    db,
     persistence,
     service,
     workspace,
@@ -155,9 +164,9 @@ function writeWorkspaceFile(
   return filePath;
 }
 
-describe('artifact service', () => {
-  it('resolves default and explicit artifact rules with request-order de-dupe', () => {
-    const { service, profile } = setup();
+postgresDescribe('artifact service', () => {
+  it('resolves default and explicit artifact rules with request-order de-dupe', async () => {
+    const { service, profile } = await setup();
 
     expect(service.resolveSelectedArtifactRules({ profile }).map((rule) => rule.id)).toEqual([
       'report-docx',
@@ -176,7 +185,7 @@ describe('artifact service', () => {
   });
 
   it('finalizes found artifacts, reports required missing, and persists public metadata only', async () => {
-    const { service, profile, workspace, db } = setup();
+    const { service, profile, workspace, persistence } = await setup();
     const filePath = writeWorkspaceFile(profile, workspace, 'output/report.docx', 'docx');
 
     const finalized = await service.finalizeRunArtifacts({
@@ -200,7 +209,7 @@ describe('artifact service', () => {
     ]);
     expect(JSON.stringify(finalized.artifacts)).not.toContain(profile.sandboxRoot);
     expect(
-      getArtifactForRunForClient(db, {
+      await persistence.getArtifactForRunForClient({
         runId: 'run_1',
         artifactId: 'artifact_1',
         clientId: 'lqbot',
@@ -218,7 +227,7 @@ describe('artifact service', () => {
   });
 
   it('keeps the highest-priority role when multiple artifact rules match the same file', async () => {
-    const { config, profile, workspace, db, persistence } = setup();
+    const { config, profile, workspace, persistence } = await setup();
     let artifactSequence = 0;
     const service = createArtifactService({
       config,
@@ -249,7 +258,7 @@ describe('artifact service', () => {
       'output/debug.json:supporting:supporting-all',
     ]);
     expect(
-      getArtifactForRunForClient(db, {
+      await persistence.getArtifactForRunForClient({
         runId: 'run_1',
         artifactId: 'artifact_1',
         clientId: 'lqbot',
@@ -258,7 +267,7 @@ describe('artifact service', () => {
   });
 
   it('surfaces scan failures as ARTIFACT_SCAN_FAILED without leaking paths', async () => {
-    const { config, persistence, profile, workspace } = setup();
+    const { config, persistence, profile, workspace } = await setup();
     const service = createArtifactService({
       config,
       persistence,
@@ -281,7 +290,7 @@ describe('artifact service', () => {
   });
 
   it('lists and resolves downloads through run/client authorization', async () => {
-    const { service, profile, workspace, client, otherClient, adminClient } = setup();
+    const { service, profile, workspace, client, otherClient, adminClient } = await setup();
     const filePath = writeWorkspaceFile(profile, workspace, 'output/report.docx', 'docx');
     await service.finalizeRunArtifacts({
       profile,
@@ -314,7 +323,7 @@ describe('artifact service', () => {
   });
 
   it('returns NOT_FOUND when the artifact file no longer exists on disk', async () => {
-    const { service, profile, workspace, client } = setup();
+    const { service, profile, workspace, client } = await setup();
     const filePath = writeWorkspaceFile(profile, workspace, 'output/report.docx', 'docx');
     await service.finalizeRunArtifacts({
       profile,

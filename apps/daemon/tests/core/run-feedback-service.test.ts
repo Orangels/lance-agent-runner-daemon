@@ -1,18 +1,30 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { createRunFeedbackService, type RunFeedbackClient } from '../../src/core/run-feedback-service.js';
-import { openInMemoryDatabase } from '../../src/db/connection.js';
-import {
-  createRunQueuedWithMessagesAndSnapshot,
-  upsertWorkspace,
-} from '../../src/db/repositories.js';
-import { applySchema } from '../../src/db/schema.js';
-import { createSqliteRunnerPersistence } from '../../src/db/sqlite-persistence.js';
+import { createPostgresFilePersistenceHarness } from '../helpers/postgres-persistence-harness.js';
+import { postgresTestHookTimeoutMs, requirePostgresTestUrl } from '../helpers/postgres.js';
 
-function setup() {
-  const db = openInMemoryDatabase();
-  applySchema(db);
-  const persistence = createSqliteRunnerPersistence(db);
-  const workspace = upsertWorkspace(db, {
+const postgresDescribe = requirePostgresTestUrl() === null ? describe.skip : describe;
+
+let harness: Awaited<ReturnType<typeof createPostgresFilePersistenceHarness>> | null = null;
+
+beforeAll(async () => {
+  harness = await createPostgresFilePersistenceHarness();
+  expect(harness).not.toBeNull();
+}, postgresTestHookTimeoutMs);
+
+afterEach(async () => {
+  await harness?.resetData();
+});
+
+afterAll(async () => {
+  await harness?.cleanup();
+  harness = null;
+});
+
+async function setup() {
+  expect(harness).not.toBeNull();
+  const persistence = harness!.persistence;
+  const workspace = await persistence.upsertWorkspace({
     id: 'ws_1',
     clientId: 'lqbot',
     profileId: 'report-docx',
@@ -21,7 +33,7 @@ function setup() {
     projectId: 'project_1',
     now: 1000,
   });
-  createRunQueuedWithMessagesAndSnapshot(db, {
+  await persistence.createRunQueuedWithMessagesAndSnapshot({
     runId: 'run_1',
     conversationId: 'conv_1',
     userMessageId: 'msg_user',
@@ -47,9 +59,9 @@ const client = (input: Partial<RunFeedbackClient> = {}): RunFeedbackClient => ({
   isAdmin: input.isAdmin ?? false,
 });
 
-describe('run feedback service', () => {
+postgresDescribe('run feedback service', () => {
   it('stores sanitized feedback for a readable run', async () => {
-    const { service } = setup();
+    const { service } = await setup();
 
     const feedback = await service.createRunFeedback({
       runId: 'run_1',
@@ -80,7 +92,7 @@ describe('run feedback service', () => {
   });
 
   it('returns not found for another non-admin client', async () => {
-    const { service } = setup();
+    const { service } = await setup();
 
     await expect(
       service.createRunFeedback({
