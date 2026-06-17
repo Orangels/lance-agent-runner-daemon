@@ -89,7 +89,7 @@ Use this branch to close the first-version landing-test loop after the PostgreSQ
   - [x] canceled run terminal behavior.
   - [x] interrupted run startup recovery.
 - [x] Update API/config/operations docs if any externally visible warning or timing behavior changes.
-- [ ] Follow-up after landing-test smoke: decide whether `shutdownActive()` should finalize active runs in parallel. Current shutdown finalization is serial, so a worst-case slow log close can add up to `activeRunCount * server.runLogCloseTimeoutMs`. This was not changed in the current patch because parallelizing shutdown changes multi-run termination ordering and should be designed and stress-tested separately.
+- [x] Move `shutdownActive()` parallel finalization out of this branch and into roadmap follow-up. Current shutdown finalization remains serial; parallel shutdown should be designed separately because it changes multi-run termination ordering, PostgreSQL write pressure, and terminal webhook delivery timing.
 
 ## Suggested Commit Order
 
@@ -105,4 +105,4 @@ Use this branch to close the first-version landing-test loop after the PostgreSQ
 - [x] `pnpm build`
 - [x] `pnpm test:daemon`
 - [x] PostgreSQL-gated daemon tests with `CLAUDE_RUNNER_TEST_PG_URL`.
-- [ ] Manual smoke test for daemon startup with `pnpm start:daemon:local:test`.
+- [x] Manual smoke test for daemon startup with `pnpm start:daemon:local:test`.

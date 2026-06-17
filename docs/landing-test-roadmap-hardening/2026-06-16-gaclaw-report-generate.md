@@ -131,6 +131,35 @@ Daemon log event observed:
 - Per-run `stderr.log` remained `0` bytes.
 - After daemon shutdown, process scan found no residual daemon, monitor, run, task, or Claude runner process for this run.
 
+## 2026-06-17 Current Branch Startup Smoke
+
+Branch under test: `codex/landing-test-roadmap-hardening`.
+
+Command:
+
+```bash
+pnpm start:daemon:local:test
+```
+
+Observed startup:
+
+```text
+claude runner daemon listening on 0.0.0.0:17890
+```
+
+Smoke requests:
+
+```bash
+curl -sS http://127.0.0.1:17890/api/health
+curl -sS -H 'Authorization: Bearer lancelocal-report' http://127.0.0.1:17890/api/profiles
+```
+
+Observed result:
+
+- `GET /api/health` returned `{"ok":true}`.
+- `GET /api/profiles` returned the configured `report-docx` profile with `report-gen` skill access, `report-docx` and `report-any` artifact rules, default model `opus`, and `profileConcurrency: 1`.
+- The daemon process was stopped after the smoke check.
+
 ## Landing-Test Coverage Status
 
 Covered by this test:

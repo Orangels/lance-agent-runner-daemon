@@ -123,8 +123,10 @@ The following capabilities are intentionally deferred to later versions. Do not 
 
 ### Runtime Reliability Hardening
 
-- Define and harden terminal log semantics for canceled, timed-out, and interrupted runs, including whether child-process tail output after cancel must be awaited before closing run logs.
-- Add a bounded timeout or equivalent guard around run log close so terminal status updates and SSE `end` delivery cannot wait indefinitely on slow storage.
+Terminal log finalization now has a bounded timeout, and close failures or timeouts are reported as durable warning events without changing the terminal run status. Future hardening candidates:
+
+- Decide whether `shutdownActive()` should finalize multiple active runs in parallel during daemon shutdown. Current shutdown finalization is serial, so the worst-case close wait can scale with `activeRunCount * server.runLogCloseTimeoutMs`. This should be handled as a dedicated follow-up because parallel shutdown changes multi-run ordering, PostgreSQL write pressure, and terminal webhook delivery timing.
+- Further define whether child-process tail output after cancel must be awaited before closing run logs, or should remain best-effort diagnostics after terminal status persistence.
 
 ### Webhook Hardening
 
