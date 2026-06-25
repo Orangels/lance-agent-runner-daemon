@@ -45,13 +45,13 @@ import {
 import { formatRunEventId, shouldReplayEventAfter, type RunEvent } from './run-events.js';
 import {
   isTerminalRunStatus,
-  type ActivePromptMode,
   type CollectionMode,
   type ContextPolicy,
   type CreateRunWebhookRequest,
   type CreateRunRequest,
   type EventVisibility,
   type ListRunsQuery,
+  type PromptMode,
   type RunKind,
   type RunStatus,
 } from './run-types.js';
@@ -149,7 +149,7 @@ interface RunState {
   skillId: string | null;
   artifactRuleIds: string[];
   prompt: string;
-  promptMode: ActivePromptMode;
+  promptMode: PromptMode;
   contextPolicy?: ContextPolicy;
   collectionMode: CollectionMode;
   businessContext?: Record<string, unknown>;
@@ -598,25 +598,8 @@ export function createRunService(input: CreateRunServiceInput): RunService {
   }
 
   async function resolveRunSkill(state: RunState) {
-    if (!state.skillId) {
-      await finishRun(
-        state,
-        {
-          status: 'failed',
-          exitCode: null,
-          signal: null,
-          errorCode: 'SKILL_UNAVAILABLE',
-          errorMessage: 'Skill is unavailable.',
-          stdoutTail: '',
-          stderrTail: '',
-        },
-        { finalizeArtifacts: false },
-      );
-      return null;
-    }
-
     try {
-      return await resolveSkillForProfile(state.profile, state.skillId);
+      return await resolveSkillForProfile(state.profile, state.skillId!);
     } catch {
       await finishRun(
         state,
@@ -929,7 +912,7 @@ export function createRunService(input: CreateRunServiceInput): RunService {
       const profile = getProfile(input.config, request.profileId);
 
       const promptMode = request.promptMode ?? 'legacy';
-      const activePromptMode = promptMode as ActivePromptMode;
+      const activePromptMode = promptMode;
       assertPromptModeRequestShape(request, activePromptMode);
       const collectionMode = request.collectionMode ?? 'lite';
       requireCollectionModeAccess({ client, profile, collectionMode });
@@ -1325,7 +1308,7 @@ function buildRunIdempotencyFingerprint(input: {
   workspaceId: string;
   kind: RunKind;
   skillId: string | null;
-  promptMode: ActivePromptMode;
+  promptMode: PromptMode;
   currentPrompt: string;
   conversationId: string | null;
   collectionMode: CollectionMode;
@@ -1395,7 +1378,7 @@ function validateWebhookMetadataSize(metadata: unknown): void {
 
 function assertPromptModeRequestShape(
   request: CreateRunRequest,
-  promptMode: ActivePromptMode,
+  promptMode: PromptMode,
 ): void {
   if (promptMode === 'legacy') {
     if (!request.prompt) {

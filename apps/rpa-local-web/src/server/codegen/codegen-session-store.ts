@@ -8,7 +8,7 @@ import type {
   CodegenSessionStatus,
   CodegenSessionStatusResponse,
 } from '../../shared/codegen-types.js';
-import { resolveFlowsRoot, safeFlowId } from '../flow-store.js';
+import { resolveFlowDir, safeFlowId } from '../flow-store.js';
 
 export interface CodegenSessionError {
   code: string;
@@ -111,16 +111,6 @@ export function resolveCodegenInputScriptPath(storageRoot: string, sessionId: st
   return path.join(resolveCodegenSessionInputDir(storageRoot, sessionId), 'flow.py');
 }
 
-export function resolveFinalFlowDir(storageRoot: string, flowId: string): string {
-  const flowsRoot = resolveFlowsRoot(storageRoot);
-  const safeId = safeFlowId(flowId);
-  const resolved = path.resolve(flowsRoot, safeId);
-  if (!resolved.startsWith(`${flowsRoot}${path.sep}`)) {
-    throw new Error(`Unsafe final flow path: ${flowId}`);
-  }
-  return resolved;
-}
-
 export function createCodegenSessionStore(options: CodegenSessionStoreOptions): CodegenSessionStore {
   const storageRoot = path.resolve(options.storageRoot);
   const idFactory = options.idFactory ?? (() => `cg_${randomUUID().replaceAll('-', '').slice(0, 16)}`);
@@ -194,7 +184,7 @@ export function createCodegenSessionStore(options: CodegenSessionStoreOptions): 
           inputPath,
           absoluteInputPath: resolveCodegenInputScriptPath(storageRoot, sessionId),
         },
-        finalFlowDir: resolveFinalFlowDir(storageRoot, flowId),
+        finalFlowDir: resolveFlowDir(storageRoot, flowId),
         questionForm: null,
         artifacts: [],
         logs: [],
@@ -279,7 +269,7 @@ export function createCodegenSessionStore(options: CodegenSessionStoreOptions): 
 }
 
 async function assertNoExistingFinalFlow(storageRoot: string, flowId: string): Promise<void> {
-  const finalDir = resolveFinalFlowDir(storageRoot, flowId);
+  const finalDir = resolveFlowDir(storageRoot, flowId);
   let entries: string[];
   try {
     entries = await readdir(finalDir);

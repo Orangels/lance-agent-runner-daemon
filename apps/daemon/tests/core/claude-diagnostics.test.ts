@@ -81,7 +81,6 @@ describe('diagnoseClaudeCliFailure', () => {
       stderr:
         '401 bearer sk-ant-api03-secret token=secret cookie=session path=/home/orangels/.claude',
       stdout: 'CLAUDE_CONFIG_DIR=/home/orangels/.claude',
-      claudeConfigDir: '/home/orangels/.claude',
     });
     const serialized = JSON.stringify(diagnostic);
 

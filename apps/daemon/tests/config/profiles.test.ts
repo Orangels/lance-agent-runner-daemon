@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  getArtifactRule,
   getProfile,
   isModelAllowed,
   parseDaemonConfig,
@@ -493,7 +492,7 @@ describe('daemon config parsing', () => {
 });
 
 describe('profile helpers', () => {
-  it('looks up profiles, model access, and artifact rules', () => {
+  it('looks up profiles and model access', () => {
     const config = parseDaemonConfig(validConfig, {
       env: configEnv(),
     });
@@ -503,11 +502,5 @@ describe('profile helpers', () => {
     expect(profile.id).toBe('report-docx');
     expect(isModelAllowed(profile, 'sonnet')).toBe(true);
     expect(isModelAllowed(profile, 'haiku')).toBe(false);
-    expect(getArtifactRule(profile, 'report-docx')).toEqual({
-      id: 'report-docx',
-      pattern: 'output/**/*.docx',
-      role: 'primary',
-      required: true,
-    });
   });
 });

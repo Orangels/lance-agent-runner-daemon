@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createMinimalRpaDsl } from '../../../src/shared/dsl-schema.js';
-import { deriveParameterFormModel, validateRpaDsl } from '../../../src/server/validators/dsl-validator.js';
+import { deriveRuntimeParamFields } from '../../../src/shared/runtime-params.js';
+import { validateRpaDsl } from '../../../src/server/validators/dsl-validator.js';
 
 describe('RPA DSL validator', () => {
   it('accepts a minimal valid DSL document', () => {
@@ -181,7 +182,7 @@ describe('RPA DSL validator', () => {
       ],
     };
 
-    expect(deriveParameterFormModel(dsl)).toEqual([
+    expect(deriveRuntimeParamFields(dsl.params)).toEqual([
       {
         id: 'case_no',
         label: '案件编号',

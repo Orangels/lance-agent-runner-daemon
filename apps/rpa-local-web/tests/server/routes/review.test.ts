@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { requiredGenerationArtifactNames } from '../../../src/shared/artifacts.js';
 import { createMinimalRpaDsl } from '../../../src/shared/dsl-schema.js';
 import { createRpaLocalServer } from '../../../src/server/server.js';
-import { createUncompressedZip, readUncompressedZipEntries } from '../../../src/server/observability/review-zip.js';
+import { createUncompressedZip, readUncompressedZipEntries } from '../../../src/server/zip/uncompressed-zip.js';
 
 const servers: Array<{ close: () => void }> = [];
 

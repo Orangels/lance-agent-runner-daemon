@@ -3,8 +3,6 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import {
   isTerminalExecutionEvent,
-  parseExecutionEventLine,
-  serializeExecutionEvent,
 } from './execution-events.js';
 import type {
   CreateExecutionInput,
@@ -81,7 +79,7 @@ export function createFileExecutionStore(options: FileExecutionStoreOptions): Fi
       return content
         .split('\n')
         .filter((line) => line.trim().length > 0)
-        .map(parseExecutionEventLine);
+        .map((line) => JSON.parse(line) as RpaExecutionEvent);
     } catch (error) {
       if (isNodeError(error) && error.code === 'ENOENT') return [];
       throw error;
@@ -181,7 +179,7 @@ export function createFileExecutionStore(options: FileExecutionStoreOptions): Fi
       };
       await appendFile(
         path.join(executionDir(withSequence.executionId), 'events.jsonl'),
-        `${serializeExecutionEvent(withSequence)}\n`,
+        `${JSON.stringify(withSequence)}\n`,
         'utf8',
       );
       publish(withSequence.executionId, withSequence);

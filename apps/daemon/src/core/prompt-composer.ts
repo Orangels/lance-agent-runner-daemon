@@ -1,5 +1,4 @@
-import type { RunKind } from './run-types.js';
-import type { ActivePromptMode } from './run-types.js';
+import type { PromptMode, RunKind } from './run-types.js';
 import { badRequest } from './errors.js';
 import type { StagedSkill } from './skill-staging.js';
 import { stableJsonStringify } from './snapshot-service.js';
@@ -18,7 +17,7 @@ export interface ConversationPromptMessage {
 
 export interface ComposeRunPromptInput {
   kind: RunKind;
-  promptMode: ActivePromptMode;
+  promptMode: PromptMode;
   currentPrompt: string;
   businessContext?: Record<string, unknown>;
   conversationMessages?: ConversationPromptMessage[];

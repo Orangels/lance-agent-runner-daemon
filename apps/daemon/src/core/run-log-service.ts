@@ -10,6 +10,7 @@ import type { ServerConfig } from '../config/profiles.js';
 import type { RunnerPersistence, RunLogRecord } from '../db/types.js';
 import { forbidden, notFound } from './errors.js';
 import { sanitizeLogText } from './log-sanitizer.js';
+import { isPathInsideRoot } from './path-safety.js';
 import type { RunEvent } from './run-events.js';
 
 export interface RunLogClient {
@@ -203,7 +204,7 @@ export function createRunLogService(input: CreateRunLogServiceInput): RunLogServ
 
       for (const record of expired) {
         const runDir = path.join(logRoot, record.runId);
-        if (isPathInside(dataDir, runDir)) {
+        if (isPathInsideRoot(dataDir, runDir)) {
           await rm(runDir, { recursive: true, force: true });
         }
       }
@@ -307,14 +308,8 @@ function resolveInsideDataDir(dataDir: string, relativePath: string): string {
   }
 
   const resolved = path.resolve(dataDir, relativePath);
-  if (!isPathInside(dataDir, resolved)) {
+  if (!isPathInsideRoot(dataDir, resolved)) {
     throw new Error('Run log path escapes dataDir');
   }
   return resolved;
-}
-
-function isPathInside(root: string, candidate: string): boolean {
-  const resolvedRoot = path.resolve(root);
-  const resolvedCandidate = path.resolve(candidate);
-  return resolvedCandidate === resolvedRoot || resolvedCandidate.startsWith(`${resolvedRoot}${path.sep}`);
 }

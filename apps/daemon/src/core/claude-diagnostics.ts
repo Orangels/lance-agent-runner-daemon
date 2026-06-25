@@ -8,7 +8,6 @@ export interface ClaudeCliDiagnosticInput {
   stderr?: string | null;
   stdout?: string | null;
   spawnError?: unknown;
-  claudeConfigDir?: string | null;
 }
 
 export interface ClaudeCliDiagnostic {

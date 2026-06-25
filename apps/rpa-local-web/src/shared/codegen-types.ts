@@ -1,12 +1,6 @@
 import type {
-  RpaChoiceQuestion,
-  RpaQuestion,
   RpaQuestionAnswers,
-  RpaQuestionBase,
   RpaQuestionForm,
-  RpaQuestionOption,
-  RpaQuestionType,
-  RpaTextQuestion,
 } from './question-form-types.js';
 
 export const codegenSessionStatuses = [
@@ -22,12 +16,6 @@ export const codegenSessionStatuses = [
 
 export type CodegenSessionStatus = (typeof codegenSessionStatuses)[number];
 
-export type CodegenQuestionType = RpaQuestionType;
-export type CodegenQuestionOption = RpaQuestionOption;
-export type CodegenQuestionBase = RpaQuestionBase;
-export type CodegenTextQuestion = RpaTextQuestion;
-export type CodegenChoiceQuestion = RpaChoiceQuestion;
-export type CodegenQuestion = RpaQuestion;
 export type CodegenQuestionForm = RpaQuestionForm;
 export type CodegenQuestionAnswers = RpaQuestionAnswers;
 

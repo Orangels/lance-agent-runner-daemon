@@ -305,14 +305,6 @@ export function isModelAllowed(profile: ProfileConfig, model: string): boolean {
   return profile.allowedModels.includes(model);
 }
 
-export function getArtifactRule(profile: ProfileConfig, ruleId: string): ArtifactRuleConfig {
-  const rule = profile.artifactRules.find((candidate) => candidate.id === ruleId);
-  if (!rule) {
-    throw new Error(`Unknown artifact rule for profile ${profile.id}: ${ruleId}`);
-  }
-  return rule;
-}
-
 function resolveConfigEnvReference(
   value: string,
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,

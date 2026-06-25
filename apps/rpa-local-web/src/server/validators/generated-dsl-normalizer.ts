@@ -9,7 +9,7 @@ export interface GeneratedDslCanonicalizationResult {
 }
 
 export function canonicalizeGeneratedRpaDsl(input: unknown): GeneratedDslCanonicalizationResult {
-  const dsl = cloneJson(input);
+  const dsl = structuredClone(input);
   const warnings: ValidationIssue[] = [];
 
   if (!isRecord(dsl) || !Array.isArray(dsl.steps)) {
@@ -78,10 +78,6 @@ const safeAssertTypeAliases: Record<string, string> = {
   url_includes: 'url_contains',
   url_include: 'url_contains',
 };
-
-function cloneJson(input: unknown): unknown {
-  return JSON.parse(JSON.stringify(input)) as unknown;
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);

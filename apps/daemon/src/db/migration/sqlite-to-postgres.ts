@@ -5,6 +5,7 @@ import Database from 'better-sqlite3';
 import { createPostgresPool } from '../postgres/connection.js';
 import { assertPostgresSchemaReady } from '../postgres/migrate.js';
 import { migrationTableSpecs, type MigrationTableSpec } from './migration-types.js';
+import { hasTable, quoteIdentifier, readSqliteRows } from './sqlite-source-rows.js';
 
 export interface SqliteToPostgresInput {
   sqlitePath: string;
@@ -44,7 +45,7 @@ export async function migrateSqliteToPostgres(
     try {
       await client.query('BEGIN');
       for (const spec of migrationTableSpecs) {
-        const rows = readSourceRows(sqlite, spec);
+        const rows = readSqliteRows(sqlite, spec);
         copied[spec.table] = rows.length;
         await insertRows(client, spec, rows);
       }
@@ -75,28 +76,6 @@ export async function migrateSqliteToPostgres(
   }
 
   return { dryRun: Boolean(input.dryRun), copied };
-}
-
-function readSourceRows(sqlite: Database.Database, spec: MigrationTableSpec): Array<Record<string, unknown>> {
-  if (!hasTable(sqlite, spec.table)) {
-    return [];
-  }
-  const existingColumns = new Set(tableColumns(sqlite, spec.table));
-  const selectList = spec.columns
-    .map((column) => {
-      if (existingColumns.has(column)) {
-        return quoteIdentifier(column);
-      }
-      const fallback = spec.defaults?.[column];
-      if (fallback === undefined) {
-        throw new Error(`SQLite source table ${spec.table} is missing required column ${column}`);
-      }
-      return `${fallback} AS ${quoteIdentifier(column)}`;
-    })
-    .join(', ');
-  return sqlite.prepare(`SELECT ${selectList} FROM ${quoteIdentifier(spec.table)}`).all() as Array<
-    Record<string, unknown>
-  >;
 }
 
 async function insertRows(
@@ -133,20 +112,6 @@ function assertDaemonSchema(sqlite: Database.Database): void {
   }
 }
 
-function hasTable(sqlite: Database.Database, table: string): boolean {
-  const row = sqlite
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
-    .get(table) as { name: string } | undefined;
-  return Boolean(row);
-}
-
-function tableColumns(sqlite: Database.Database, table: string): string[] {
-  return sqlite
-    .prepare(`PRAGMA table_info(${quoteIdentifier(table)})`)
-    .all()
-    .map((row) => (row as { name: string }).name);
-}
-
 function assertNoActiveSqliteJournal(sqlitePath: string): void {
   for (const suffix of ['-journal', '-wal', '-shm']) {
     if (existsSync(`${sqlitePath}${suffix}`)) {
@@ -165,10 +130,6 @@ function fingerprintFile(filePath: string): SourceFingerprint {
     size: stats.size,
     mtimeMs: stats.mtimeMs,
   };
-}
-
-function quoteIdentifier(value: string): string {
-  return `"${value.replaceAll('"', '""')}"`;
 }
 
 function parseArgs(argv: readonly string[], env: NodeJS.ProcessEnv): SqliteToPostgresInput {
