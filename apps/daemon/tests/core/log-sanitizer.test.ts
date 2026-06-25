@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sanitizeLogText, sanitizeReviewJsonText, sanitizeReviewValue } from '../../src/core/log-sanitizer.js';
+import { sanitizeLogText, sanitizeReviewValue } from '../../src/core/log-sanitizer.js';
 
 describe('log sanitizer', () => {
   it('redacts Claude config directory values', () => {
@@ -67,19 +67,5 @@ describe('log sanitizer', () => {
       path: '[redacted-path]',
       artifactPath: 'output/report.docx',
     });
-  });
-
-  it('redacts sensitive JSON text after serialization', () => {
-    const output = sanitizeReviewJsonText(
-      JSON.stringify({
-        authorization: 'Bearer secret-token',
-        storage_state: '/tmp/state.json',
-        artifactPath: 'output/report.docx',
-      }),
-    );
-
-    expect(output).not.toContain('secret-token');
-    expect(output).not.toContain('/tmp/state.json');
-    expect(output).toContain('output/report.docx');
   });
 });

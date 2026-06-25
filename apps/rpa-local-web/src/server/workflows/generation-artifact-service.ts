@@ -7,7 +7,7 @@ import {
 import type { RpaGenerationArtifact } from '../../shared/artifacts.js';
 import type { ArtifactsResponse } from '../../shared/daemon-types.js';
 import { isKnownToolStateArtifactPath } from '../../shared/artifact-paths.js';
-import { resolveFlowsRoot, safeFlowId, writeFlowLocalMetadata } from '../flow-store.js';
+import { resolveFlowDir, writeFlowLocalMetadata } from '../flow-store.js';
 import { validateGenerationArtifacts } from '../validators/artifact-validator.js';
 import { validateRpaDsl } from '../validators/dsl-validator.js';
 import { canonicalizeGeneratedRpaDsl } from '../validators/generated-dsl-normalizer.js';
@@ -38,13 +38,11 @@ export class GenerationArtifactError extends Error {
 }
 
 function resolveFinalFlowDir(storageRoot: string, flowId: string): string {
-  const flowsRoot = resolveFlowsRoot(storageRoot);
-  const safeId = safeFlowId(flowId);
-  const resolved = path.resolve(flowsRoot, safeId);
-  if (!resolved.startsWith(`${flowsRoot}${path.sep}`)) {
+  try {
+    return resolveFlowDir(storageRoot, flowId);
+  } catch {
     throw new GenerationArtifactError('FLOW_PATH_UNSAFE', `Unsafe final flow path: ${flowId}`);
   }
-  return resolved;
 }
 
 export async function persistRequiredGenerationArtifacts(

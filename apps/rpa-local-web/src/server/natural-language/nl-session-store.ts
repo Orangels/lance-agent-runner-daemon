@@ -9,7 +9,7 @@ import type {
   StartNaturalLanguageSessionRequest,
 } from '../../shared/natural-language-types.js';
 import type { RpaQuestionForm } from '../../shared/question-form-types.js';
-import { resolveFlowsRoot, safeFlowId } from '../flow-store.js';
+import { resolveFlowDir, safeFlowId } from '../flow-store.js';
 
 export interface NaturalLanguageSessionError {
   code: string;
@@ -97,16 +97,6 @@ export function resolveNaturalLanguageSessionDir(storageRoot: string, sessionId:
   return resolved;
 }
 
-export function resolveFinalFlowDir(storageRoot: string, flowId: string): string {
-  const flowsRoot = resolveFlowsRoot(storageRoot);
-  const safeId = safeFlowId(flowId);
-  const resolved = path.resolve(flowsRoot, safeId);
-  if (!resolved.startsWith(`${flowsRoot}${path.sep}`)) {
-    throw new Error(`Unsafe final flow path: ${flowId}`);
-  }
-  return resolved;
-}
-
 export function createNaturalLanguageSessionStore(
   options: NaturalLanguageSessionStoreOptions,
 ): NaturalLanguageSessionStore {
@@ -186,7 +176,7 @@ export function createNaturalLanguageSessionStore(
         status: 'starting',
         createdAt: now,
         updatedAt: now,
-        finalFlowDir: resolveFinalFlowDir(storageRoot, flowId),
+        finalFlowDir: resolveFlowDir(storageRoot, flowId),
         questionForm: null,
         artifacts: [],
         logs: [],
@@ -255,7 +245,7 @@ export function createNaturalLanguageSessionStore(
 }
 
 async function assertNoExistingFinalFlow(storageRoot: string, flowId: string): Promise<void> {
-  const finalDir = resolveFinalFlowDir(storageRoot, flowId);
+  const finalDir = resolveFlowDir(storageRoot, flowId);
   let entries: string[];
   try {
     entries = await readdir(finalDir);

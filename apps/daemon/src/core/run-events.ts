@@ -100,17 +100,6 @@ export function formatRunEventId(id: number): string {
   return String(id);
 }
 
-export function compareRunEventIds(left: string, right: string): number {
-  const parsedLeft = parseRunEventId(left);
-  const parsedRight = parseRunEventId(right);
-
-  if (parsedLeft === null || parsedRight === null) {
-    throw new Error('Run event ids must be non-negative safe integers');
-  }
-
-  return parsedLeft - parsedRight;
-}
-
 export function shouldReplayEventAfter(eventId: string, afterId: string | null | undefined): boolean {
   const parsedEventId = parseRunEventId(eventId);
   if (parsedEventId === null) return false;

@@ -23,9 +23,6 @@ export type EventVisibility = (typeof eventVisibilityLevels)[number];
 export const promptModes = ['legacy', 'business-context', 'daemon-composed'] as const;
 export type PromptMode = (typeof promptModes)[number];
 
-export const activePromptModes = ['legacy', 'business-context', 'daemon-composed'] as const;
-export type ActivePromptMode = (typeof activePromptModes)[number];
-
 export const collectionModes = ['lite', 'diagnostic', 'review'] as const;
 export type CollectionMode = (typeof collectionModes)[number];
 
@@ -70,8 +67,6 @@ export const workspaceDirectoryNames = [
   '.claude-runner-skills',
 ] as const;
 export type WorkspaceDirectoryName = (typeof workspaceDirectoryNames)[number];
-
-export const protectedWorkspaceDirectoryNames = ['.claude-runner-skills'] as const;
 
 export const runMessageFlushPolicy = {
   throttleMs: 500,

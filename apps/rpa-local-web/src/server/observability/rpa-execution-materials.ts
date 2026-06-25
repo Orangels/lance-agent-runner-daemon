@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { RpaExecutionRecord } from '../executor/execution-types.js';
 import { listExecutionArtifacts } from '../executor/artifact-collector.js';
-import type { ReviewZipEntry } from './review-zip.js';
+import type { ReviewZipEntry } from '../zip/uncompressed-zip.js';
 import type {
   RpaLargeFileReference,
   RpaRedactionOptions,

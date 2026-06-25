@@ -4,7 +4,7 @@ import {
   createUncompressedZip,
   listZipEntryNames,
   readUncompressedZipEntries,
-} from '../../../src/server/observability/review-zip.js';
+} from '../../../src/server/zip/uncompressed-zip.js';
 
 describe('RPA review ZIP helpers', () => {
   it('creates and reads uncompressed ZIP entries', () => {

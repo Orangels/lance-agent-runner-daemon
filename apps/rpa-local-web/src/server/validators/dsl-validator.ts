@@ -13,13 +13,6 @@ import {
   errorIssue,
   warningIssue,
 } from './validation-types.js';
-import {
-  deriveRuntimeParamFields,
-  type RpaRuntimeParamField,
-} from '../../shared/runtime-params.js';
-
-export type ParameterFormField = RpaRuntimeParamField;
-
 const actionsRequiringTarget = new Set(['click', 'input', 'select', 'submit', 'assert']);
 const actionsNeedingWaitWarning = new Set(['navigate', 'click', 'input', 'select', 'submit']);
 const actionsNeedingAssertWarning = new Set(['submit', 'assert']);
@@ -65,10 +58,6 @@ export function validateRpaDsl(input: unknown): ValidationResult {
   }
 
   return { ok: errors.length === 0, errors, warnings };
-}
-
-export function deriveParameterFormModel(dsl: RpaDslDocument): ParameterFormField[] {
-  return deriveRuntimeParamFields(dsl.params);
 }
 
 function validateParams(params: Record<string, unknown>, errors: ValidationIssue[]) {

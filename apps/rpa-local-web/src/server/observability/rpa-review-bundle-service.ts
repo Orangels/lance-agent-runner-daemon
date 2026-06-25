@@ -20,7 +20,7 @@ import {
 } from './rpa-observability-types.js';
 import { redactRpaValue } from './rpa-redaction.js';
 import { buildRpaSummaryMarkdown } from './rpa-summary.js';
-import { appendZipEntries, readUncompressedZipEntries, type ReviewZipEntry } from './review-zip.js';
+import { appendZipEntries, readUncompressedZipEntries, type ReviewZipEntry } from '../zip/uncompressed-zip.js';
 
 export interface RpaReviewBundleDaemonClient {
   downloadReviewBundle(runId: string): Promise<Response>;

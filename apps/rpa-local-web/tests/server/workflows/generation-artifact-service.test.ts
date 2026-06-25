@@ -8,7 +8,7 @@ import {
 } from '../../../src/shared/artifacts.js';
 import type { ArtifactSummary, ArtifactsResponse } from '../../../src/shared/daemon-types.js';
 import { createMinimalRpaDsl } from '../../../src/shared/dsl-schema.js';
-import { resolveFinalFlowDir } from '../../../src/server/codegen/codegen-session-store.js';
+import { resolveFlowDir } from '../../../src/server/flow-store.js';
 import { persistRequiredGenerationArtifacts } from '../../../src/server/workflows/generation-artifact-service.js';
 
 describe('generation artifact service', () => {
@@ -44,7 +44,7 @@ describe('generation artifact service', () => {
     await expect(
       readFile(path.join(storageRoot, 'flows', 'case_query', 'flow.local.json'), 'utf8'),
     ).resolves.toContain('"source": "generated"');
-    await expect(readdir(`${resolveFinalFlowDir(storageRoot, 'case_query')}.tmp-cg_abc123`)).rejects.toMatchObject({
+    await expect(readdir(`${resolveFlowDir(storageRoot, 'case_query')}.tmp-cg_abc123`)).rejects.toMatchObject({
       code: 'ENOENT',
     });
   });
@@ -190,7 +190,7 @@ describe('generation artifact service', () => {
 
   it('removes temp artifacts and does not leave a final flow when generated DSL is invalid', async () => {
     const storageRoot = await createStorageRoot();
-    const finalFlowDir = resolveFinalFlowDir(storageRoot, 'case_query');
+    const finalFlowDir = resolveFlowDir(storageRoot, 'case_query');
     const daemonClient = createDaemonClient({
       artifacts: { artifacts: generationArtifacts() },
       bodies: {
@@ -367,7 +367,7 @@ describe('generation artifact service', () => {
     ).rejects.toMatchObject({ code: 'ARTIFACT_VALIDATION_FAILED' });
 
     expect(daemonClient.downloadArtifact).not.toHaveBeenCalled();
-    await expect(readdir(resolveFinalFlowDir(storageRoot, 'case_query'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readdir(resolveFlowDir(storageRoot, 'case_query'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });
 

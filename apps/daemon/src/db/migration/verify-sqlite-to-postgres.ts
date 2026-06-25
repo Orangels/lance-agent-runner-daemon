@@ -5,6 +5,7 @@ import Database from 'better-sqlite3';
 import { createPostgresPool } from '../postgres/connection.js';
 import { assertPostgresSchemaReady } from '../postgres/migrate.js';
 import { migrationTableSpecs, type MigrationTableSpec } from './migration-types.js';
+import { quoteIdentifier, readSqliteRows } from './sqlite-source-rows.js';
 
 export interface VerifySqliteToPostgresInput {
   sqlitePath: string;
@@ -80,28 +81,6 @@ export async function verifySqliteToPostgres(
   return { ok: mismatches.length === 0, counts, mismatches };
 }
 
-function readSqliteRows(sqlite: Database.Database, spec: MigrationTableSpec): Array<Record<string, unknown>> {
-  if (!hasTable(sqlite, spec.table)) {
-    return [];
-  }
-  const existingColumns = new Set(tableColumns(sqlite, spec.table));
-  const selectList = spec.columns
-    .map((column) => {
-      if (existingColumns.has(column)) {
-        return quoteIdentifier(column);
-      }
-      const fallback = spec.defaults?.[column];
-      if (fallback === undefined) {
-        throw new Error(`SQLite source table ${spec.table} is missing required column ${column}`);
-      }
-      return `${fallback} AS ${quoteIdentifier(column)}`;
-    })
-    .join(', ');
-  return sqlite.prepare(`SELECT ${selectList} FROM ${quoteIdentifier(spec.table)}`).all() as Array<
-    Record<string, unknown>
-  >;
-}
-
 async function readPostgresRows(
   pool: ReturnType<typeof createPostgresPool>,
   spec: MigrationTableSpec,
@@ -114,22 +93,26 @@ async function readPostgresRows(
 
 function hashRows(spec: MigrationTableSpec, rows: Array<Record<string, unknown>>): Map<string, string> {
   return new Map(
-    rows
-      .map((row) => {
-        const key = primaryKeyForRow(spec.table, row);
-        const normalized = spec.columns.map((column) => normalizeValue(row[column]));
-        const hash = createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
-        return [key, hash] as const;
-      })
-      .sort(([left], [right]) => left.localeCompare(right)),
+    rows.map((row) => {
+      const key = primaryKeyForRow(spec.table, row);
+      const normalized = spec.columns.map((column) => normalizeValue(row[column]));
+      const hash = createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
+      return [key, hash] as const;
+    }),
   );
 }
 
+const idPrimaryKeyTables = new Set([
+  'artifacts',
+  'conversations',
+  'run_feedback',
+  'run_messages',
+  'runs',
+  'workspaces',
+]);
+
 function primaryKeyForRow(table: string, row: Record<string, unknown>): string {
-  if (table === 'artifacts' || table === 'workspaces' || table === 'conversations' || table === 'runs') {
-    return String(row.id);
-  }
-  if (table === 'run_messages' || table === 'run_feedback') {
+  if (idPrimaryKeyTables.has(table)) {
     return String(row.id);
   }
   return String(row.run_id);
@@ -139,24 +122,6 @@ function normalizeValue(value: unknown): unknown {
   if (typeof value === 'bigint') return Number(value);
   if (value instanceof Date) return value.getTime();
   return value;
-}
-
-function hasTable(sqlite: Database.Database, table: string): boolean {
-  const row = sqlite
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
-    .get(table) as { name: string } | undefined;
-  return Boolean(row);
-}
-
-function tableColumns(sqlite: Database.Database, table: string): string[] {
-  return sqlite
-    .prepare(`PRAGMA table_info(${quoteIdentifier(table)})`)
-    .all()
-    .map((row) => (row as { name: string }).name);
-}
-
-function quoteIdentifier(value: string): string {
-  return `"${value.replaceAll('"', '""')}"`;
 }
 
 function parseArgs(argv: readonly string[], env: NodeJS.ProcessEnv): VerifySqliteToPostgresInput {

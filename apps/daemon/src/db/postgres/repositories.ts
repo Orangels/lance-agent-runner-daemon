@@ -1667,12 +1667,11 @@ class PostgresRunnerPersistence implements RunnerPersistence {
   }
 
   private async nextConversationSeq(conversationId: string): Promise<number> {
-    const row = await one<{ max_seq: number }>(
-      this.client,
+    const result = await this.client.query<{ max_seq: number }>(
       'SELECT COALESCE(MAX(conversation_seq), 0) AS max_seq FROM run_messages WHERE conversation_id = $1',
       [conversationId],
     );
-    return row.max_seq + 1;
+    return result.rows[0]!.max_seq + 1;
   }
 
   private async insertProfileSnapshot(
@@ -1706,18 +1705,6 @@ async function maybeOne<T extends pg.QueryResultRow>(
 ): Promise<T | null> {
   const result = await client.query<T>(text, [...values]);
   return result.rows[0] ?? null;
-}
-
-async function one<T extends pg.QueryResultRow>(
-  client: Queryable,
-  text: string,
-  values: readonly unknown[],
-): Promise<T> {
-  const row = await maybeOne<T>(client, text, values);
-  if (!row) {
-    throw new Error('Expected PostgreSQL query to return a row');
-  }
-  return row;
 }
 
 function addClause(

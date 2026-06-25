@@ -1,3 +1,5 @@
+import { crc32 } from 'node:zlib';
+
 export interface ZipEntry {
   path: string;
   content: string | Buffer;
@@ -137,19 +139,3 @@ function toDosDateTime(date: Date): { dosDate: number; dosTime: number } {
     dosTime: (hour << 11) | (minute << 5) | second,
   };
 }
-
-function crc32(buffer: Buffer): number {
-  let crc = 0xffffffff;
-  for (const byte of buffer) {
-    crc = (crc >>> 8) ^ crcTable[(crc ^ byte) & 0xff]!;
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-}
-
-const crcTable = Array.from({ length: 256 }, (_, index) => {
-  let value = index;
-  for (let bit = 0; bit < 8; bit += 1) {
-    value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
-  }
-  return value >>> 0;
-});

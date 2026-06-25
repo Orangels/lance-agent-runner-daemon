@@ -161,7 +161,6 @@ export function startClaudeCliRun(input: StartClaudeCliRunInput): ClaudeCliRunHa
       stderr: stderrTail,
       stdout: stdoutTail,
       spawnError: failure.spawnError,
-      claudeConfigDir: invocation.env.CLAUDE_CONFIG_DIR,
     });
     const safeDiagnostic =
       diagnostic ??
@@ -260,7 +259,7 @@ export function startClaudeCliRun(input: StartClaudeCliRunInput): ClaudeCliRunHa
     noteActivity();
     stderrTail = `${stderrTail}${text}`.slice(-2_000);
     writeLogSink(() => input.logSink?.stderr?.(sanitizeLogText(text)));
-    emitEvent({ type: 'stderr', text: sanitizeDebugText(capRawEventLine(text)) });
+    emitEvent({ type: 'stderr', text: sanitizeLogText(capRawEventLine(text)) });
   });
 
   child.on('error', (error: unknown) => {
@@ -324,16 +323,12 @@ export function startClaudeCliRun(input: StartClaudeCliRunInput): ClaudeCliRunHa
 
 function sanitizeDebugEvent(event: RunEvent): RunEvent {
   if (event.type === 'stderr') {
-    return { ...event, text: sanitizeDebugText(event.text) };
+    return { ...event, text: sanitizeLogText(event.text) };
   }
 
   if (event.type === 'raw') {
-    return { ...event, line: sanitizeDebugText(event.line) };
+    return { ...event, line: sanitizeLogText(event.line) };
   }
 
   return event;
-}
-
-function sanitizeDebugText(text: string): string {
-  return sanitizeLogText(text);
 }

@@ -6,9 +6,9 @@ import {
   createCodegenSessionStore,
   resolveCodegenInputScriptPath,
   resolveCodegenSessionInputDir,
-  resolveFinalFlowDir,
   safeCodegenSessionId,
 } from '../../src/server/codegen/codegen-session-store.js';
+import { resolveFlowDir } from '../../src/server/flow-store.js';
 
 async function createTempStore(idFactory = () => 'cg_abc123') {
   const storageRoot = await mkdtemp(path.join(os.tmpdir(), 'rpa-codegen-store-'));
@@ -27,7 +27,7 @@ describe('RPA codegen session store', () => {
     expect(resolveCodegenInputScriptPath(storageRoot, 'cg_abc123')).toBe(
       path.join(path.resolve(storageRoot), 'codegen-sessions', 'cg_abc123', 'input', 'flow.py'),
     );
-    expect(resolveFinalFlowDir(storageRoot, 'case_query')).toBe(
+    expect(resolveFlowDir(storageRoot, 'case_query')).toBe(
       path.join(path.resolve(storageRoot), 'flows', 'case_query'),
     );
   });
@@ -38,7 +38,7 @@ describe('RPA codegen session store', () => {
     expect(() => safeCodegenSessionId('../cg_bad')).toThrow(/Invalid codegen session id/);
     expect(() => safeCodegenSessionId('cg_')).toThrow(/Invalid codegen session id/);
     expect(() => resolveCodegenInputScriptPath(storageRoot, '../cg_bad')).toThrow(/Invalid codegen session id/);
-    expect(() => resolveFinalFlowDir(storageRoot, '../flow')).toThrow(/Invalid flow id/);
+    expect(() => resolveFlowDir(storageRoot, '../flow')).toThrow(/Invalid flow id/);
   });
 
   it('creates a public session summary without leaking absolute paths', async () => {
@@ -124,7 +124,7 @@ describe('RPA codegen session store', () => {
 
   it('rejects a new session when final flow artifacts already exist for the flow id', async () => {
     const { storageRoot, store } = await createTempStore(() => 'cg_first');
-    const finalDir = resolveFinalFlowDir(storageRoot, 'case_query');
+    const finalDir = resolveFlowDir(storageRoot, 'case_query');
     await mkdir(finalDir, { recursive: true });
     await writeFile(path.join(finalDir, 'flow.dsl.json'), '{}\n', 'utf8');
 

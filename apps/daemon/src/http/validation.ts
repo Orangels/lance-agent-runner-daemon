@@ -17,7 +17,7 @@ const metadataSchema = z.record(z.string(), z.unknown());
 
 const runShortStringSchema = z.string().min(1).max(128);
 const runPromptSchema = z.string().min(1).max(200_000);
-const businessContextSchema = z.record(z.string(), z.unknown());
+const businessContextSchema = metadataSchema;
 const webhookSecretSchema = z.string().min(8).max(512);
 const webhookUrlSchema = z.string().min(1).max(2_048).url();
 const webhookRequestSchema = z

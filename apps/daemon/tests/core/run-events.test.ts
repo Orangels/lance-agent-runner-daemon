@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  compareRunEventIds,
   formatRunEventId,
   parseRunEventId,
   shouldReplayEventAfter,
@@ -18,10 +17,7 @@ describe('run event id helpers', () => {
     expect(formatRunEventId(42)).toBe('42');
   });
 
-  it('compares event ids numerically for Last-Event-ID and after replay', () => {
-    expect(compareRunEventIds('10', '9')).toBeGreaterThan(0);
-    expect(compareRunEventIds('9', '10')).toBeLessThan(0);
-    expect(compareRunEventIds('10', '10')).toBe(0);
+  it('checks event ids numerically for Last-Event-ID and after replay', () => {
     expect(shouldReplayEventAfter('10', '9')).toBe(true);
     expect(shouldReplayEventAfter('9', '10')).toBe(false);
   });

@@ -16,14 +16,6 @@ export function sanitizeLogText(text: string): string {
     });
 }
 
-export function sanitizeReviewJsonText(text: string): string {
-  try {
-    return JSON.stringify(sanitizeReviewValue(JSON.parse(text)));
-  } catch {
-    return sanitizeLogText(text);
-  }
-}
-
 export function sanitizeReviewValue(value: unknown, seen = new WeakSet<object>()): unknown {
   if (typeof value === 'string') {
     return sanitizeLogText(value);

@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { requiredGenerationArtifactNames } from '../../../src/shared/artifacts.js';
 import { createMinimalRpaDsl } from '../../../src/shared/dsl-schema.js';
 import { createRpaReviewBundleService } from '../../../src/server/observability/rpa-review-bundle-service.js';
-import { createUncompressedZip, readUncompressedZipEntries } from '../../../src/server/observability/review-zip.js';
+import { createUncompressedZip, readUncompressedZipEntries } from '../../../src/server/zip/uncompressed-zip.js';
 
 describe('RPA review bundle service', () => {
   it('combines daemon generic bundle with RPA extension entries', async () => {
